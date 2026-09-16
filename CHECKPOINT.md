@@ -16,12 +16,13 @@ acceptance.
 |---|---|
 | **P00** — route evidence + measured native baseline | Local gates reported passing. **Independent acceptance pending.** |
 | **P01** — types, identity, journal, result/ack | Local gates reported passing (31 tests). **Independent acceptance pending.** |
-| **P02** — typed controller + native Roles enforcement | Controller implemented; **25 example-based tests passing**. **Required property/invariant coverage still pending.** |
-| **P03** — composed native → KeeperHub → controller route | **Not started.** Authenticated KeeperHub execution (**L10**) remains outstanding. |
+| **P02** — typed controller + native Roles enforcement | Local gates reported passing (50 tests in three stages), including property/fuzz coverage and the exact Morpho rounding/share-effect contract. **Independent acceptance pending.** |
+| **P03** — native interception → signing → KeeperHub → reconciliation | **Local half complete** (89 tests). The composed PUBLIC execution is blocked on **L10** and is neither stubbed nor simulated. **Independent acceptance pending.** |
 
-This is a checkpoint, not a claim of phase completion. P02 in particular is **incomplete**:
-the suite is example-based, and property/invariant coverage over the policy arithmetic has
-not been written. The next commits should show exactly that work and any defects it uncovers.
+This is a checkpoint, not a claim of phase completion. P03's local half is finished, but
+the composed public-execution evidence that Criterion 2 needs does not exist: no contract
+is deployed, no funds are spent, and the authenticated KeeperHub route has never been
+called.
 
 ## What is implemented
 
@@ -46,27 +47,53 @@ not been written. The next commits should show exactly that work and any defects
 |---|---|---|
 | `HELD_PRICE_MODE=testing-only make check-phase-00` | PASS (6 gates) | `evidence/P00/`, `docs/baseline/native-measurements.json` |
 | `make check-phase-01` | PASS, 31 tests | `evidence/P01/report.md`, `tests/core/run_tests.py` |
-| `make check-phase-02` | PASS, 25 tests in two stages | `evidence/P02/report.md` |
+| `make check-phase-02` | PASS, 50 tests in three stages | `evidence/P02/report.md` |
+| `make check-phase-03-local` | PASS, 89 tests in five files | `evidence/P03/acceptance.json` |
 
-`check-phase-02` stage 1 is 4 **labelled adversarial mock** tests (reentrancy, ERC20
-returning false, cleanup failing after the economic action). Stage 2 is 21 tests against
-the **real pinned** Base-mainnet Safe, Zodiac Roles, Morpho Blue and native USDC on a fork.
-The two evidence classes are kept separate on purpose and must not be conflated.
+`check-phase-02` stage 0 is 14 **property/fuzz** tests against an independent reference
+predicate (256 runs each, pinned seed). Stage 1 is 4 **labelled adversarial mock** tests
+(reentrancy, ERC20 returning false, cleanup failing after the economic action). Stage 2 is
+32 tests against the **real pinned** Base-mainnet Safe, Zodiac Roles, Morpho Blue and
+native USDC on a fork. The evidence classes are kept separate on purpose and must not be
+conflated.
+
+`check-phase-03-local` is 17 interception + 9 native-bundle (against the REAL pinned
+compiler) + 18 signing + 28 KeeperHub client + 17 submission. Every KeeperHub test runs
+against `OfflineTransport`, which stamps `hosted=false`; **none of them establish L10**,
+and three exist specifically to prove a local result cannot be filed as if they did.
+
+Two cross-language checks run in opposite directions. The action hash goes Python →
+Solidity via `fixtures/crosslang-vectors.json`, which carries its own provenance and is
+only written when the imported SDK tree matches the pin. The envelope digest cannot go
+that way — it commits to the domain separator and therefore to the controller's address —
+so the fork publishes what it built to `fixtures/generated/signing-vector.json` and the
+Python signer reproduces the signature **byte for byte**.
 
 ## Still pending
 
-1. **P02 property/invariant coverage** over the policy arithmetic — the immediate next task.
-2. Fixes for anything that coverage uncovers.
-3. P03 local composition (adapter boundary, envelope dispatch, result return).
-4. **L10** — authenticated KeeperHub organisation caller/payer. Blocks P03's public
-   execution. Nothing about it is stubbed or simulated.
-5. Independent review of every phase.
+1. **P04** — authority inventory, owner fencing, change and handover. Independent of L10,
+   so it is the next task.
+2. P05 operator console, P06 composed adversarial faults, P07 install/release evidence,
+   P08 assembly.
+3. **L10** — authenticated KeeperHub organisation caller/payer. Blocks P03's public
+   execution. Nothing about it is stubbed or simulated, and executing
+   `evidence/P03/execution-manifest.json` would additionally require authorization to
+   deploy a contract and spend funds, which has not been given.
+4. Independent review of every phase.
+
+## Open unknowns recorded rather than guessed
+
+- KeeperHub's catalog exposes an internal string chain id alongside the numeric `chainId`.
+  Which one `POST /api/execute/contract-call` expects cannot be established without an org
+  credential. Held sends `chainId`; the alternative is recorded in the client.
+- The authenticated response schema has not been observed, so the execution id and
+  transaction hash fields are read defensively.
 
 ## Exact next task
 
-Write property/invariant tests for the controller's policy arithmetic — ceiling, floor,
-per-action bounds, count and cooldown monotonicity, and lane derivation — then fix whatever
-they reveal.
+P04: inventory every authority over the Safe, the Roles module and the controller; show
+owner fencing; and demonstrate a policy change and a runner replacement that preserve
+consumption history.
 
 ## Reproducing
 
@@ -79,6 +106,6 @@ forge build
 ```
 
 Toolchain: solc 0.8.28 with `via_ir`, optimizer 200 runs; OpenZeppelin v5.1.0; forge-std
-v1.16.2; foundry 1.8.1. The Python side needs CPython 3.12 and the pinned Almanak SDK.
+v1.16.2; foundry 1.8.1 (1.8.3 observed locally). The Python side needs CPython 3.12 and the pinned Almanak SDK.
 
 See `SECURITY-NOTES.md` regarding the Anvil development keys present in the fixtures.
