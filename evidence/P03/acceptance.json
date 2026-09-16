@@ -1,32 +1,32 @@
 {
  "phase": "P03",
  "title": "Native interception, runner signing, the KeeperHub client and the submission path",
- "implementation_status": "locally verified; the hosted route is NOT established",
+ "implementation_status": "PARTIAL \u2014 local defects C1-C4 repaired; the required composed hosted execution does not exist",
  "independent_review_status": "pending",
  "accepted": false,
  "accepted_note": "Claude authored and ran this. Self-testing is not independent acceptance.",
-
  "gate": {
-  "command": "make check-phase-03-local",
-  "interception": "17 passed; 0 failed",
-  "native_bundle": "9 passed; 0 failed (against the REAL pinned compiler)",
-  "signing": "18 passed; 0 failed",
-  "keeperhub_client": "28 passed; 0 failed",
-  "submission_path": "17 passed; 0 failed",
-  "total": 89,
-  "dependency": "The signing check reproduces fixtures/generated/signing-vector.json, which the FORK suite writes. It fails loudly rather than skipping when the vector is absent, so it cannot pass without check-phase-02 having run against a live fork."
+  "command": "make check-phase-03",
+  "result": "INCOMPLETE by design \u2014 runs every local check, then exits non-zero because the required hosted execution has not been performed. The prompt's own command cannot read as a pass while L10 is open.",
+  "local_command": "make check-phase-03-local",
+  "interception": "17 passed",
+  "native_bundle": "9 passed (against the REAL pinned compiler)",
+  "signing": "18 passed",
+  "keeperhub_wire_contract": "23 passed",
+  "submission_binding_and_reconciliation": "18 passed",
+  "crash_restart_recovery": "8 passed",
+  "total_local": 93
  },
-
  "what_is_established": {
   "native_connection": "CompilationResult -> action_bundle -> Held record -> admission, with economic calldata copied byte for byte. The producer verdict is strictly fail-closed: exact status set, no prefix match, no default success for a missing verdict, FAILED+is_safety_refusal preserved as a refusal, PARTIAL refused, self-contradictory SUCCESS refused, and a declared intent_type that disagrees with the family decoded from calldata refused.",
   "cross_language_action_hash": "Python -> Solidity. fixtures/crosslang-vectors.json carries its own provenance (producer, SDK commit read from the imported tree, record version, calldata digest) and is only written when the installed SDK matches the pin.",
   "cross_language_signing": "Solidity -> Python, the reverse direction, because the envelope digest commits to the domain separator and therefore to the controller address, which Python cannot know before the fork deploys it. The fork publishes envelope, digest and signature; the Python signer reproduces the signature BYTE FOR BYTE from held_core alone. Two implementations sharing no code agree on both the digest and the ECDSA output.",
   "signing_discipline": "Keys are referenced (env:NAME, keystore:/path), never held. A key-shaped 'reference' is refused. sign() recovers from its own output and requires the configured runner, and rejects non-low-s output, so a signature the controller would reject is caught locally instead of after an execution is spent.",
-  "executor_semantics": "Execution keys bound to the attempt (retry reuses, replacement does not). Exponential backoff with jitter and a cap; the server's Retry-After always wins. 409 is IN_PROGRESS and is not retried. Every ambiguous result -- timeouts, dropped connections, all 5xx, unrecognised statuses -- is UNKNOWN and never REJECTED.",
-  "submission_ordering": "The attempt row is durable BEFORE any network I/O, verified by inspecting the journal at the moment the request goes out. A crash there reads as outcome-unknown rather than as nothing-sent.",
-  "reconciliation": "The verdict comes from the controller's consumed[operationId], compared for EQUALITY with the payload hash -- not from an execution id, not from a transaction hash, and not from KeeperHub's status. A presence-only check would have accepted an id consumed by a different action; a test covers exactly that. With no chain reader there is no verdict at all."
+  "executor_semantics": "Execution keys bound to the attempt (retry reuses, replacement does not) and sent as the documented Idempotency-Key HEADER. Exponential backoff with jitter for our own guess; a server Retry-After is obeyed exactly, never shortened. The two documented 409 codes are separate outcomes and neither is retried. Every ambiguous result -- timeouts, dropped connections, all 5xx, unrecognised statuses and undocumented 409 codes -- is UNKNOWN and never REJECTED.",
+  "submission_ordering": "The operation is DISPATCHED and the exact replayable request is durable in ONE transaction BEFORE any network I/O, verified by opening a SEPARATE connection to the same SQLite file at the moment the request goes out, and by SIGKILLing a real child process mid-send. A restart resumes the original attempt under its original key and makes zero duplicate network calls.",
+  "reconciliation": "The verdict comes from the controller's consumed[operationId], compared for EQUALITY with the payload hash the JOURNAL durably bound -- not a caller-supplied expectation, not an execution id, not a transaction hash, and not KeeperHub's status. Evidence must also carry the chain id, controller, block and finality it was read at; wrong scope or an unfinalized reading is refused.",
+  "request_binding": "The submitted request IS the signed authorization: it is constructed from the admitted action and the signature just produced, and re-encoded to byte equality before sending. submit() has no calldata parameter."
  },
-
  "what_is_NOT_established": {
   "L10": "BLOCKED-UNKNOWN, unchanged. No KeeperHub organisation API key exists, so the authenticated caller/payer route has never been called. It is neither stubbed nor simulated.",
   "anti_simulation_measures": [
@@ -38,20 +38,58 @@
   "public_chain": "NOTHING is deployed, funded or executed on any public chain. All controller evidence is from a Base-mainnet fork at block 51353212.",
   "chain_reader_scope": "The reconciliation tests use an in-test chain double. It stands in for chain ACCESS, not chain BEHAVIOUR -- that the controller writes consumed[id]=payloadHash in the same transaction as the economic effect is proven separately against real pinned Morpho on the fork in P02."
  },
-
  "defect_found_and_fixed_this_phase": {
   "what": "The first draft of KeeperHubClient.preflight() used GET /api/chains as the authentication check.",
   "why_it_was_wrong": "That endpoint is public. Re-verified live on 2026-09-16: it answers 200 with the full catalog and no credential at all. A preflight built on it would have reported 'passed' for an invalid key and for no key -- a vacuous check standing exactly where L10 is supposed to be.",
   "fix": "preflight() is now a SIMULATE-mode call on the authenticated contract-call route. The public catalog is its own explicitly-unauthenticated method that sends no credential. A test asserts preflight targets the authenticated path and does not broadcast."
  },
-
  "open_unknowns": {
-  "chain_id_field": "KeeperHub's catalog exposes an internal string chain id (Base = '9wr4m6zv2dwflb1trbzsx') alongside the numeric chainId. Which the authenticated contract-call route expects cannot be established without a credential. Held sends chainId; the alternative is recorded in the client rather than guessed silently.",
-  "response_schema": "Field names for the execution id and transaction hash are read defensively (executionId|id, transactionHash|txHash) because the authenticated response shape has not been observed."
+  "server_side_encoding": "Whether KeeperHub's encoder reproduces the intended calldata from functionName/functionArgs. Needs one authenticated dry run (L10).",
+  "response_schema": "Execution-id and transaction-hash field names are read defensively (executionId|id, transactionHash|txHash) because the authenticated response shape has not been observed.",
+  "resolved_since_the_review": "The chainId field is documented as the numeric chain id. The earlier 'internal catalog id vs numeric' uncertainty is CLOSED and did not require an org key -- recording it as blocked was itself a small error."
  },
-
  "manifest": "evidence/P03/execution-manifest.json -- the concrete public execution, written BEFORE the fact as a commitment. Executing it would require deploying a contract and spending funds on a public chain, which is not authorized.",
-
- "completeness": "P03's local half is complete: interception, signing, executor client, submission path, reconciliation and the execution manifest. The composed public-execution evidence that Criterion 2 needs remains blocked on L10.",
- "next": "P04 authority inventory, owner fencing, change and handover -- which is independent of L10 and can proceed."
+ "completeness": "P03 is NOT complete. The abc0fdd review rejected the earlier 'local half complete' claim and found four local implementation defects, all now repaired with regressions. The required KeeperHub public execution remains blocked on L10.",
+ "next": "Connect one genuine LOCAL composed run (native producer -> admitted action -> signature -> typed request -> controller effect on the fork -> durable/native result and recovery), then prepare the bounded L10/public-action request.",
+ "phase_complete": false,
+ "review_findings_repaired": {
+  "C1_wire_contract": {
+   "was": "Sent `to`/`data`; put `idempotencyKey` in the JSON body with no header; polled /api/execute/{id}; collapsed every 409 into IN_PROGRESS. The client retried ambiguous failures while sending NO idempotency header, so the retry was not protected by the mechanism its own comments claimed.",
+   "now": "Documented body (contractAddress, chainId, functionName, functionArgs and abi as JSON STRINGS, value, strict-boolean simulate); Idempotency-Key HEADER; GET /api/execute/{id}/status with X-Poll-Interval-Hint; 202 recognised as the documented write success.",
+   "409_split": "idempotency_conflict (same key, DIFFERENT body) is its own outcome and is NEVER retried or polled \u2014 Held derives both key and body deterministically, so it indicates a determinism bug in our own request. idempotency_in_progress is IN_PROGRESS. An undocumented 409 code is UNKNOWN rather than guessed.",
+   "additional_defects_found_while_verifying": [
+    "403 is documented as insufficient scope OR SPENDING CAP EXCEEDED, not only a bad credential. The message now names both, and the mcp:read/mcp:write scope split.",
+    "The backoff CAPPED a server Retry-After at max_seconds, silently SHORTENING documented pacing. It is now obeyed exactly; max_seconds bounds only our own guess.",
+    "A simulation returning 200 was classified ACCEPTED. SIMULATED is now its own outcome so a dry run can never be recorded as economic success."
+   ],
+   "source": "https://docs.keeperhub.com/api/direct-execution, reread 2026-09-16. Documented-schema evidence ONLY; no authenticated live call was made.",
+   "chain_id_field": "RESOLVED. The numeric chainId is documented; the earlier 'internal catalog id' uncertainty did not need an org key and should not have been recorded as blocked."
+  },
+  "C2_crash_restart": {
+   "was": "record_attempt_before_send() committed a PENDING attempt but left the operation AUTHORIZED; DISPATCHED came only after the network call returned. A crash between left AUTHORIZED + PENDING, and the next submit() accepted that state, minted a NEW attempt id and NEW idempotency key, and sent a second unprotected request for work that may already have executed.",
+   "now": "Journal.claim_for_dispatch() moves the operation to DISPATCHED and persists the exact replayable request (idempotency key, request body, calldata, kind) in ONE transaction, before any I/O. A UNIQUE PARTIAL INDEX permits one PENDING BROADCAST attempt per operation, so concurrent submitters cannot both claim. submit() refuses with ResumeRequired when an unresolved attempt exists; resume() resends the IDENTICAL body under the IDENTICAL key.",
+   "beyond_the_window": "Past the documented 24h idempotency window the server no longer dedupes, so resume() refuses without chain evidence and resolves instead of resending if the operation already executed.",
+   "simulation_separated": "A dry run never claims the operation and never blocks a later real send.",
+   "verified_by": "Real SQLite close/reopen across processes, and a child process SIGKILLed mid-send by the transport itself. After SIGKILL the operation is DISPATCHED on disk with a resumable PENDING attempt, and a fresh process makes ZERO duplicate network calls.",
+   "schema": "Journal SCHEMA_VERSION 1 -> 2. Existing databases require an explicit migration; the version check refuses an unmigrated file rather than guessing."
+  },
+  "C3_signature_binding": {
+   "was": "submit(admitted, envelope, calldata) signed the envelope and sent caller-supplied calldata, with nothing checking they corresponded.",
+   "now": "There is no calldata parameter. controller_abi.build_execute_call() constructs the ONE permitted typed invocation from the verified admitted action plus exactly the signature just produced, and refuses on operation-id, payload-hash or family disagreement. ContractCallRequest.verify_encoding() re-encodes the arguments and requires byte equality with the expected calldata before anything leaves.",
+   "selectors_verified": "executeSupply 0xfe6a574c and executeWithdraw 0xda3e8387, confirmed against `forge inspect` on the compiled controller rather than derived from my own type strings.",
+   "replay_property": "The persisted JSON body re-encodes to its own calldata, which is what makes resume() send identical bytes.",
+   "not_established": "That KeeperHub's SERVER-side encoder produces the same bytes from functionName/functionArgs. That needs one authenticated dry run and is blocked on L10. It is recorded, not assumed."
+  },
+  "C4_durable_reconciliation": {
+   "was": "reconcile() loaded the journal operation but compared the chain marker with its payload_hash ARGUMENT, so a caller passing Q for an operation bound to P could drive CONFIRMED off a marker of Q.",
+   "now": "The journal's binding is authoritative; a caller expectation that disagrees is an error. ChainReader returns ChainEvidence carrying chain id, controller, block number/hash and finality, and reconciliation refuses evidence from the wrong chain or controller and refuses an unfinalized reading."
+  }
+ },
+ "still_not_established": {
+  "L10": "BLOCKED-UNKNOWN. No KeeperHub organisation API key. The authenticated route has never been called; it is neither stubbed nor simulated.",
+  "server_side_encoding": "Whether KeeperHub's encoder reproduces the intended calldata from functionArgs. One authenticated dry run would settle it.",
+  "native_result_ack": "The real native consumer/acknowledgement boundary is not yet connected to the submission path. A local journal transition is NOT native acknowledgement.",
+  "composed_trace": "No genuine end-to-end native-producer -> admitted -> signed -> submitted -> controller-effect -> native-result trace exists yet.",
+  "public_chain": "Nothing deployed, funded or executed on any public chain."
+ }
 }

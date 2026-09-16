@@ -1,41 +1,57 @@
 """The KeeperHub execution client: the outer caller/payer route.
 
-Held signs an authorization envelope and then needs somebody to actually land the
-controller call on chain. That is KeeperHub's generic
-`POST /api/execute/contract-call` route (route-evidence L4: the Morpho plugin is not
-used). This module builds that request, sends it, and classifies what came back.
+Held signs an authorization envelope and then needs somebody to land the controller call
+on chain. That is KeeperHub's `POST /api/execute/contract-call` route (route-evidence L4:
+the Morpho plugin is not used).
+
+## This module implements the DOCUMENTED contract, not an invented one
+
+An earlier version of this file sent `to` and `data`, put `idempotencyKey` in the JSON
+body, polled `/api/execute/{id}`, and collapsed every 409 into "in progress". None of
+that matches the published API. The most serious consequence was not the wrong field
+names: the client **retried ambiguous failures while sending no idempotency header at
+all**, so the retry was not protected by the mechanism its own comments claimed.
+
+The documented contract, from https://docs.keeperhub.com/api/direct-execution
+(reread 2026-09-16):
+
+  * Body: `contractAddress`, `chainId`, `functionName` (alias `abiFunction`),
+    `functionArgs` (JSON array **as a string**), `abi` (JSON **string**), `value`
+    (decimal string in ETHER units), `gasLimitMultiplier`, `simulate` (STRICT boolean --
+    `"true"` and `1` are rejected with 400).
+  * Idempotency: the `Idempotency-Key` HEADER only, 24-hour window. No body field.
+  * Poll: `GET /api/execute/{executionId}/status`, returning `X-Poll-Interval-Hint`
+    (`0` means terminal).
+  * Success: `200` for reads, `202 Accepted` for writes.
+  * `409` carries a `code`: `idempotency_conflict` (same key, DIFFERENT body) or
+    `idempotency_in_progress` (same key, still processing). These are opposite
+    situations and must not share a branch.
+  * `403` is insufficient scope OR spending cap exceeded -- not only a bad credential.
+  * `429` carries `Retry-After`; the limit is 60 requests/minute/key.
+  * Scopes: `mcp:read` permits dry-run only; `mcp:write` is required to broadcast.
+
+## Why `idempotency_conflict` is a hard failure
+
+It means we reused a key with a different body. Held derives the key from the operation
+and attempt, and derives the body from the admitted action -- so if the server sees a
+different body under the same key, one of those is not deterministic. Retrying cannot
+help and would be actively wrong. It is surfaced as its own outcome so it can never be
+mistaken for "already in flight, just poll".
 
 ## L10 is a gate, not a setting
 
-`L10-authenticated-caller-payer` is BLOCKED-UNKNOWN: whether the authenticated
-organisation caller/payer accepts Held's outer call has never been tested, because it
-needs an org API key this project does not have. The public chain catalog (L3) does not
-prove it.
-
-So this module is built so that L10 cannot be quietly satisfied by a fixture:
-
-  * There is exactly ONE transport that can produce a hosted result, `HttpsTransport`,
-    and it talks to a real https:// origin with a real credential.
-  * Every result carries `hosted`, set from the transport that produced it, not from an
-    argument. `OfflineTransport` exists for exercising request construction and response
-    parsing and stamps `hosted=False` on everything it touches.
-  * `assert_hosted_evidence()` refuses a non-hosted result, so a local fixture cannot be
-    filed as evidence that the hosted route works.
-
-A local test of this module establishes that Held forms the right request and reads the
-answer correctly. It does not establish L10 and must never be described as doing so.
+`L10-authenticated-caller-payer` is BLOCKED-UNKNOWN. Only `HttpsTransport` can produce a
+hosted result; `OfflineTransport` stamps `hosted=False`; `assert_hosted_evidence()`
+refuses a non-hosted result. A local test of this module establishes that Held forms the
+documented request and reads the documented answers. It does not establish L10.
 
 ## Why the outcome vocabulary is what it is
 
-The dangerous failure is not "the send failed". It is "the send may or may not have
-happened". A timeout, a dropped connection or an ambiguous 5xx all leave an operation
-whose on-chain outcome is unknown, and treating that as "not sent" is how the same
-operation gets executed twice. `SendOutcome.UNKNOWN` exists so that case has a name and
-cannot collapse into `REJECTED`.
-
-A 409 is likewise not a failure: it means this execution key is already in flight, which
-is the idempotency mechanism working. It returns `IN_PROGRESS` with the existing
-execution id so the caller polls rather than resends.
+The dangerous failure is not "the send failed" but "the send may or may not have
+happened". Timeouts, dropped connections and ambiguous 5xx all leave an operation whose
+on-chain outcome is unknown, and treating that as "not sent" is how one operation gets
+executed twice. `UNKNOWN` exists so that case has a name and cannot collapse into
+`REJECTED`.
 """
 from __future__ import annotations
 
@@ -46,7 +62,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Mapping, Protocol
+from typing import Any, Mapping, Protocol, Sequence
 
 from eth_utils import keccak
 
@@ -55,17 +71,20 @@ from held_core.canonical import hex32, normalize_address
 DEFAULT_BASE_URL = "https://app.keeperhub.com"
 CONTRACT_CALL_PATH = "/api/execute/contract-call"
 CHAINS_PATH = "/api/chains"
-EXECUTION_PATH = "/api/execute/{execution_id}"
+STATUS_PATH = "/api/execute/{execution_id}/status"
 
-# The catalog exposes an internal string `id` per chain (e.g. "9wr4m6zv2dwflb1trbzsx")
-# alongside the numeric chainId. Which of the two the contract-call route expects is NOT
-# established -- that route needs an org credential to call. Held sends `chainId`, and if
-# the authenticated route turns out to want the internal id this is the field to change.
-# Recorded rather than guessed silently.
-CHAIN_ID_FIELD_UNVERIFIED = True
+IDEMPOTENCY_HEADER = "Idempotency-Key"
+POLL_HINT_HEADER = "X-Poll-Interval-Hint"
 
-# Domain tag so an execution key can never collide with an operation id or a payload
-# hash if one is ever pasted into the wrong field.
+# The documented idempotency window. Past it, the server no longer dedupes, so a resend
+# is a genuinely new submission and must be preceded by an on-chain consumption check.
+IDEMPOTENCY_WINDOW_SECONDS = 24 * 3600
+
+# Documented 409 codes. Opposite meanings; never merge these branches.
+CODE_IDEMPOTENCY_CONFLICT = "idempotency_conflict"
+CODE_IDEMPOTENCY_IN_PROGRESS = "idempotency_in_progress"
+
+# Domain tag so an execution key can never collide with an operation id or payload hash.
 EXECUTION_KEY_DOMAIN = b"held.keeperhub.execution-key.v1"
 
 _KEY_SHAPED = re.compile(r"(?:^|[^0-9a-zA-Z])(?:0x)?[0-9a-fA-F]{40,}(?:$|[^0-9a-zA-Z])")
@@ -76,42 +95,36 @@ class KeeperHubError(Exception):
 
 
 class L10Blocked(KeeperHubError):
-    """The authenticated organisation route is not available.
-
-    Named after the route-evidence layer on purpose: this is the open gate, and it is
-    never satisfied by a local fixture.
-    """
+    """The authenticated organisation route is not available."""
 
 
 class CredentialError(KeeperHubError):
-    """The credential reference is malformed, key-shaped, or points at nothing."""
+    """The credential reference is malformed, secret-shaped, or points at nothing."""
 
 
-class ExecutionInProgress(KeeperHubError):
-    """This execution key is already in flight. Poll; do not resend."""
-
-    def __init__(self, execution_id: str | None, message: str) -> None:
-        super().__init__(message)
-        self.execution_id = execution_id
+class RequestIntegrityError(KeeperHubError):
+    """The request would not encode to the calldata it is supposed to carry."""
 
 
 class SendOutcome(str, Enum):
     """What is known about a submission. `UNKNOWN` is the whole point."""
 
-    ACCEPTED = "ACCEPTED"        # KeeperHub owns it; an execution id exists
-    IN_PROGRESS = "IN_PROGRESS"  # already in flight under this execution key
-    REJECTED = "REJECTED"        # definitively refused; nothing was broadcast
-    UNKNOWN = "UNKNOWN"          # may or may not have been broadcast. NEVER "not sent".
+    ACCEPTED = "ACCEPTED"                # 202 (write) / 200 (read); KeeperHub owns it
+    SIMULATED = "SIMULATED"              # a dry run succeeded; NOT an execution
+    IN_PROGRESS = "IN_PROGRESS"          # same key still processing; poll, do not resend
+    IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"  # same key, DIFFERENT body: a bug
+    REJECTED = "REJECTED"                # definitively refused; nothing was broadcast
+    UNKNOWN = "UNKNOWN"                  # may or may not have broadcast. NEVER "not sent"
 
 
-# Definitively-refused statuses. Anything not listed is treated as UNKNOWN, because a
-# status we do not recognise is not evidence that nothing happened.
+# Definitively-refused statuses: the request was understood and declined, so nothing was
+# broadcast. Anything NOT listed leaves the outcome unknown.
 _DEFINITIVE_REJECTION = frozenset({400, 401, 403, 404, 422})
 
 
 @dataclass(frozen=True)
 class CredentialReference:
-    """Where the org API key lives. Never what it is. Mirrors the signer's discipline."""
+    """Where the org API key lives. Never what it is."""
 
     ref: str
 
@@ -124,9 +137,7 @@ class CredentialReference:
                 "only the NAME is ever persisted."
             )
         if not self.ref.startswith("env:"):
-            raise CredentialError(
-                f"credential reference must be 'env:NAME'; got {self.ref!r}"
-            )
+            raise CredentialError(f"credential reference must be 'env:NAME'; got {self.ref!r}")
 
     @property
     def env_var(self) -> str:
@@ -148,16 +159,18 @@ class CredentialReference:
 
 
 def execution_key(operation_id: bytes | str, attempt_id: str) -> str:
-    """The idempotency key KeeperHub dedupes on.
+    """The value sent as the `Idempotency-Key` header.
 
     Bound to the ATTEMPT, not just the operation. Retrying the same attempt after a
     timeout must reuse the key so KeeperHub collapses it; a deliberately new attempt
-    (after a definitive rejection, or under a new epoch) is a different send and gets a
+    (after a definitive rejection, under a new epoch) is a different send and gets a
     different key. Keying on the operation alone would make a legitimate replacement
     attempt indistinguishable from a duplicate.
     """
     if isinstance(operation_id, str):
-        operation_id = bytes.fromhex(operation_id[2:] if operation_id.startswith("0x") else operation_id)
+        operation_id = bytes.fromhex(
+            operation_id[2:] if operation_id.startswith("0x") else operation_id
+        )
     if not isinstance(operation_id, bytes) or len(operation_id) != 32:
         raise KeeperHubError("operation_id: expected 32 bytes")
     if not attempt_id or not isinstance(attempt_id, str):
@@ -167,41 +180,85 @@ def execution_key(operation_id: bytes | str, attempt_id: str) -> str:
 
 @dataclass(frozen=True)
 class ContractCallRequest:
-    """One outer call for KeeperHub to make on Held's behalf."""
+    """One outer call, in the documented schema.
+
+    `expected_calldata` is not sent. It is the calldata these arguments MUST encode to,
+    and `verify_encoding()` checks that locally before anything leaves. Sending
+    `functionName`/`functionArgs` hands encoding to the server, so without this check
+    Held would be trusting a remote encoder to reproduce the bytes the runner signed
+    over.
+    """
 
     chain_id: int
-    to: str
-    calldata: str
-    execution_key: str
-    operation_id: str
-    attempt_id: str
-    value: int = 0
+    contract_address: str
+    function_name: str
+    function_args: Sequence[Any]
+    abi: Sequence[Mapping[str, Any]]
+    expected_calldata: str
+    value_ether: str = "0"
+    simulate: bool = False
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "to", normalize_address(self.to, "to"))
-        if not isinstance(self.calldata, str) or not self.calldata.startswith("0x"):
-            raise KeeperHubError("calldata must be a 0x-prefixed hex string")
-        if len(self.calldata) % 2 or len(self.calldata) < 10:
-            raise KeeperHubError("calldata is not a whole number of bytes with a selector")
-        if self.value != 0:
-            # Held's controller entry points are non-payable, so a non-zero value is a
-            # construction bug, and paying ETH is not something to discover in a receipt.
-            raise KeeperHubError("value must be 0: the controller entry points are non-payable")
+        object.__setattr__(
+            self, "contract_address", normalize_address(self.contract_address, "contractAddress")
+        )
+        if not isinstance(self.simulate, bool):
+            # The API rejects a non-boolean with 400; catching it here keeps a
+            # construction bug from consuming a request against the rate limit.
+            raise KeeperHubError("simulate must be a strict boolean (documented)")
+        if not isinstance(self.expected_calldata, str) or not self.expected_calldata.startswith("0x"):
+            raise KeeperHubError("expected_calldata must be 0x-prefixed hex")
+        if self.value_ether != "0":
+            # The controller entry points are non-payable. `value` is documented in
+            # ETHER units, not base units, so a mistake here is a large one.
+            raise KeeperHubError("value must be \"0\": the controller entry points are non-payable")
+
+    def verify_encoding(self) -> None:
+        """Re-encode the arguments and require the expected calldata, byte for byte.
+
+        The documented API takes `functionName`/`functionArgs`, so the SERVER encodes.
+        The runner's signature commits to an action hash the controller recomputes from
+        the arguments it actually receives, which means a divergent encoding would be
+        discovered on chain, after an execution had been spent. This proves locally that
+        these arguments are the ones that produce the intended calldata.
+
+        It does NOT prove KeeperHub's encoder agrees. That needs one authenticated dry
+        run and is blocked on L10.
+        """
+        from .controller_abi import decode_and_match
+
+        decode_and_match(self.expected_calldata, self.function_name, self.function_args)
 
     def to_payload(self) -> dict[str, Any]:
+        """The documented body. `functionArgs` and `abi` are JSON STRINGS."""
         return {
+            "contractAddress": self.contract_address,
             "chainId": self.chain_id,
-            "to": self.to,
-            "data": self.calldata,
-            "value": str(self.value),
-            "idempotencyKey": self.execution_key,
-            # Held's own correlation fields, echoed back on polling so a receipt can be
-            # tied to the journal row without trusting ordering.
-            "metadata": {
-                "heldOperationId": self.operation_id,
-                "heldAttemptId": self.attempt_id,
-            },
+            "functionName": self.function_name,
+            "functionArgs": json.dumps(_jsonable(self.function_args)),
+            "abi": json.dumps(_jsonable(self.abi)),
+            "value": self.value_ether,
+            "simulate": self.simulate,
         }
+
+
+def _jsonable(value: Any) -> Any:
+    """Render bytes as 0x-hex and ints as decimal strings for JSON transport.
+
+    Large uint256 values must not become JSON numbers: they exceed IEEE-754 exact
+    integer range and a JSON parser is free to mangle them.
+    """
+    if isinstance(value, bytes):
+        return "0x" + value.hex()
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
 
 
 @dataclass(frozen=True)
@@ -212,11 +269,18 @@ class SendResult:
     execution_id: str | None = None
     tx_hash: str | None = None
     error: str | None = None
+    error_code: str | None = None
+    retryable: bool | None = None
+    poll_hint_seconds: float | None = None
     raw: Mapping[str, Any] = field(default_factory=dict)
     attempts_made: int = 1
 
+    @property
+    def terminal(self) -> bool:
+        """A documented poll hint of 0 means the execution has reached a final state."""
+        return self.poll_hint_seconds == 0
+
     def assert_hosted_evidence(self) -> "SendResult":
-        """Refuse to let a local fixture stand in for the hosted route."""
         if not self.hosted:
             raise L10Blocked(
                 "this result came from a non-hosted transport, so it is evidence about "
@@ -241,22 +305,22 @@ class HttpResponse:
             return {}
         return parsed if isinstance(parsed, dict) else {"data": parsed}
 
+    def header(self, name: str) -> str | None:
+        for k, v in self.headers.items():
+            if k.lower() == name.lower():
+                return v
+        return None
+
 
 class Transport(Protocol):
     hosted: bool
 
-    def request(
-        self, method: str, url: str, *, headers: Mapping[str, str], body: bytes | None, timeout: float
-    ) -> HttpResponse: ...
+    def request(self, method: str, url: str, *, headers: Mapping[str, str],
+                body: bytes | None, timeout: float) -> HttpResponse: ...
 
 
 class HttpsTransport:
-    """The ONLY transport that can produce hosted evidence.
-
-    Requires an https:// origin. Plain http would put the org credential on the wire in
-    clear, and a http://localhost stand-in is exactly the shape of thing that would let
-    a local fixture masquerade as the hosted route.
-    """
+    """The ONLY transport that can produce hosted evidence."""
 
     hosted = True
 
@@ -269,24 +333,16 @@ class HttpsTransport:
             )
         self.base_url = base_url.rstrip("/")
 
-    def request(
-        self, method: str, url: str, *, headers: Mapping[str, str], body: bytes | None, timeout: float
-    ) -> HttpResponse:
+    def request(self, method: str, url: str, *, headers: Mapping[str, str],
+                body: bytes | None, timeout: float) -> HttpResponse:
         import requests
 
-        resp = requests.request(
-            method, url, headers=dict(headers), data=body, timeout=timeout
-        )
+        resp = requests.request(method, url, headers=dict(headers), data=body, timeout=timeout)
         return HttpResponse(resp.status_code, resp.content, dict(resp.headers))
 
 
 class OfflineTransport:
-    """Canned responses for exercising construction and parsing. NEVER hosted.
-
-    Everything it produces is stamped `hosted=False`, so `assert_hosted_evidence()`
-    rejects it. It exists so the retry, conflict and classification logic can be tested
-    without inventing a KeeperHub that answers the way we hope.
-    """
+    """Canned responses for exercising construction and parsing. NEVER hosted."""
 
     hosted = False
 
@@ -294,9 +350,8 @@ class OfflineTransport:
         self._responses = list(responses)
         self.calls: list[dict[str, Any]] = []
 
-    def request(
-        self, method: str, url: str, *, headers: Mapping[str, str], body: bytes | None, timeout: float
-    ) -> HttpResponse:
+    def request(self, method: str, url: str, *, headers: Mapping[str, str],
+                body: bytes | None, timeout: float) -> HttpResponse:
         self.calls.append({
             "method": method, "url": url, "headers": dict(headers),
             "body": json.loads(body) if body else None,
@@ -311,7 +366,7 @@ class OfflineTransport:
 
 @dataclass
 class BackoffPolicy:
-    """Retry pacing. `Retry-After` from the server always wins over our own guess."""
+    """Retry pacing. A documented `Retry-After` is obeyed, never shortened."""
 
     max_attempts: int = 4
     base_seconds: float = 0.5
@@ -320,28 +375,26 @@ class BackoffPolicy:
 
     def delay_for(self, attempt: int, retry_after: float | None = None) -> float:
         if retry_after is not None:
-            return min(max(retry_after, 0.0), self.max_seconds)
+            # NOT capped by max_seconds. Capping silently shortens the pacing the
+            # server asked for, which is how a client earns a harder rate limit.
+            # max_seconds bounds OUR guess; it does not overrule the server.
+            return max(retry_after, 0.0)
         raw = min(self.base_seconds * (2 ** max(attempt - 1, 0)), self.max_seconds)
         return raw * (1.0 + random.uniform(-self.jitter, self.jitter))
 
 
-def _retry_after_seconds(headers: Mapping[str, str]) -> float | None:
-    for name, value in headers.items():
-        if name.lower() == "retry-after":
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return None
-    return None
+def _retry_after_seconds(resp: HttpResponse) -> float | None:
+    raw = resp.header("Retry-After")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 class KeeperHubClient:
-    """Builds, sends and classifies KeeperHub executions.
-
-    The client never decides *whether* to send. That belongs to the journal, which must
-    have recorded the attempt before any network I/O so a crash mid-send leaves an
-    outcome-unknown row rather than a silent gap.
-    """
+    """Builds, sends and classifies KeeperHub executions."""
 
     def __init__(
         self,
@@ -370,15 +423,17 @@ class KeeperHubClient:
         )
 
     # ------------------------------------------------------------------ headers --
-    def _headers(self) -> dict[str, str]:
-        return {
+    def _headers(self, idempotency_key: str | None = None) -> dict[str, str]:
+        h = {
             "Authorization": f"Bearer {self.credential.resolve()}",
             "Content-Type": "application/json",
             "User-Agent": "held/0.1 (+keeperhub-agent-economy)",
         }
+        if idempotency_key:
+            h[IDEMPOTENCY_HEADER] = idempotency_key
+        return h
 
     def _public_headers(self) -> dict[str, str]:
-        """Headers for an explicitly unauthenticated endpoint. Carries no credential."""
         return {
             "Content-Type": "application/json",
             "User-Agent": "held/0.1 (+keeperhub-agent-economy)",
@@ -398,76 +453,66 @@ class KeeperHubClient:
 
         Verified live: this endpoint answers 200 with the full catalog whether or not a
         credential is sent, so a 200 here says nothing about the organisation route.
-        Route-evidence L3 already recorded exactly this boundary. It is exposed as its
-        own method so nobody reaches for it as a substitute for `preflight`.
+        Exposed as its own method so nobody reaches for it as a substitute preflight.
         """
-        return self._send("GET", CHAINS_PATH, None, authenticated=False)
+        return self._send("GET", CHAINS_PATH, None, None, authenticated=False)
 
     def preflight(self, probe: ContractCallRequest) -> SendResult:
-        """The L10 check: does the AUTHENTICATED organisation route accept Held's call?
+        """The L10 check: a SIMULATE-mode call on the authenticated route.
 
-        This must hit an endpoint that actually requires the credential. An earlier
-        version of this method used GET /api/chains, which is public -- it returns 200
-        with no credential at all, so "preflight passed" would have been true of an
-        invalid key and of no key. That is precisely the vacuous check L10 is supposed
-        to be protected from.
-
-        So the preflight is a SIMULATE-mode contract call: same route, same auth, and
-        no broadcast. A 401/403 is the real negative answer; a 2xx is the first genuine
-        evidence about L10 this project would have.
+        An earlier version used GET /api/chains, which is public -- it answers 200 with
+        no credential at all, so the preflight would have "passed" for an invalid key and
+        for no key. A dry run needs only the documented `mcp:read` scope and broadcasts
+        nothing, while still proving the org credential is accepted.
         """
         return self.dry_run(probe)
 
     # --------------------------------------------------------------- submission --
-    def dry_run(self, request: ContractCallRequest) -> SendResult:
-        """Ask KeeperHub to validate without broadcasting.
+    def dry_run(self, request: ContractCallRequest, idempotency_key: str | None = None) -> SendResult:
+        """Ask KeeperHub to validate without broadcasting. Needs only `mcp:read`."""
+        if not request.simulate:
+            raise KeeperHubError(
+                "dry_run requires a request built with simulate=True. The flag is part "
+                "of the signed-over request identity, not something to flip in transit."
+            )
+        request.verify_encoding()
+        return self._send("POST", CONTRACT_CALL_PATH, request.to_payload(), idempotency_key)
 
-        A dry run that succeeds is NOT an execution: it returns no tx hash and consumes
-        no operation. The flag is sent explicitly rather than by omitting something.
-        """
-        payload = dict(request.to_payload())
-        payload["simulate"] = True
-        return self._send("POST", CONTRACT_CALL_PATH, payload)
-
-    def broadcast(self, request: ContractCallRequest) -> SendResult:
-        """Submit for real. The caller must have journaled the attempt first."""
-        payload = dict(request.to_payload())
-        payload["simulate"] = False
-        return self._send("POST", CONTRACT_CALL_PATH, payload)
+    def broadcast(self, request: ContractCallRequest, idempotency_key: str) -> SendResult:
+        """Submit for real. Requires `mcp:write` and an idempotency key."""
+        if request.simulate:
+            raise KeeperHubError("broadcast requires simulate=False")
+        if not idempotency_key:
+            raise KeeperHubError(
+                "broadcast requires an Idempotency-Key. Retrying an ambiguous send "
+                "without one is an unprotected duplicate submission."
+            )
+        request.verify_encoding()
+        return self._send("POST", CONTRACT_CALL_PATH, request.to_payload(), idempotency_key)
 
     def poll(self, execution_id: str) -> SendResult:
         if not execution_id:
             raise KeeperHubError("execution_id is required to poll")
-        return self._send("GET", EXECUTION_PATH.format(execution_id=execution_id), None)
+        return self._send("GET", STATUS_PATH.format(execution_id=execution_id), None, None)
 
     # ------------------------------------------------------------------ sending --
-    def _send(
-        self,
-        method: str,
-        path: str,
-        payload: Mapping[str, Any] | None,
-        *,
-        authenticated: bool = True,
-    ) -> SendResult:
+    def _send(self, method: str, path: str, payload: Mapping[str, Any] | None,
+              idempotency_key: str | None, *, authenticated: bool = True) -> SendResult:
         url = f"{self.base_url}{path}"
         body = json.dumps(payload).encode() if payload is not None else None
-        # Resolving the credential is what raises L10Blocked when there is none, so an
-        # authenticated call can never proceed credential-less.
-        headers = self._headers() if authenticated else self._public_headers()
+        headers = self._headers(idempotency_key) if authenticated else self._public_headers()
         last: SendResult | None = None
 
         for attempt in range(1, self.backoff.max_attempts + 1):
             try:
                 resp = self.transport.request(
-                    method, url, headers=headers, body=body, timeout=self.timeout
-                )
+                    method, url, headers=headers, body=body, timeout=self.timeout)
             except Exception as exc:  # timeout, connection reset, DNS, TLS
                 # The request may have reached KeeperHub and been acted on. Calling this
                 # "not sent" is exactly how an operation gets executed twice.
                 last = SendResult(
                     SendOutcome.UNKNOWN, self.transport.hosted,
-                    error=f"{type(exc).__name__}: {exc}", attempts_made=attempt,
-                )
+                    error=f"{type(exc).__name__}: {exc}", attempts_made=attempt)
                 if attempt < self.backoff.max_attempts:
                     self._sleep(self.backoff.delay_for(attempt))
                     continue
@@ -475,12 +520,13 @@ class KeeperHubClient:
 
             result = self._classify(resp, attempt)
 
+            # An in-progress conflict is retryable by POLLING, not by resending; the
+            # caller does that. Only rate limits and ambiguous server errors are resent,
+            # and always under the identical key and body.
             if resp.status_code == 429 or 500 <= resp.status_code < 600:
                 last = result
                 if attempt < self.backoff.max_attempts:
-                    self._sleep(
-                        self.backoff.delay_for(attempt, _retry_after_seconds(resp.headers))
-                    )
+                    self._sleep(self.backoff.delay_for(attempt, _retry_after_seconds(resp)))
                     continue
                 return last
 
@@ -493,42 +539,68 @@ class KeeperHubClient:
         hosted = self.transport.hosted
         execution_id = data.get("executionId") or data.get("id")
         tx_hash = data.get("transactionHash") or data.get("txHash")
+        code = data.get("code")
+        retryable = data.get("retryable")
+        hint = resp.header(POLL_HINT_HEADER)
+        poll_hint = None
+        if hint is not None:
+            try:
+                poll_hint = float(hint)
+            except (TypeError, ValueError):
+                poll_hint = None
+
+        def make(outcome: SendOutcome, **kw) -> SendResult:
+            return SendResult(
+                outcome, hosted, resp.status_code, execution_id, tx_hash,
+                error_code=code, retryable=retryable, poll_hint_seconds=poll_hint,
+                raw=data, attempts_made=attempts_made, **kw)
 
         if 200 <= resp.status_code < 300:
-            return SendResult(
-                SendOutcome.ACCEPTED, hosted, resp.status_code, execution_id, tx_hash,
-                raw=data, attempts_made=attempts_made,
-            )
+            # A simulation that returns 200 is NOT an execution. Distinguishing this
+            # keeps a dry run from ever being recorded as economic success.
+            if data.get("simulated") is True or data.get("simulation") is not None:
+                return make(SendOutcome.SIMULATED)
+            return make(SendOutcome.ACCEPTED)
 
         if resp.status_code == 409:
-            # The idempotency key is already in flight. This is the dedupe working, not
-            # a failure: resending would be the mistake.
-            return SendResult(
-                SendOutcome.IN_PROGRESS, hosted, 409, execution_id, tx_hash,
-                error=data.get("message") or data.get("error"),
-                raw=data, attempts_made=attempts_made,
-            )
+            if code == CODE_IDEMPOTENCY_CONFLICT:
+                # Same key, DIFFERENT body. Held derives both deterministically, so this
+                # says one of them is not deterministic. Retrying cannot fix it.
+                return make(
+                    SendOutcome.IDEMPOTENCY_CONFLICT,
+                    error=(
+                        "idempotency_conflict: this key was used with a different body. "
+                        "Held derives the key from (operation, attempt) and the body from "
+                        "the admitted action, so this indicates a non-deterministic "
+                        "request, not a duplicate to poll. "
+                        f"{data.get('message') or ''}".strip()
+                    ))
+            if code == CODE_IDEMPOTENCY_IN_PROGRESS:
+                return make(SendOutcome.IN_PROGRESS,
+                            error=data.get("message") or "already in flight under this key")
+            # A 409 with no documented code is not something to guess about.
+            return make(SendOutcome.UNKNOWN,
+                        error=f"unrecognised 409 (code={code!r}): {data.get('message')}")
 
-        if resp.status_code == 401 or resp.status_code == 403:
-            return SendResult(
-                SendOutcome.REJECTED, hosted, resp.status_code,
-                error=(
-                    f"L10: the organisation credential was refused ({resp.status_code}). "
-                    f"{data.get('message') or data.get('error') or ''}".strip()
-                ),
-                raw=data, attempts_made=attempts_made,
-            )
+        if resp.status_code == 401:
+            return make(SendOutcome.REJECTED,
+                        error=f"L10: the organisation credential was rejected (401). "
+                              f"{data.get('message') or ''}".strip())
+
+        if resp.status_code == 403:
+            # Documented as insufficient scope OR spending cap exceeded. These need
+            # different operator responses, so the message keeps them apart.
+            return make(SendOutcome.REJECTED,
+                        error=(
+                            "403: insufficient scope or spending cap exceeded. Broadcast "
+                            "needs mcp:write; mcp:read permits dry runs only. "
+                            f"{data.get('message') or ''}".strip()))
 
         if resp.status_code in _DEFINITIVE_REJECTION:
-            return SendResult(
-                SendOutcome.REJECTED, hosted, resp.status_code,
-                error=data.get("message") or data.get("error") or resp.body[:200].decode(errors="replace"),
-                raw=data, attempts_made=attempts_made,
-            )
+            return make(SendOutcome.REJECTED,
+                        error=data.get("message") or data.get("error")
+                        or resp.body[:200].decode(errors="replace"))
 
         # Anything else -- including every 5xx -- leaves the outcome genuinely unknown.
-        return SendResult(
-            SendOutcome.UNKNOWN, hosted, resp.status_code, execution_id, tx_hash,
-            error=data.get("message") or data.get("error") or f"HTTP {resp.status_code}",
-            raw=data, attempts_made=attempts_made,
-        )
+        return make(SendOutcome.UNKNOWN,
+                    error=data.get("message") or data.get("error") or f"HTTP {resp.status_code}")

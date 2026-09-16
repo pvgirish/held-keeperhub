@@ -1,0 +1,15 @@
+{
+  "14_Held_Locked_V4.md": "fe596cdc516b02aa73e8ac40c4c60741f14653e95d2dc71bd636f4f3f9279b44",
+  "15_Held_V4_Phases_and_Prompts.md": "d209a922b4026d9b508ef36a20898d3ebbd7007225e844d4804791165b074f7f",
+  "Continuous_Execution_Directive.md": "831399aedccfcdfb84fd19410ae5bf9eb6f22a948fff2b8d1b33c22764b43505",
+  "held-v4-prompts/00_COMMON.md": "685478be7ad2d4f1972ecd4ab3bd7ae2c5720e9201cdf4c776073a8f01bb5f19",
+  "held-v4-prompts/P00_baseline-and-configuration.md": "179b8b0e822ceefc40956e41e72dc75639d2c26e800332e22e6782156b7378f5",
+  "held-v4-prompts/P01_identity-and-journal.md": "1b706fc0d266e74631a8b38fcc4d29ae29a78eb7ae11a5159841ef0b74d8a6fc",
+  "held-v4-prompts/P02_controller-and-roles.md": "b135ec05112b510a083a1aeadac7086cb6754651de213efdc11c42d6c7ca8240",
+  "held-v4-prompts/P03_native-keeperhub-execution.md": "90c23c5beafe750e198dcd3f18584e4a370eb7b985a0ed30a817755537665175",
+  "held-v4-prompts/P04_authority-and-handover.md": "5b8fcf8ea3b21ae7f95414212a9db2828640211aa3718e074c811fa97bc9da91",
+  "held-v4-prompts/P05_operator-product-and-privacy.md": "93094494e0d6637f11eaa0c9a245d0d2c88c59db2f9e187c460a2ef1d2700891",
+  "held-v4-prompts/P06_adversarial-and-advantage-tests.md": "ca9750b05179e00ca24d8301905d17d40f463a9fac5137f4184b98013481425b",
+  "held-v4-prompts/P07_independent-install-and-release.md": "c1cda9a5a4d6937e6874927e83b96cbd90fde66b126d35918dce3945a9109fb9",
+  "held-v4-prompts/P08_submission-and-live-demo.md": "3d8c2ab09db6db3154d9d505d7e1219a30cd3543d62bb4aedc6caa9994cba597"
+}

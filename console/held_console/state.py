@@ -3,20 +3,32 @@
 Separated from the HTTP layer on purpose: the four operator jobs are questions about
 state, and they should be answerable and testable without a browser.
 
-## The four operator jobs
+## The four views are SPECIFIED, not derived
 
-Derived directly from the locked product sentence -- "run a supported native Almanak
-strategy under customer-approved limits, then change those limits or replace the runner
-without losing consumption history or guessing what an interrupted operation did":
+V4 §8 (`docs/plan/14_Held_Locked_V4.md`) names them:
 
-  J1  Run the strategy under customer-approved limits.
-  J2  Change those limits, under owner approval.
-  J3  Replace the runner.
-  J4  Resolve an interrupted operation without guessing what it did.
+  1. **Terms** -- market, supported actions, current ceilings, Used/Remaining, floor and
+     precise changes.
+  2. **Activity** -- action/HOLD/refusal/unknown, original operation, KeeperHub attempt,
+     transaction and effect evidence.
+  3. **Change & handover** -- fence status, unresolved work, owner cleanup, candidate
+     terms, activation and missing inputs.
+  4. **Authority & export** -- scope/block/finality, complete/incomplete sections,
+     credential references, offline recovery package.
 
-The enumeration is recorded here rather than assumed, because the locked V4 spec is not
-in this tree. If the canonical wording differs, this is the one place to correct it and
-the tests below name the jobs explicitly so a correction is visible.
+An earlier version of this module DERIVED a different four ("J1-J4") from the product
+sentence, because the locked plan was not in the repository at the time. That was the
+wrong move even though the derivation looked reasonable: the authoritative list existed
+and should have been asked for. The plan is now restored under `docs/plan/` and is the
+source of truth.
+
+The J-labels below survive as explanatory shorthand for the operator TASK each view
+serves, and they are useful for naming tests. They do NOT replace the four required
+views, their required data or their required actions, and this module does not yet
+implement §8 in full -- see `evidence/P05/acceptance.json` for what is missing.
+
+  J1 run under limits (Terms)              J3 replace the runner (Change & handover)
+  J2 change limits (Change & handover)     J4 resolve an interruption (Activity)
 
 ## What the console deliberately cannot do
 
@@ -266,7 +278,7 @@ def prepare_runner_replacement(current: LiveState, new_runner: str,
 # actually cares about: can I act, and do I know what happened?
 _INTERRUPTION_READING = {
     "CREATED": ("Nothing was sent.", "Safe to authorize."),
-    "AUTHORIZED": ("Signed, but nothing was sent.", "Safe to send or to abandon."),
+    "AUTHORIZED": ("Signed. No attempt has been claimed.", "Safe to send or to abandon."),
     "DISPATCHED": (
         "Handed to the executor. The chain has not been read yet.",
         "Read consumed[operationId] on the controller. That is the only answer.",
@@ -293,6 +305,7 @@ class Interruption:
     what_is_known: str
     what_to_do: str
     resolved: bool
+    pending_attempt: str | None = None
 
     def to_record(self) -> dict[str, Any]:
         return {
@@ -303,26 +316,49 @@ class Interruption:
             "what_is_known": self.what_is_known,
             "what_to_do": self.what_to_do,
             "resolved": self.resolved,
+            "pending_attempt": self.pending_attempt,
         }
 
 
 def read_interruptions(journal) -> list[Interruption]:
-    """J4. Every operation a restart must resolve, with a reading rather than a code."""
+    """J4. Every operation a restart must resolve, with a reading rather than a code.
+
+    An unresolved ATTEMPT overrides the operation's state wording. The state alone is not
+    enough: an operation can read AUTHORIZED while a claimed attempt is outstanding, and
+    telling an operator "nothing was sent" in that situation is how a duplicate
+    submission gets authorised by hand. The attempt row is the authority on whether
+    bytes may have left.
+    """
     out = []
     for op in journal.unresolved():
         known, todo = _INTERRUPTION_READING.get(
             op.state.value, ("Unrecognised state.", "Investigate before acting.")
         )
+        attempts = journal.attempts_for(op.operation_id)
+        pending = None
+        if hasattr(journal, "unresolved_attempt"):
+            pending = journal.unresolved_attempt(op.operation_id)
+        if pending is not None:
+            known = (
+                "A submission was claimed and may have reached the executor. "
+                "This is NOT 'nothing was sent'."
+            )
+            todo = (
+                "Read consumed[operationId] on the controller. If it did not execute, "
+                "RESUME the original attempt under its original idempotency key -- never "
+                "start a new submission."
+            )
         out.append(
             Interruption(
                 operation_id=op.operation_id,
                 state=op.state.value,
                 payload_hash=op.payload_hash,
                 epoch=op.epoch,
-                attempts=len(journal.attempts_for(op.operation_id)),
+                attempts=len(attempts),
                 what_is_known=known,
                 what_to_do=todo,
                 resolved=op.state.value in ("CONFIRMED", "FAILED"),
+                pending_attempt=(pending or {}).get("attempt_id") if pending else None,
             )
         )
     return out

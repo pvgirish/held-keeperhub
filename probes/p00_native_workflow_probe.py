@@ -576,10 +576,13 @@ for name, result, expected in CASES:
         j.create_or_reopen(oid, action.payload_hash(), src, 0, 1)
         j.transition(oid, J.OperationState.AUTHORIZED)
         if name != "never-submitted":
-            j.record_attempt_before_send(f"att-{name}", oid,
-                                         canonical.canonical_hash({"case": name}), 1,
-                                         RUNNER_A, "env:HELD_RUNNER_KEY")
-            j.transition(oid, J.OperationState.DISPATCHED)
+            # claim_for_dispatch moves the operation to DISPATCHED in the SAME
+            # transaction as the attempt row, so there is no separate transition.
+            j.claim_for_dispatch(f"att-{name}", oid,
+                                 canonical.canonical_hash({"case": name}), 1,
+                                 RUNNER_A, "env:HELD_RUNNER_KEY",
+                                 idempotency_key="0x" + "ee" * 32,
+                                 request_body="{}", calldata="0xabcd")
         j.transition(oid, derived)
         if derived is J.OperationState.UNKNOWN:
             try:

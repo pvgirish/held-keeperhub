@@ -260,9 +260,13 @@ def _():
     j = J.Journal(p)
     j.create_or_reopen(oid, ph, "d1", 0, 1)
     j.transition(oid, J.OperationState.AUTHORIZED)
-    j.record_attempt_before_send("att-1", oid, canonical.canonical_hash({"e": "1"}), 1,
-                                 RUNNER_A, "env:HELD_RUNNER_KEY")
-    j.transition(oid, J.OperationState.DISPATCHED)
+    # claim_for_dispatch moves the operation to DISPATCHED in the SAME transaction as
+    # the attempt row. The old two-step (attempt now, state later) left a crash window
+    # in which a restart saw AUTHORIZED + PENDING and started a second submission.
+    j.claim_for_dispatch("att-1", oid, canonical.canonical_hash({"e": "1"}), 1,
+                         RUNNER_A, "env:HELD_RUNNER_KEY",
+                         idempotency_key="0x" + "ee" * 32, request_body="{}",
+                         calldata="0xabcd")
     del j  # drop the handle without close(): the commits must already be durable
     with J.Journal(p) as j2:
         op = j2.get(oid)
@@ -282,8 +286,9 @@ def _():
         j.transition(oid, J.OperationState.CONFIRMED)
         expect_raises(J.StateTransitionError, j.transition, oid, J.OperationState.AUTHORIZED)
         expect_raises(
-            J.StateTransitionError, j.record_attempt_before_send,
+            J.StateTransitionError, j.claim_for_dispatch,
             "att-2", oid, canonical.canonical_hash({"e": "2"}), 2, RUNNER_B, "env:K",
+            idempotency_key="0x" + "ee" * 32, request_body="{}", calldata="0xabcd",
         )
 
 
@@ -320,8 +325,9 @@ def _():
     with J.Journal(p) as j:
         j.create_or_reopen(oid, ph, "d1", 0, 1)
         j.transition(oid, J.OperationState.AUTHORIZED)
-        j.record_attempt_before_send("att-1", oid, canonical.canonical_hash({"e": "1"}), 1,
-                                     RUNNER_A, "env:K")
+        j.claim_for_dispatch("att-1", oid, canonical.canonical_hash({"e": "1"}), 1,
+                             RUNNER_A, "env:K", idempotency_key="0x" + "ee" * 32,
+                             request_body="{}", calldata="0xabcd")
         j.transition(oid, J.OperationState.DISPATCHED)
         expect_raises(J.RecoveryBlocked, j.assert_recoverable, oid)
         j.record_send_result("att-1", keeperhub_execution_id="kh-123")
@@ -336,9 +342,13 @@ def _():
         j.create_or_reopen(oid, ph, "d1", 0, 1)
         j.transition(oid, J.OperationState.AUTHORIZED)
         h = canonical.canonical_hash({"e": "1"})
-        j.record_attempt_before_send("att-1", oid, h, 1, RUNNER_A, "env:K")
+        j.claim_for_dispatch("att-1", oid, h, 1, RUNNER_A, "env:K",
+                             idempotency_key="0x" + "ee" * 32,
+                             request_body="{}", calldata="0xabcd")
         j.record_send_result("att-1", tx_hash="0x" + "ab" * 32, sender_nonce=7)
-        j.record_attempt_before_send("att-2", oid, h, 1, RUNNER_A, "env:K",
+        j.claim_for_dispatch("att-2", oid, h, 1, RUNNER_A, "env:K",
+                             idempotency_key="0x" + "ff" * 32, request_body="{}",
+                             calldata="0xabcd",
                                      replaces_attempt_id="att-1")
         rows = j.attempts_for(oid)
         assert len(rows) == 2 and rows[1]["replaces_attempt_id"] == "att-1"
@@ -354,8 +364,9 @@ def _():
         j.transition(oid, J.OperationState.AUTHORIZED)
         leaked = "0x" + "ac" * 32  # exactly the shape of a private key
         expect_raises(
-            J.JournalError, j.record_attempt_before_send,
+            J.JournalError, j.claim_for_dispatch,
             "att-x", oid, canonical.canonical_hash({"e": "1"}), 1, RUNNER_A, leaked,
+            idempotency_key="0x" + "ee" * 32, request_body="{}", calldata="0xabcd",
         )
 
 

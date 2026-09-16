@@ -29,7 +29,7 @@ from .canonical import hex32, normalize_address, normalize_hash
 from .identity import IdentityConflict
 from .units import UnitError, uint, uint64
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class OperationState(str, Enum):
@@ -147,9 +147,22 @@ CREATE TABLE IF NOT EXISTS attempts (
     sender_nonce           INTEGER,
     replaces_attempt_id    TEXT REFERENCES attempts(attempt_id),
     state                  TEXT NOT NULL,
-    created_at             INTEGER NOT NULL
+    created_at             INTEGER NOT NULL,
+    -- The EXACT request this attempt sent. An envelope hash identifies what was
+    -- authorized; it does not let a restart resend the identical bytes under the
+    -- identical key, which is what idempotent recovery actually requires.
+    idempotency_key        TEXT,
+    request_body           TEXT,
+    calldata               TEXT,
+    -- SIMULATION never becomes an economic claim. Keeping the kind on the row stops a
+    -- dry run from ever being mistaken for an ambiguous send during recovery.
+    kind                   TEXT NOT NULL DEFAULT 'BROADCAST'
 );
 CREATE INDEX IF NOT EXISTS attempts_by_op ON attempts(operation_id);
+-- One live claim per operation. A PENDING broadcast attempt is the claim; the partial
+-- index makes a second concurrent claim a database error rather than a race.
+CREATE UNIQUE INDEX IF NOT EXISTS one_pending_broadcast_per_op
+    ON attempts(operation_id) WHERE state = 'PENDING' AND kind = 'BROADCAST';
 
 -- At-least-once delivery with an idempotent consumer acknowledgement. `acked_at` is
 -- only ever set in the SAME transaction as the consumer's own state update.
@@ -308,6 +321,11 @@ class Journal:
         ).fetchone()
         return _row_to_op(row) if row else None
 
+    def _require_transition(self, cur: OperationState, new: OperationState, oid: str) -> None:
+        """The state-machine guard, callable from inside an open transaction."""
+        if new not in _ALLOWED[cur]:
+            raise StateTransitionError(f"{cur.value} -> {new.value} is not permitted")
+
     def transition(
         self, operation_id: bytes | str, new_state: OperationState, *, epoch: int | None = None
     ) -> Operation:
@@ -355,7 +373,7 @@ class Journal:
             raise
 
     # -- outbox ----------------------------------------------------------------
-    def record_attempt_before_send(
+    def claim_for_dispatch(
         self,
         attempt_id: str,
         operation_id: bytes | str,
@@ -363,15 +381,45 @@ class Journal:
         epoch: int,
         runner: str,
         signer_ref: str,
+        *,
+        idempotency_key: str,
+        request_body: str,
+        calldata: str,
+        kind: str = "BROADCAST",
         replaces_attempt_id: str | None = None,
     ) -> None:
-        """Persist the outbox row BEFORE any network I/O.
+        """Claim the operation for dispatch and persist the exact request, atomically.
 
-        A crash after this returns but before the send leaves a DISPATCHED-able row
-        with no execution id, which recovery treats as "outcome unknown" rather than
-        as "not sent" -- the only safe reading.
+        This replaces `record_attempt_before_send`, which committed a PENDING attempt but
+        left the operation AUTHORIZED. That was a real recovery hole: after a crash
+        between the send and the response, a restart saw an AUTHORIZED operation, treated
+        it as sendable, minted a NEW attempt id and a NEW idempotency key, and submitted
+        a second unprotected request for work that may already have executed.
+
+        Three things therefore happen in ONE transaction:
+
+          1. The operation moves to DISPATCHED. It is no longer sendable, so a restart
+             cannot casually re-enter the send path.
+          2. The attempt row is written with its idempotency key, request body and
+             calldata -- everything needed to resend the IDENTICAL request under the
+             IDENTICAL key, which is what makes a retry idempotent rather than a
+             duplicate.
+          3. The unique partial index rejects a second concurrent PENDING broadcast, so
+             two submitters racing cannot both claim the same operation.
+
+        A SIMULATION does not claim the operation: a dry run is not an economic attempt
+        and must not move the state or block a later real send.
         """
         oid = _as_hash(operation_id, "operation_id")
+        if kind not in ("BROADCAST", "SIMULATION"):
+            raise UnitError("kind: expected BROADCAST or SIMULATION")
+        if kind == "BROADCAST" and not idempotency_key:
+            raise JournalError(
+                "a broadcast attempt requires an idempotency key; without one a retry is "
+                "an unprotected duplicate submission"
+            )
+        assert_no_secrets(signer_ref, "signer_ref")
+
         self._begin()
         try:
             op = self._db.execute(
@@ -379,24 +427,65 @@ class Journal:
             ).fetchone()
             if op is None:
                 raise JournalError(f"unknown operation {oid}")
-            if OperationState(op["state"]) is OperationState.CONFIRMED:
+            state = OperationState(op["state"])
+            if state is OperationState.CONFIRMED:
                 raise StateTransitionError(
                     f"operation {oid} is CONFIRMED; never re-execute a consumed operation"
                 )
+
+            if kind == "BROADCAST":
+                existing = self._db.execute(
+                    "SELECT attempt_id FROM attempts WHERE operation_id=? AND state='PENDING' "
+                    "AND kind='BROADCAST'",
+                    (oid,),
+                ).fetchone()
+                if existing is not None:
+                    raise StateTransitionError(
+                        f"operation {oid} already has an unresolved attempt "
+                        f"{existing['attempt_id']}. Resolve or resume it; do not start a "
+                        "second submission while its outcome is unknown."
+                    )
+
             self._db.execute(
                 "INSERT INTO attempts(attempt_id,operation_id,envelope_hash,epoch,runner,"
-                "signer_ref,replaces_attempt_id,state,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                "signer_ref,replaces_attempt_id,state,created_at,idempotency_key,"
+                "request_body,calldata,kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     attempt_id, oid, _as_hash(envelope_hash, "envelope_hash"),
                     uint64(epoch, "epoch"), normalize_address(runner, "runner"),
-                    assert_no_secrets(signer_ref, "signer_ref"),
-                    replaces_attempt_id, "PENDING", _now(),
+                    signer_ref, replaces_attempt_id, "PENDING", _now(),
+                    idempotency_key, request_body, calldata, kind,
                 ),
             )
+
+            if kind == "BROADCAST":
+                # The claim itself. After this commit the operation is DISPATCHED even
+                # though no byte has left the process -- which is the only safe reading,
+                # because a crash one instruction later is indistinguishable from a
+                # crash after the server received it.
+                self._require_transition(state, OperationState.DISPATCHED, oid)
+                self._db.execute(
+                    "UPDATE operations SET state=?, epoch=?, updated_at=? WHERE operation_id=?",
+                    (OperationState.DISPATCHED.value, uint64(epoch, "epoch"), _now(), oid),
+                )
             self._commit()
         except Exception:
             self._rollback()
             raise
+
+    def unresolved_attempt(self, operation_id: bytes | str) -> dict[str, Any] | None:
+        """The PENDING broadcast attempt blocking this operation, if any.
+
+        Recovery reads this to resume the ORIGINAL request under its ORIGINAL key rather
+        than minting a new one.
+        """
+        oid = _as_hash(operation_id, "operation_id")
+        row = self._db.execute(
+            "SELECT * FROM attempts WHERE operation_id=? AND state='PENDING' AND kind='BROADCAST' "
+            "ORDER BY created_at LIMIT 1",
+            (oid,),
+        ).fetchone()
+        return dict(row) if row else None
 
     def record_send_result(
         self,

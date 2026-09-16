@@ -1,20 +1,17 @@
 {
  "phase": "P04",
  "title": "Authority inventory, owner fencing, change and handover",
- "implementation_status": "locally verified on a Base-mainnet fork",
+ "implementation_status": "PARTIAL PREPARATION \u2014 fork contract tests only; the required runtime service does not exist",
  "independent_review_status": "pending",
  "accepted": false,
  "accepted_note": "Claude authored and ran this. Self-testing is not independent acceptance.",
-
  "gate": {
   "command": "make check-phase-04",
   "result": "10 passed; 0 failed",
   "evidence_kind": "REAL pinned Base-mainnet Safe 1.4.1, Zodiac Roles v2.1, Morpho Blue and native USDC on an anvil fork at block 51353212. Nothing mocked; this phase has no adversarial stage.",
   "shared_fixture": "test/contracts/HeldForkHarness.sol, extracted from the P02 suite so both phases build the same fixture and cannot drift apart. P02 re-verified at 50 tests after the extraction."
  },
-
  "the_claim_under_test": "An operator can change limits or replace the runner without losing consumption history or guessing what an interrupted operation did.",
-
  "authority_inventory": {
   "method": "Enumerated by exercising each authority against the live fork, not asserted in prose. Every party is either used successfully or shown refused, with the SPECIFIC refusal recorded.",
   "parties": {
@@ -31,14 +28,12 @@
   },
   "immutability": "safe, roles, morpho, token, marketId and lineage are immutable. No party, including the owner, can repoint them after deployment; the only state-changing external functions are activate, fence and the two typed entries."
  },
-
  "fencing": {
   "stops_work_already_authorized": "A signature minted BEFORE the fence cannot execute after it (Paused). This is the realistic case: the operator fences precisely because something is in flight.",
   "leaves_nothing_ambiguous": "The fenced operation's id was never consumed, so its outcome is readable rather than guessable.",
   "preserves_history": "Consumption counters, counts, cooldown timestamps and consumed ids all survive a fence. Fencing is not a reset.",
   "cannot_be_lifted_casually": "Only an owner activation under a NEW epoch lifts a fence. A stranger is refused; re-activating the same epoch is refused (StaleActivation)."
  },
-
  "change_and_handover": {
   "runner_replacement_mid_flight": "An operation signed by the outgoing runner is unambiguous in BOTH directions after handover: it cannot execute (WrongEpoch) and it did not execute (id not consumed). The same action may then be reauthorized by the new runner -- a first execution, not a re-execution.",
   "executed_work_survives": "An operation that already executed stays consumed across handover, and the new runner re-signing the same id is refused (OperationConsumed). Consumption carries forward.",
@@ -46,7 +41,6 @@
   "limit_change_binds_against_history": "A ceiling below existing consumption is refused (CeilingBelowConsumption). A tightened-but-valid ceiling is accepted, and the remaining budget is the NEW ceiling minus what was already spent -- 8,000 ceiling with 5,000 spent leaves 3,000, and the native Roles allowance agrees. A customer cannot be surprised by a budget that silently refills on reconfiguration.",
   "layers_cannot_drift": "A reconfiguration that changes a ceiling without re-syncing the native Roles quota is refused (AllowanceDesynchronised), and a refused reconfiguration changes nothing: still fenced, consumption intact, epoch unchanged."
  },
-
  "defects_found_in_my_own_work_this_phase": [
   {
    "what": "The membership probe hard-coded a NoMembership() selector I had not verified.",
@@ -64,13 +58,30 @@
    "fix": "Runner replacement is tested WITHOUT a policy change, which is the scenario it is about; version changes are covered by the limit-change test."
   }
  ],
-
  "known_gaps": [
   "Owner authority is modelled with vm.prank(safe). The real two-signature 2-of-3 ceremony is exercised in the P02 atomic activation batch and evidenced in P00; it is not re-proven per test here.",
   "Nothing is deployed publicly. Local fork only.",
   "runnerA holds module standing on the Safe as a fixture artifact of the isolated condition probes. It holds no role and cannot act, and the inventory records this rather than hiding it -- but a production deployment should not leave a spare EOA enabled as a module."
  ],
-
- "completeness": "P04 clauses covered: authority inventory, owner fencing, change and handover, all against the real pinned fork. Independent acceptance still pending.",
- "next": "P05 the private operator console (V4 forbids substituting a CLI without a versioned product amendment), then P06."
+ "completeness": "PARTIAL PREPARATION. Contract-level evidence only; the runtime inventory/handover service is not built and the P03 prerequisite is unmet.",
+ "next": "P05 the private operator console (V4 forbids substituting a CLI without a versioned product amendment), then P06.",
+ "phase_complete": false,
+ "reclassified_by_review": {
+  "when": "abc0fdd source review, 2026-09-16",
+  "finding": "The suite exercises a SELECTED set of known actors (owner, runner, executor, Roles, a stranger) against the fork. That is useful permission coverage. It is NOT the bounded authority SCANNER the phase requires: nothing discovers the supported paths at a common finalized block.",
+  "prerequisite_not_met": "P04 depends on an accepted P03 composed route. P03 is partial and its required hosted execution does not exist, so P04 cannot be complete regardless of its own test results. accepted=false records review status; it does not waive this.",
+  "required_artifacts_still_missing": [
+   "Bounded authority checker/report over Safe/module/guard/fallback/Role paths, Morpho grant candidates with readback, and token/Permit2 paths, at one stated finalized block/hash, publishing discovery range, source provenance, account/code assumptions and missing evidence per section.",
+   "Owner transaction builder producing Safe owner transactions (never signing as the owner).",
+   "Restartable handover state machine across fence -> reconcile -> candidate -> cleanup/readback -> activation.",
+   "Replacement export carrying native checkpoints, source and pending IDs, finalized results, quota state and credential references.",
+   "Initial bootstrap separated from native migration, including the rule that a new paused controller does NOT fence pre-existing native runner authority."
+  ]
+ },
+ "defect_found_by_review": {
+  "what": "test_RunnerReplacementMidFlightLeavesNothingToGuess switched operation ids: the in-flight operation was `ho-1` and the post-handover execution used `ho-1-again`.",
+  "why_it_matters": "V4 \u00a74 says a definitely-not-executed operation is reauthorized under the SAME id and payload. Using a new id demonstrates a different, weaker thing and skips the exact distinction the phase exists to preserve.",
+  "status": "FIXED \u2014 the test now reauthorizes the SAME id and payload under the new epoch after establishing non-execution."
+ },
+ "what_the_fork_tests_do_establish": "Owner fencing stops already-signed work; consumption, counts, cooldowns and consumed ids survive a fence; handover is unambiguous in both directions; a limit change binds against existing consumption; a reconfiguration that forgets the native quota is refused. These are real and are preserved."
 }

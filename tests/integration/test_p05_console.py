@@ -100,15 +100,19 @@ def live(active=True, used_supply=5_000_000_000, native=None) -> LiveState:
 class Jrnl:
     """A journal stub exposing only what the console reads."""
 
-    def __init__(self, ops=(), attempts=None):
+    def __init__(self, ops=(), attempts=None, pending=None):
         self._ops = list(ops)
         self._attempts = attempts or {}
+        self._pending = pending or {}
 
     def unresolved(self):
         return self._ops
 
     def attempts_for(self, oid):
         return self._attempts.get(oid, [])
+
+    def unresolved_attempt(self, oid):
+        return self._pending.get(oid)
 
 
 class Op:
@@ -408,9 +412,10 @@ def _():
         oid = "0x" + "aa" * 32
         j.create_or_reopen(oid, "0x" + "cc" * 32, "decision-1", 0, 3)
         j.transition(oid, OperationState.AUTHORIZED, epoch=3)
-        j.record_attempt_before_send(
+        j.claim_for_dispatch(
             attempt_id="attempt-1", operation_id=oid, envelope_hash="0x" + "dd" * 32,
-            epoch=3, runner=RUNNER, signer_ref="env:HELD_RUNNER_KEY")
+            epoch=3, runner=RUNNER, signer_ref="env:HELD_RUNNER_KEY",
+            idempotency_key="0x" + "ee" * 32, request_body="{}", calldata="0xabcd")
 
         c = console(j)
         export = c.export()
@@ -445,6 +450,26 @@ def _():
     status, headers, body = get(c, "/export", signed_in(c))
     assert status == 200 and headers["Content-Type"] == "application/json"
     json.loads(body)
+
+
+@test("J4: a pending attempt overrides the state wording, never 'nothing was sent'")
+def _():
+    # The review's finding: the console described AUTHORIZED as "Signed, but nothing was
+    # sent / Safe to send or to abandon" without looking at attempts. After a crash
+    # mid-send that reading invites a hand-authorised duplicate submission.
+    oid = "0x" + "aa" * 32
+    j = Jrnl([Op(oid, OperationState.AUTHORIZED)],
+             pending={oid: {"attempt_id": "att-1", "idempotency_key": "0x" + "ee" * 32}})
+    item = read_interruptions(j)[0]
+    assert "NOT 'nothing was sent'" in item.what_is_known, item.what_is_known
+    assert "RESUME the original attempt" in item.what_to_do
+    assert "never" in item.what_to_do.lower()
+    assert item.pending_attempt == "att-1"
+
+    # Without a pending attempt the wording stays accurate for the ordinary case.
+    clean = read_interruptions(Jrnl([Op(oid, OperationState.AUTHORIZED)]))[0]
+    assert "No attempt has been claimed" in clean.what_is_known
+    assert clean.pending_attempt is None
 
 
 def main() -> int:

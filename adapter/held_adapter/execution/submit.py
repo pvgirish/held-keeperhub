@@ -1,59 +1,69 @@
 """One operation, from an admitted native bundle to a reconciled on-chain outcome.
 
 This is where the pieces meet: the interceptor's `AdmittedOperation`, the runner
-signature, the durable journal and the KeeperHub client. It exists because the ordering
-between them is the whole safety argument, and ordering that lives only in a caller's
-head gets reordered.
+signature, the durable journal and the KeeperHub client. The ordering between them is
+the safety argument, so it lives here rather than in a caller's head.
+
+## Four defects this module was rebuilt to fix
+
+**C2 — a pending attempt did not make the operation non-sendable.** The old code
+committed a PENDING attempt but left the operation AUTHORIZED, and moved it to DISPATCHED
+only after the network call returned. A crash in between left an AUTHORIZED operation
+with a PENDING attempt; the next `submit()` accepted that state, minted a fresh attempt
+id and a fresh idempotency key, and sent a second unprotected request for work that may
+already have executed. Dispatch is now an atomic CLAIM (`Journal.claim_for_dispatch`)
+that moves the operation and persists the exact request in one transaction, and a
+restart RESUMES the original attempt under its original key instead of starting a new
+one.
+
+**C3 — the signature was not bound to the request.** `submit()` used to take `admitted`,
+`envelope` and an arbitrary `calldata` string, sign the envelope, and then send whatever
+calldata it was handed. Nothing checked they corresponded. The request is no longer
+supplied: it is CONSTRUCTED from the verified admitted action and exactly the signature
+just produced, and the arguments are re-encoded and compared byte for byte before
+anything leaves.
+
+**C4 — reconciliation trusted a caller-supplied hash.** It loaded the journal operation
+and then compared the chain marker against its `payload_hash` ARGUMENT, so a caller
+passing Q for an operation durably bound to P could drive CONFIRMED off a marker of Q.
+The durable binding is now authoritative and a caller disagreeing with it is an error.
+
+**C1** lives in `keeperhub.py`: the documented wire contract.
 
 ## The order, and why each step is where it is
 
-1. **Create or reopen** the operation in the journal. Reopening is what makes a restart
-   continue an operation instead of minting a new one.
-2. **Sign**, then record AUTHORIZED. Signing before journaling the attempt is safe: a
-   signature that is never sent authorizes nothing.
-3. **Record the attempt, before any network I/O.** A crash after this and before the
-   send leaves a row with no execution id, which recovery must read as "outcome
-   unknown". That is strictly safer than the alternative ordering, where a crash after
-   sending but before journaling leaves a broadcast nobody knows about.
-4. **Send.**
-5. **Record what came back**, mapping the send outcome onto the journal's states:
-
-       ACCEPTED    -> DISPATCHED   KeeperHub owns it; the chain has not spoken yet
-       IN_PROGRESS -> DISPATCHED   already in flight under this key; poll, do not resend
-       REJECTED    -> FAILED       definitively not executed; the id may be reauthorized
-       UNKNOWN     -> UNKNOWN      blocked, by design, until evidence resolves it
-
+1. **Create or reopen** the operation. Reopening is what makes a restart continue an
+   operation instead of minting a new one.
+2. **Resume first.** If an unresolved attempt exists, that attempt is the only thing
+   that may proceed. Never start a second one.
+3. **Sign**, then build the one permitted controller call from that signature.
+4. **Claim atomically** — operation state and the exact replayable request commit
+   together, before any network I/O.
+5. **Send**, then record what came back.
 6. **Reconcile against the chain**, not against KeeperHub's word.
 
 ## Step 6 is the one that is easy to get wrong
 
 An execution id is not an outcome and a transaction hash is not a success: a transaction
 can be mined having reverted. The only evidence that this operation executed is the
-controller's own `consumed[operationId]`, which the controller sets in the same
-transaction as the economic effect. So `reconcile()` reads that, and requires it to
-equal the payload hash this operation was created with.
-
-That last equality matters as much as the presence check. `consumed[id] != 0` would say
-"this id was used"; `consumed[id] == payload_hash` says "this id was used for THIS
-action". Without it, an id consumed by a different payload would reconcile as success.
-
-A caller that cannot read the chain gets no verdict. `reconcile()` refuses rather than
-falling back to KeeperHub's status, because "the executor said it worked" is exactly the
-inference V4 §5 forbids.
+controller's `consumed[operationId]`, which is written in the same transaction as the
+economic effect, compared for equality with the payload hash the journal durably bound.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, Sequence
 
 from held_core.canonical import hex32
 from held_core.journal import Journal, OperationState
 
+from .controller_abi import build_execute_call, function_abi
 from .keeperhub import (
+    IDEMPOTENCY_WINDOW_SECONDS,
     ContractCallRequest,
     KeeperHubClient,
-    KeeperHubError,
     SendOutcome,
     SendResult,
     execution_key,
@@ -68,21 +78,44 @@ class NotReconcilable(SubmissionError):
     """There is no chain evidence available, so no verdict may be reported."""
 
 
-class ChainReader(Protocol):
-    """The minimum chain access reconciliation needs.
+class ResumeRequired(SubmissionError):
+    """An unresolved attempt exists. Resume or reconcile it; do not start another."""
 
-    Deliberately tiny and injected: reconciliation must work against a fork, a public
-    RPC or a node, and must not drag a particular web3 stack into this module.
+    def __init__(self, attempt: dict[str, Any], message: str) -> None:
+        super().__init__(message)
+        self.attempt = attempt
+
+
+@dataclass(frozen=True)
+class ChainEvidence:
+    """A consumption reading, with the scope that makes it meaningful.
+
+    A bare marker string is not evidence. The same 32 bytes read from the wrong chain or
+    the wrong controller says nothing about this operation, and a reading from an
+    unfinalized block can be reorganised away. The reader must state all of it.
     """
 
-    def consumed(self, controller: str, operation_id: str) -> str:
-        """Return `consumed[operationId]` as 0x-prefixed 32-byte hex."""
+    marker: str
+    chain_id: int
+    controller: str
+    block_number: int
+    block_hash: str
+    finalized: bool
+
+    @property
+    def empty(self) -> bool:
+        return int(self.marker, 16) == 0
 
 
-# The states from which a fresh send is permissible. CONFIRMED is absent because it is
-# terminal: re-executing a consumed operation is the failure this project exists to
-# prevent. UNKNOWN is absent because an unknown outcome must be resolved with evidence,
-# never by trying again and hoping.
+class ChainReader(Protocol):
+    """The minimum chain access reconciliation needs."""
+
+    def consumed(self, controller: str, operation_id: str) -> ChainEvidence: ...
+
+
+# States from which a NEW send is permissible. CONFIRMED is absent because it is
+# terminal. DISPATCHED and UNKNOWN are absent because an outstanding or unknown attempt
+# must be resumed or reconciled, never duplicated.
 _SENDABLE = frozenset({OperationState.CREATED, OperationState.AUTHORIZED, OperationState.FAILED})
 
 _OUTCOME_TO_STATE = {
@@ -90,6 +123,9 @@ _OUTCOME_TO_STATE = {
     SendOutcome.IN_PROGRESS: OperationState.DISPATCHED,
     SendOutcome.REJECTED: OperationState.FAILED,
     SendOutcome.UNKNOWN: OperationState.UNKNOWN,
+    # A key reused with a different body means our own request is not deterministic.
+    # The outcome of the ORIGINAL body is unknown, so the operation stays blocked.
+    SendOutcome.IDEMPOTENCY_CONFLICT: OperationState.UNKNOWN,
 }
 
 
@@ -102,6 +138,7 @@ class Submission:
     execution_key: str
     send: SendResult
     journal_state: OperationState
+    resumed: bool = False
 
     @property
     def needs_reconciliation(self) -> bool:
@@ -111,13 +148,15 @@ class Submission:
         return {
             "operation_id": self.operation_id,
             "attempt_id": self.attempt_id,
-            "execution_key": self.execution_key,
+            "idempotency_key": self.execution_key,
             "outcome": self.send.outcome.value,
             "journal_state": self.journal_state.value,
+            "resumed": self.resumed,
             "hosted": self.send.hosted,
             "execution_id": self.send.execution_id,
             "tx_hash": self.send.tx_hash,
             "status_code": self.send.status_code,
+            "error_code": self.send.error_code,
             "attempts_made": self.send.attempts_made,
             "error": self.send.error,
         }
@@ -133,145 +172,228 @@ class Submitter:
         signer,
         controller: str,
         chain_id: int,
+        market_params: Sequence[Any],
         *,
         new_attempt_id: Callable[[], str] = lambda: uuid.uuid4().hex,
+        now: Callable[[], float] = None,
     ) -> None:
+        import time
+
         self.journal = journal
         self.client = client
         self.signer = signer
         self.controller = controller
         self.chain_id = chain_id
+        self.market_params = tuple(market_params)
         self._new_attempt_id = new_attempt_id
+        self._now = now or time.time
 
     # ------------------------------------------------------------------ sending --
-    def submit(
-        self,
-        admitted,
-        envelope,
-        calldata: str,
-        *,
-        dry_run: bool = False,
-        attempt_id: str | None = None,
-    ) -> Submission:
-        """Journal, sign, journal the attempt, send, then journal the answer."""
+    def submit(self, admitted, envelope, *, attempt_id: str | None = None) -> Submission:
+        """Journal, sign, build the call, claim atomically, send, record.
+
+        There is no `calldata` parameter. The request is derived from the admitted action
+        and the signature produced here, so the submitted call and the signed
+        authorization cannot be two unrelated objects.
+        """
         operation_id = hex32(admitted.operation_id)
         payload_hash = hex32(admitted.payload_hash)
 
         op = self.journal.create_or_reopen(
             operation_id, payload_hash, admitted.source_decision_id,
-            admitted.action_index, envelope.epoch,
-        )
+            admitted.action_index, envelope.epoch)
+
         if op.state is OperationState.CONFIRMED:
             raise SubmissionError(
                 f"operation {operation_id} is CONFIRMED. It executed on chain; recover "
-                "its result, never re-execute it."
-            )
+                "its result, never re-execute it.")
+
+        # An unresolved attempt is the ONLY thing that may proceed for this operation.
+        outstanding = self.journal.unresolved_attempt(operation_id)
+        if outstanding is not None:
+            raise ResumeRequired(
+                outstanding,
+                f"operation {operation_id} has an unresolved attempt "
+                f"{outstanding['attempt_id']} whose outcome is not known. Call resume() "
+                "to resend the identical request under its original idempotency key, or "
+                "reconcile against the chain. Starting a second submission here is how "
+                "one operation gets executed twice.")
+
         if op.state not in _SENDABLE:
             raise SubmissionError(
                 f"operation {operation_id} is {op.state.value}; a send is not permitted "
                 "from that state. An UNKNOWN outcome is resolved with chain evidence, "
-                "not by sending again."
-            )
+                "not by sending again.")
 
         auth = self.signer.sign(envelope)
         if op.state is not OperationState.AUTHORIZED:
             self.journal.transition(operation_id, OperationState.AUTHORIZED, epoch=envelope.epoch)
 
+        function_name, args, calldata = build_execute_call(
+            admitted, envelope, auth.signature, self.market_params)
+
         attempt = attempt_id or self._new_attempt_id()
         key = execution_key(admitted.operation_id, attempt)
+        request = ContractCallRequest(
+            chain_id=self.chain_id,
+            contract_address=self.controller,
+            function_name=function_name,
+            function_args=args,
+            abi=function_abi(function_name),
+            expected_calldata=calldata,
+            simulate=False)
+        request.verify_encoding()
+        body = json.dumps(request.to_payload(), sort_keys=True)
 
-        # BEFORE any network I/O. A crash between here and the send must look like
-        # "outcome unknown", not like "nothing was sent".
-        self.journal.record_attempt_before_send(
+        # Atomic: the operation becomes DISPATCHED and the exact replayable request is
+        # persisted in ONE transaction, before any byte leaves the process.
+        self.journal.claim_for_dispatch(
             attempt_id=attempt,
             operation_id=operation_id,
             envelope_hash=hex32(auth.signing_hash),
             epoch=envelope.epoch,
             runner=auth.runner,
-            signer_ref=auth.signer_ref,  # a reference; the journal refuses key material
-        )
-
-        request = ContractCallRequest(
-            chain_id=self.chain_id,
-            to=self.controller,
+            signer_ref=auth.signer_ref,
+            idempotency_key=key,
+            request_body=body,
             calldata=calldata,
-            execution_key=key,
-            operation_id=operation_id,
-            attempt_id=attempt,
-        )
+            kind="BROADCAST")
 
-        result = self.client.dry_run(request) if dry_run else self.client.broadcast(request)
+        result = self.client.broadcast(request, key)
+        return self._record(operation_id, attempt, key, result, envelope.epoch, resumed=False)
 
-        if dry_run:
-            # A dry run is not an attempt at execution. It must not move the operation
-            # towards DISPATCHED, and it never consumes anything.
-            self.journal.record_send_result(attempt, state="DRY_RUN")
-            return Submission(operation_id, attempt, key, result, op.state)
+    def dry_run(self, admitted, envelope) -> Submission:
+        """Simulate. Never claims the operation and never becomes an economic attempt."""
+        operation_id = hex32(admitted.operation_id)
+        auth = self.signer.sign(envelope)
+        function_name, args, calldata = build_execute_call(
+            admitted, envelope, auth.signature, self.market_params)
+        request = ContractCallRequest(
+            chain_id=self.chain_id, contract_address=self.controller,
+            function_name=function_name, function_args=args, abi=function_abi(function_name),
+            expected_calldata=calldata, simulate=True)
+        result = self.client.dry_run(request)
+        op = self.journal.get(operation_id)
+        return Submission(operation_id, "(simulation)", "", result,
+                          op.state if op else OperationState.CREATED)
 
-        self.journal.record_send_result(
-            attempt,
-            keeperhub_execution_id=result.execution_id,
-            tx_hash=result.tx_hash,
-            state=result.outcome.value,
-        )
+    def resume(self, operation_id: str, chain: ChainReader | None = None) -> Submission:
+        """Resume the unresolved attempt under its ORIGINAL idempotency key.
 
-        # A send was attempted, so the operation is DISPATCHED first -- "handed to the
-        # executor, outcome not yet known" is exactly true the moment the request left.
-        # The journal does not allow AUTHORIZED -> UNKNOWN directly, and it is right not
-        # to: an unknown outcome is a refinement of having dispatched, not an
-        # alternative to it.
-        self.journal.transition(operation_id, OperationState.DISPATCHED, epoch=envelope.epoch)
-        state = _OUTCOME_TO_STATE[result.outcome]
-        if state is not OperationState.DISPATCHED:
-            self.journal.transition(operation_id, state, epoch=envelope.epoch)
-        return Submission(operation_id, attempt, key, result, state)
+        This is the restart path. It resends the IDENTICAL persisted body under the
+        IDENTICAL key, which is what makes the retry idempotent at the provider rather
+        than a second submission wearing a new name.
 
-    # ------------------------------------------------------------ reconciliation --
-    def reconcile(
-        self, operation_id: str, payload_hash: str, chain: ChainReader | None
-    ) -> OperationState:
-        """Settle an operation against the CHAIN, never against KeeperHub's word.
-
-        An execution id is not an outcome and a mined transaction is not a success: a
-        transaction can revert and still be mined. The controller's
-        `consumed[operationId]` is written in the same transaction as the economic
-        effect, so it is the only thing that answers the question.
+        Past the documented 24-hour idempotency window the server no longer dedupes, so a
+        resend would be a genuinely new submission. Beyond the window this refuses unless
+        chain evidence has established non-execution.
         """
-        if chain is None:
-            raise NotReconcilable(
-                f"no chain reader for {operation_id}: without reading "
-                "consumed[operationId] there is no evidence this operation executed, "
-                "and the executor's own status is not a substitute."
-            )
+        attempt = self.journal.unresolved_attempt(operation_id)
+        if attempt is None:
+            raise SubmissionError(f"operation {operation_id} has no unresolved attempt to resume")
 
         op = self.journal.get(operation_id)
         if op is None:
             raise SubmissionError(f"unknown operation {operation_id}")
+
+        age = self._now() - float(attempt["created_at"])
+        if age > IDEMPOTENCY_WINDOW_SECONDS:
+            # V4 §4: past the cache window, query chain consumption; never blindly resend.
+            if chain is None:
+                raise NotReconcilable(
+                    f"attempt {attempt['attempt_id']} is {int(age)}s old, beyond the "
+                    f"{IDEMPOTENCY_WINDOW_SECONDS}s idempotency window, so KeeperHub will "
+                    "no longer dedupe it. Read consumed[operationId] before any resend.")
+            evidence = chain.consumed(self.controller, operation_id)
+            self._check_scope(evidence)
+            if not evidence.empty:
+                # It executed. Resolve it rather than resending.
+                self.reconcile(operation_id, op.payload_hash, chain)
+                raise SubmissionError(
+                    f"operation {operation_id} already executed on chain; resolved "
+                    "instead of resending.")
+
+        body = json.loads(attempt["request_body"])
+        request = _request_from_payload(body, attempt["calldata"])
+        request.verify_encoding()
+        result = self.client.broadcast(request, attempt["idempotency_key"])
+        return self._record(operation_id, attempt["attempt_id"], attempt["idempotency_key"],
+                            result, op.epoch, resumed=True)
+
+    def _record(self, operation_id: str, attempt: str, key: str, result: SendResult,
+                epoch: int, *, resumed: bool) -> Submission:
+        self.journal.record_send_result(
+            attempt,
+            keeperhub_execution_id=result.execution_id,
+            tx_hash=result.tx_hash,
+            state=result.outcome.value)
+        state = _OUTCOME_TO_STATE[result.outcome]
+        current = self.journal.get(operation_id).state
+        if state is not current:
+            self.journal.transition(operation_id, state, epoch=epoch)
+        return Submission(operation_id, attempt, key, result, state, resumed=resumed)
+
+    # ------------------------------------------------------------ reconciliation --
+    def _check_scope(self, evidence: ChainEvidence) -> None:
+        if evidence.chain_id != self.chain_id:
+            raise NotReconcilable(
+                f"chain evidence is from chain {evidence.chain_id}, not {self.chain_id}. "
+                "The same 32 bytes on another chain says nothing about this operation.")
+        if evidence.controller.lower() != self.controller.lower():
+            raise NotReconcilable(
+                f"chain evidence is from controller {evidence.controller}, not "
+                f"{self.controller}.")
+        if not evidence.finalized:
+            raise NotReconcilable(
+                f"evidence at block {evidence.block_number} ({evidence.block_hash}) is not "
+                "finalized and can still be reorganised. An unfinalized reading is not a "
+                "verdict.")
+
+    def reconcile(self, operation_id: str, payload_hash: str,
+                  chain: ChainReader | None) -> OperationState:
+        """Settle an operation against the CHAIN, using the journal's durable binding.
+
+        `payload_hash` is the caller's EXPECTATION and is checked against the journal
+        rather than used in its place. The previous version compared the chain marker to
+        this argument directly, so a caller supplying the wrong value could make a
+        matching marker drive CONFIRMED.
+        """
+        op = self.journal.get(operation_id)
+        if op is None:
+            raise SubmissionError(f"unknown operation {operation_id}")
+        if payload_hash is not None and payload_hash.lower() != op.payload_hash.lower():
+            raise SubmissionError(
+                f"caller expected payload {payload_hash} but operation {operation_id} is "
+                f"durably bound to {op.payload_hash}. Refusing to reconcile against an "
+                "expectation that disagrees with the journal.")
         if op.state is OperationState.CONFIRMED:
             return op.state
 
-        marker = chain.consumed(self.controller, operation_id)
-        empty = "0x" + "00" * 32
+        if chain is None:
+            raise NotReconcilable(
+                f"no chain reader for {operation_id}: without reading "
+                "consumed[operationId] there is no evidence this operation executed, and "
+                "the executor's own status is not a substitute.")
 
-        if marker == empty:
-            # Nothing consumed this id. That is only a definite non-execution if the
-            # send itself was definitively refused; otherwise the transaction may still
-            # be in flight, and UNKNOWN is the honest state.
+        evidence = chain.consumed(self.controller, operation_id)
+        self._check_scope(evidence)
+
+        if evidence.empty:
+            # Only a definitively-refused send makes an empty marker mean "did not
+            # execute". Otherwise the transaction may still be in flight.
             if op.state is OperationState.FAILED:
                 return op.state
             raise NotReconcilable(
-                f"operation {operation_id} is not consumed on chain, but its send was "
-                f"not definitively refused (state {op.state.value}). It may still be in "
-                "flight; resolve it by re-reading, not by declaring it failed."
-            )
+                f"operation {operation_id} is not consumed at finalized block "
+                f"{evidence.block_number}, but its send was not definitively refused "
+                f"(state {op.state.value}). It may still be in flight; resolve it by "
+                "re-reading, not by declaring it failed.")
 
-        if marker.lower() != payload_hash.lower():
-            # The id was consumed by something else. Reporting success here would be
-            # the exact confusion the payload binding exists to prevent.
+        if evidence.marker.lower() != op.payload_hash.lower():
             raise SubmissionError(
                 f"operation {operation_id} was consumed on chain carrying payload "
-                f"{marker}, not {payload_hash}. This id executed a DIFFERENT action."
-            )
+                f"{evidence.marker}, not {op.payload_hash}. This id executed a DIFFERENT "
+                "action.")
 
         return self.journal.transition(operation_id, OperationState.CONFIRMED).state
 
@@ -279,7 +401,7 @@ class Submitter:
         """Poll an in-flight execution, then reconcile against the chain regardless.
 
         Polling is for liveness, not for truth: whatever KeeperHub reports, the verdict
-        still comes from `consumed[operationId]`.
+        comes from `consumed[operationId]`.
         """
         if submission.send.execution_id:
             self.client.poll(submission.send.execution_id)
@@ -287,3 +409,17 @@ class Submitter:
         if op is None:
             raise SubmissionError(f"unknown operation {submission.operation_id}")
         return self.reconcile(submission.operation_id, op.payload_hash, chain)
+
+
+def _request_from_payload(body: dict[str, Any], calldata: str) -> ContractCallRequest:
+    """Rebuild the exact persisted request. Nothing is recomputed or refreshed."""
+    return ContractCallRequest(
+        chain_id=int(body["chainId"]),
+        contract_address=body["contractAddress"],
+        function_name=body["functionName"],
+        function_args=json.loads(body["functionArgs"]),
+        abi=json.loads(body["abi"]),
+        expected_calldata=calldata,
+        value_ether=body.get("value", "0"),
+        simulate=bool(body.get("simulate", False)),
+    )

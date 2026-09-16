@@ -233,10 +233,14 @@ contract HeldAuthorityForkTest is HeldForkHarness {
         assertFalse(controller.isConsumed(keccak256("ho-1")), "definitely not executed");
         assertEq(controller.usedSupply(), 0);
 
-        // The same action may be reauthorized by the NEW runner under the new epoch.
-        // Nothing was consumed, so this is a first execution, not a re-execution.
-        _supply(keccak256("ho-1-again"), 5_000e6, 2, PK_RUNNER_A, runnerA);
+        // V4 §4: definitely-not-executed and still desired means reauthorizing the
+        // SAME id and the SAME payload under the new epoch. An earlier version of this
+        // test used a fresh id ("ho-1-again"), which demonstrates something weaker and
+        // skips the exact distinction this phase exists to preserve.
+        _supply(keccak256("ho-1"), 5_000e6, 2, PK_RUNNER_A, runnerA);
         assertEq(controller.usedSupply(), 5_000e6);
+        assertTrue(controller.isConsumed(keccak256("ho-1")),
+            "the SAME operation id executed once, under the new runner");
     }
 
     /// @dev The other direction: an operation that ALREADY executed stays executed

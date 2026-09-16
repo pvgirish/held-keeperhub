@@ -1,0 +1,298 @@
+"""P03-C2: crash and restart across a real SQLite database.
+
+The previous submission tests asserted that a function returned UNKNOWN. That is not the
+failure the review found. The failure is what a NEW PROCESS does when it opens the
+database after the old one died mid-send, so these tests close and reopen the actual
+SQLite file, and one of them kills a real child process between the send and the
+response.
+
+Reproducing the original defect, from the review:
+
+  1. Authorize operation O and persist attempt A.
+  2. Let the transport receive the request, then terminate the caller before the result
+     is recorded.
+  3. Reopen the database in a fresh process.
+  4. O is AUTHORIZED with a PENDING attempt.
+  5. submit() again -> a NEW attempt B and a SECOND network request.
+
+Step 5 is what must no longer be possible.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(HERE))
+sys.path.insert(0, os.path.join(ROOT, "packages", "core"))
+sys.path.insert(0, os.path.join(ROOT, "adapter"))
+
+from held_adapter.execution.keeperhub import (  # noqa: E402
+    HttpResponse,
+    KeeperHubClient,
+    OfflineTransport,
+    SendOutcome,
+)
+from held_adapter.execution.submit import (  # noqa: E402
+    NotReconcilable,
+    ResumeRequired,
+    SubmissionError,
+    Submitter,
+)
+from held_adapter.signing.runner_signer import RunnerSigner  # noqa: E402
+from held_core.identity import ActionFamily, AuthorizationEnvelope, OperationScope  # noqa: E402
+from held_core.journal import Journal, OperationState, StateTransitionError  # noqa: E402
+
+from p03_fixtures import (  # noqa: E402
+    API_ENV, CONTROLLER, MARKET_PARAMS, OP_HEX, PAYLOAD_HEX, RUNNER, RUNNER_KEY,
+    Admitted, Chain, accepted, envelope, rig,
+)
+
+PASSED: list[str] = []
+FAILED: list[tuple[str, str]] = []
+
+
+def test(name):
+    def deco(fn):
+        try:
+            fn()
+            PASSED.append(name)
+            print(f"ok    {name}")
+        except Exception:
+            import traceback
+            FAILED.append((name, traceback.format_exc()))
+            print(f"FAIL  {name}")
+        return fn
+    return deco
+
+
+def expect(exc_type, fn, *a, **k) -> str:
+    try:
+        fn(*a, **k)
+    except exc_type as e:
+        return str(e)
+    raise AssertionError(f"expected {exc_type.__name__}, nothing raised")
+
+
+# ------------------------------------------- the claim is durable before any I/O --
+@test("the operation is DISPATCHED on disk BEFORE the request leaves the process")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "held.sqlite")
+        j, t, sub = rig([accepted()], path=path)
+        seen = {}
+
+        original = t.request
+
+        def spy(*a, **k):
+            # Open a SEPARATE connection to the same file at the moment of the send.
+            # Anything not committed yet is invisible here, which is exactly what a
+            # crashed-and-restarted process would see.
+            probe = Journal(path)
+            op = probe.get(OP_HEX)
+            seen["state"] = op.state.value
+            seen["attempt"] = probe.unresolved_attempt(OP_HEX)
+            probe.close()
+            return original(*a, **k)
+
+        t.request = spy
+        sub.submit(Admitted(), envelope())
+
+        assert seen["state"] == "DISPATCHED", (
+            f"at send time the durable state was {seen['state']}, not DISPATCHED. A crash "
+            "here would look like an operation that was never sent.")
+        assert seen["attempt"] is not None
+        assert seen["attempt"]["idempotency_key"].startswith("0x")
+        assert seen["attempt"]["request_body"], "the exact request was not persisted"
+        assert seen["attempt"]["calldata"].startswith("0x")
+
+
+@test("REGRESSION C2: a restart does NOT start a second submission")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "held.sqlite")
+        # Process 1: claims and sends, then "dies" before recording the result.
+        j1, t1, sub1 = rig([TimeoutError("killed mid-send")], path=path)
+        try:
+            sub1.submit(Admitted(), envelope())
+        except Exception:
+            pass
+        j1.close()
+
+        # Process 2: fresh connection to the same file.
+        j2, t2, sub2 = rig([accepted()], path=path)
+        op = j2.get(OP_HEX)
+        assert op.state is OperationState.UNKNOWN or op.state is OperationState.DISPATCHED, op.state
+
+        outstanding = j2.unresolved_attempt(OP_HEX)
+        if outstanding is not None:
+            msg = expect(ResumeRequired, sub2.submit, Admitted(), envelope())
+            assert "unresolved attempt" in msg and "executed twice" in msg, msg
+        else:
+            # The attempt resolved to UNKNOWN, so the operation is blocked instead.
+            msg = expect(SubmissionError, sub2.submit, Admitted(), envelope())
+            assert "UNKNOWN" in msg or "not permitted" in msg, msg
+        assert len(t2.calls) == 0, "a second network request was sent after the crash"
+
+
+@test("REGRESSION C2: killing a real process mid-send leaves a resumable claim")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "held.sqlite")
+        script = os.path.join(d, "crash.py")
+        with open(script, "w") as fh:
+            fh.write(f'''
+import os, sys, signal
+sys.path.insert(0, {os.path.join(ROOT, "packages", "core")!r})
+sys.path.insert(0, {os.path.join(ROOT, "adapter")!r})
+sys.path.insert(0, {HERE!r})
+from p03_fixtures import rig, Admitted, envelope
+import p03_fixtures
+
+class Suicide:
+    hosted = False
+    calls = []
+    def request(self, *a, **k):
+        # The request has "reached" the server. Die before anything is recorded.
+        os.kill(os.getpid(), signal.SIGKILL)
+
+j, _, sub = rig([], path={path!r}, transport=Suicide())
+sub.submit(Admitted(), envelope())
+''')
+        proc = subprocess.run([sys.executable, script], capture_output=True)
+        assert proc.returncode != 0, "the child was supposed to be killed"
+
+        # A brand-new process opens the database the killed one left behind.
+        j, t, sub = rig([accepted()], path=path)
+        op = j.get(OP_HEX)
+        assert op is not None, "the claim was not durable across SIGKILL"
+        assert op.state is OperationState.DISPATCHED, (
+            f"after SIGKILL the operation is {op.state.value}; it must be DISPATCHED so a "
+            "restart cannot treat it as never-sent")
+        attempt = j.unresolved_attempt(OP_HEX)
+        assert attempt is not None and attempt["state"] == "PENDING"
+
+        msg = expect(ResumeRequired, sub.submit, Admitted(), envelope())
+        assert "resume()" in msg
+        assert len(t.calls) == 0, "a duplicate submission was sent after SIGKILL"
+
+
+@test("resume resends the IDENTICAL body under the IDENTICAL key")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "held.sqlite")
+        j1, t1, sub1 = rig([TimeoutError("t")], path=path)
+        try:
+            sub1.submit(Admitted(), envelope())
+        except Exception:
+            pass
+        first_body = j1.attempts_for(OP_HEX)[0]["request_body"]
+        first_key = j1.attempts_for(OP_HEX)[0]["idempotency_key"]
+        j1.close()
+
+        j2, t2, sub2 = rig([accepted()], path=path)
+        if j2.unresolved_attempt(OP_HEX) is None:
+            return  # resolved to UNKNOWN; covered by the blocked-resend test
+        s = sub2.resume(OP_HEX)
+        assert s.resumed is True
+        sent = t2.calls[0]
+        assert sent["headers"]["Idempotency-Key"] == first_key, "resume minted a new key"
+        assert json.dumps(sent["body"], sort_keys=True) == first_body, "the body changed on resume"
+
+
+@test("two concurrent submitters cannot both claim the same operation")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "held.sqlite")
+        j, t, sub = rig([accepted(), accepted()], path=path, attempt_ids=["a1", "a2"])
+        # First claim succeeds and leaves a PENDING row (transport never answers).
+        j.create_or_reopen(OP_HEX, PAYLOAD_HEX, "decision-1", 0, 1)
+        j.transition(OP_HEX, OperationState.AUTHORIZED, epoch=1)
+        j.claim_for_dispatch(
+            attempt_id="first", operation_id=OP_HEX, envelope_hash="0x" + "dd" * 32,
+            epoch=1, runner=RUNNER, signer_ref="env:HELD_RUNNER_KEY",
+            idempotency_key="0x" + "ee" * 32, request_body="{}", calldata="0xabcd")
+        msg = expect(
+            StateTransitionError, j.claim_for_dispatch,
+            attempt_id="second", operation_id=OP_HEX, envelope_hash="0x" + "dd" * 32,
+            epoch=1, runner=RUNNER, signer_ref="env:HELD_RUNNER_KEY",
+            idempotency_key="0x" + "ff" * 32, request_body="{}", calldata="0xabcd")
+        assert "already has an unresolved attempt" in msg, msg
+
+
+@test("a simulation never claims the operation and never blocks a real send")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "held.sqlite")
+        j, t, sub = rig([
+            HttpResponse(200, json.dumps({"simulated": True}).encode(), {}),
+            accepted(),
+        ], path=path)
+        j.create_or_reopen(OP_HEX, PAYLOAD_HEX, "decision-1", 0, 1)
+        s = sub.dry_run(Admitted(), envelope())
+        assert s.send.outcome is SendOutcome.SIMULATED, s.send.outcome
+        assert j.unresolved_attempt(OP_HEX) is None, "a dry run claimed the operation"
+        assert j.get(OP_HEX).state is OperationState.CREATED
+        assert t.calls[0]["body"]["simulate"] is True
+        # The real send still works afterwards.
+        s2 = sub.submit(Admitted(), envelope())
+        assert s2.journal_state is OperationState.DISPATCHED
+
+
+@test("beyond the idempotency window a resend requires chain evidence first")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "held.sqlite")
+        j1, t1, sub1 = rig([TimeoutError("t")], path=path)
+        try:
+            sub1.submit(Admitted(), envelope())
+        except Exception:
+            pass
+        j1.close()
+
+        j2, t2, sub2 = rig([accepted()], path=path, now=lambda: 1e12)  # far future
+        if j2.unresolved_attempt(OP_HEX) is None:
+            return
+        msg = expect(NotReconcilable, sub2.resume, OP_HEX, None)
+        assert "idempotency window" in msg and "consumed[operationId]" in msg, msg
+        assert len(t2.calls) == 0, "resent past the window without checking the chain"
+
+        # With chain evidence showing it DID execute, it resolves instead of resending.
+        msg2 = expect(SubmissionError, sub2.resume, OP_HEX, Chain(PAYLOAD_HEX))
+        assert "already executed" in msg2, msg2
+        assert len(t2.calls) == 0
+        assert j2.get(OP_HEX).state is OperationState.CONFIRMED
+
+
+@test("an idempotency_conflict blocks the operation instead of looking in-flight")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        j, t, sub = rig([HttpResponse(409, json.dumps({
+            "code": "idempotency_conflict", "retryable": False,
+            "message": "key reused with a different body"}).encode(), {})],
+            path=os.path.join(d, "held.sqlite"))
+        s = sub.submit(Admitted(), envelope())
+        assert s.send.outcome is SendOutcome.IDEMPOTENCY_CONFLICT
+        assert s.journal_state is OperationState.UNKNOWN, (
+            "a conflicting body means the ORIGINAL body's outcome is unknown; treating it "
+            "as in-flight would invite a poll for something that was never accepted")
+        assert "non-deterministic" in (s.send.error or "")
+
+
+def main() -> int:
+    os.environ.pop(API_ENV, None)
+    print("---")
+    if FAILED:
+        for name, tb in FAILED:
+            print(f"\n=== {name} ===\n{tb}")
+        print(f"P03 recovery: FAIL ({len(FAILED)}/{len(PASSED)+len(FAILED)})")
+        return 1
+    print(f"all {len(PASSED)} P03 crash/restart recovery tests held")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
