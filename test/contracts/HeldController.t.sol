@@ -912,12 +912,14 @@ contract HeldControllerForkTest is Test {
 
         assertEq(controller.usedSupply(), 0, "nothing consumed under drift");
 
-        // Restore agreement and the SAME operation goes through: the refusal was the
-        // drift, not a broken path.
+        // Restore agreement and replay the SAME envelope and signature. Using a new
+        // operation id here would have made this a weaker claim than the comment said.
         vm.prank(safe);
         _setAllowance(LS, LS);
-        _supply(keccak256("op-drift-ok"), 5_000e6, 1, PK_RUNNER_B, runnerB);
-        assertEq(controller.usedSupply(), 5_000e6);
+        vm.prank(EXECUTOR);
+        controller.executeSupply(env, mp_, 5_000e6, sig);
+        assertEq(controller.usedSupply(), 5_000e6, "the SAME operation succeeded after repair");
+        assertTrue(controller.isConsumed(keccak256("op-drift")));
     }
 
     /// @dev Drift in a COUNT quota is refused on the same footing as an amount quota.
@@ -972,11 +974,13 @@ contract HeldControllerForkTest is Test {
 
         // excessive approval
         vm.prank(runnerA);
-        (bool okBig,) = roles.call(abi.encodeWithSignature(
+        (bool okBig, bytes memory retBig) = roles.call(abi.encodeWithSignature(
             "execTransactionWithRoleReturnData(address,uint256,bytes,uint8,bytes32,bool)",
             USDC, uint256(0), abi.encodeCall(IERC20.approve, (MORPHO, type(uint256).max)),
             uint8(0), roleKey, true));
         assertFalse(okBig, "Roles admitted an unlimited approval");
+        assertEq(bytes4(retBig), bytes4(0xd0a9bf58),
+            "approval refused, but not by a Roles condition");
 
         // non-empty callback on the economic call
         bytes memory withCallback = abi.encodeCall(
@@ -1024,6 +1028,145 @@ contract HeldControllerForkTest is Test {
         );
     }
 
+    /// @dev P02 required work 7: exact token/share rounding.
+    ///
+    ///      Morpho reports the (assets, shares) it actually moved -- fixed-asset supply
+    ///      rounds shares DOWN and fixed-asset withdraw rounds them UP, both after
+    ///      accruing interest. The controller now binds that report to the observed
+    ///      position change, so this exercises the relation across amounts where the
+    ///      conversion is not exact, and after interest has accrued.
+    function test_ExactShareAccountingHoldsAcrossRoundingBoundaries() public {
+        _activate(1, runnerB);
+
+        uint256[4] memory amounts = [uint256(1_000e6), 1_000e6 + 1, 3_333_333_333, 7_777e6];
+        uint256 totalSupplied;
+        for (uint256 i = 0; i < amounts.length; i++) {
+            // Let interest accrue between operations so the conversion ratio moves and a
+            // stale pre-accrual ratio could not satisfy the check.
+            vm.warp(block.timestamp + 6 hours);
+            vm.roll(block.number + 1);
+
+            (uint256 before,,) = IMorpho(MORPHO).position(marketId, safe);
+            uint256 safeBefore = IERC20(USDC).balanceOf(safe);
+            _supply(keccak256(abi.encode("round", i)), amounts[i], 1, PK_RUNNER_B, runnerB);
+            (uint256 afterShares,,) = IMorpho(MORPHO).position(marketId, safe);
+
+            // Token side is exact; share side is whatever Morpho reported, and the
+            // controller already refused any disagreement.
+            assertEq(safeBefore - IERC20(USDC).balanceOf(safe), amounts[i], "exact token debit");
+            assertGt(afterShares, before, "shares minted");
+            totalSupplied += amounts[i];
+        }
+        assertEq(controller.usedSupply(), totalSupplied);
+
+        // Withdraw on the normal lane, again after accrual.
+        vm.warp(block.timestamp + 12 hours);
+        vm.roll(block.number + 1);
+        (uint256 s0,,) = IMorpho(MORPHO).position(marketId, safe);
+        uint256 b0 = IERC20(USDC).balanceOf(safe);
+
+        HeldController.Envelope memory env = _envelope(keccak256("round-w"), 2, 1_234_567_891, 1, runnerB);
+        bytes memory sig = _sign(env, PK_RUNNER_B);
+        MarketParams memory mp_ = _mp();
+        vm.prank(EXECUTOR);
+        controller.executeWithdraw(env, mp_, 1_234_567_891, sig);
+
+        (uint256 s1,,) = IMorpho(MORPHO).position(marketId, safe);
+        assertEq(IERC20(USDC).balanceOf(safe) - b0, 1_234_567_891, "exact token receipt");
+        assertLt(s1, s0, "shares burned");
+        assertEq(controller.usedNormalWithdraw(), 1_234_567_891);
+
+        // The RESTORATION lane runs the same share contract on different quota keys, so
+        // it is exercised too rather than assumed equivalent. A non-round shortfall keeps
+        // the asset->share conversion inexact.
+        _fundSafe(137_654_321);
+        vm.warp(block.timestamp + 3 hours);
+        vm.roll(block.number + 1);
+        uint256 shortfall = 1_000e6 - 137_654_321;
+        (uint256 r0,,) = IMorpho(MORPHO).position(marketId, safe);
+
+        HeldController.Envelope memory renv = _envelope(keccak256("round-r"), 2, shortfall, 1, runnerB);
+        bytes memory rsig = _sign(renv, PK_RUNNER_B);
+        MarketParams memory rmp = _mp();
+        vm.prank(EXECUTOR);
+        controller.executeWithdraw(renv, rmp, shortfall, rsig);
+
+        (uint256 r1,,) = IMorpho(MORPHO).position(marketId, safe);
+        assertEq(IERC20(USDC).balanceOf(safe), 1_000e6, "restored exactly to the floor");
+        assertEq(controller.usedRestoration(), shortfall, "restoration lane counter");
+        assertLt(r1, r0, "restoration burned shares");
+    }
+
+    /// @dev The report must BIND to the observation, not merely be decoded.
+    ///
+    ///      Driven against the real controller on the real fork. `vm.mockCall` is used
+    ///      only to make the position READBACK disagree with Morpho's truthful report --
+    ///      the supply itself really executes and really moves USDC. This is a labelled
+    ///      cheat-code fixture, not native Morpho behaviour.
+    function test_ReportedSharesMustEqualTheObservedPositionChange() public {
+        _activate(1, runnerB);
+
+        // Readback pinned to a constant, so the observed delta is 0 while Morpho
+        // truthfully reports the shares it minted.
+        vm.mockCall(
+            MORPHO,
+            abi.encodeWithSelector(IMorpho.position.selector, marketId, safe),
+            abi.encode(uint256(777), uint128(0), uint128(0))
+        );
+
+        uint256 balBefore = IERC20(USDC).balanceOf(safe);
+        HeldController.Envelope memory env = _envelope(keccak256("op-lie"), 1, 5_000e6, 1, runnerB);
+        bytes memory sig = _sign(env, PK_RUNNER_B);
+        MarketParams memory mp_ = _mp();
+        vm.prank(EXECUTOR);
+        // Selector-only match: the reported share count depends on live market state, but
+        // a bare expectRevert() would have accepted a revert for ANY other reason.
+        vm.expectPartialRevert(HeldController.ReportedEffectMismatch.selector);
+        controller.executeSupply(env, mp_, 5_000e6, sig);
+        vm.clearMockedCalls();
+
+        // The refusal rolled EVERYTHING back: tokens, native quota, counters and the
+        // operation id. A half-applied failure is the outcome this whole design exists
+        // to prevent, so it is asserted rather than assumed.
+        assertEq(IERC20(USDC).balanceOf(safe), balBefore, "token effect not rolled back");
+        assertEq(controller.usedSupply(), 0, "counter moved on a refused operation");
+        assertEq(controller.normalCount(), 0, "count moved on a refused operation");
+        assertEq(controller.isConsumed(keccak256("op-lie")), false, "id consumed by a refusal");
+        (,,, uint128 quotaAfter,) = IRoles(roles).allowances(allowKey);
+        assertEq(uint256(quotaAfter), uint256(LS), "native quota consumed by a refusal");
+
+        // Without the mock the SAME operation succeeds, so the refusal above was the
+        // disagreement and not a broken path.
+        vm.prank(EXECUTOR);
+        controller.executeSupply(env, mp_, 5_000e6, sig);
+        assertEq(controller.usedSupply(), 5_000e6);
+    }
+
+    /// @dev A return that is not two words is refused before anything is inferred from
+    ///      it. Reached ahead of the debit check because the decode happens on the raw
+    ///      returndata. Labelled cheat-code fixture, not native Morpho behaviour.
+    function test_MalformedEconomicReturnIsRefusedBeforeAnyInference() public {
+        _activate(1, runnerB);
+        uint256 balBefore = IERC20(USDC).balanceOf(safe);
+
+        vm.mockCall(
+            MORPHO,
+            abi.encodeWithSelector(IMorpho.supply.selector),
+            abi.encode(uint256(5_000e6)) // one word where the ABI promises two
+        );
+        HeldController.Envelope memory env = _envelope(keccak256("op-shape"), 1, 5_000e6, 1, runnerB);
+        bytes memory sig = _sign(env, PK_RUNNER_B);
+        MarketParams memory mp_ = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert(abi.encodeWithSelector(HeldController.UnexpectedReturnShape.selector, uint256(32)));
+        controller.executeSupply(env, mp_, 5_000e6, sig);
+        vm.clearMockedCalls();
+
+        assertEq(IERC20(USDC).balanceOf(safe), balBefore);
+        assertEq(controller.usedSupply(), 0);
+        assertEq(controller.isConsumed(keccak256("op-shape")), false);
+    }
+
     function test_ForeignMarketIsRejected() public {
         _activate(1, runnerB);
         MarketParams memory other = _mp();
@@ -1039,3 +1182,5 @@ contract HeldControllerForkTest is Test {
         controller.executeSupply(env, mp_, amount, sig_);
     }
 }
+
+

@@ -1,120 +1,141 @@
 {
-  "phase": "P02",
-  "title": "Typed controller and native Roles enforcement on the pinned fork",
-  "implementation_status": "locally verified",
-  "independent_review_status": "pending",
-  "accepted": false,
-  "accepted_note": "Claude authored and ran this. Self-testing is not independent acceptance.",
-  "gate": {
-    "command": "make check-phase-02",
-    "stage_0_property_fuzz_local": "14 passed; 0 failed (256 runs each, pinned seed)",
-    "stage_1_adversarial_local": "4 passed; 0 failed",
-    "stage_2_real_pinned_fork": "28 passed; 0 failed",
-    "total": 46,
-    "failure_propagation_verified": "check-phase-02 exits non-zero if ANY stage fails (verified by simulating a failing stage)"
+ "phase": "P02",
+ "title": "Typed controller and native Roles enforcement on the pinned fork",
+ "implementation_status": "locally verified",
+ "independent_review_status": "pending",
+ "accepted": false,
+ "accepted_note": "Claude authored and ran this. Self-testing is not independent acceptance.",
+ "gate": {
+  "command": "make check-phase-02",
+  "stage_0_property_fuzz_local": "14 passed; 0 failed (256 runs each, pinned seed)",
+  "stage_1_adversarial_local": "4 passed; 0 failed",
+  "stage_2_real_pinned_fork": "31 passed; 0 failed",
+  "total": 49,
+  "failure_propagation_verified": "check-phase-02 exits non-zero if ANY stage fails (verified by simulating a failing stage)"
+ },
+ "evidence_kind": {
+  "local_fork": "REAL pinned Base-mainnet Safe 1.4.1, Zodiac Roles v2.1, Morpho Blue and native USDC on an anvil fork at block 51353212. Nothing mocked.",
+  "owner_authority": "modelled with vm.prank(safe); the real 2-of-3 ceremony is P00 evidence",
+  "authenticated_hosted": "NONE - L10",
+  "public_chain": "NONE - nothing deployed publicly",
+  "adversarial_mocks": "LABELLED hostile fixtures (MockRoles/MockMorpho/MockToken variants) used ONLY for reentrancy, false-return and cleanup-failure branches. NOT the production profile and never described as native USDC / real Roles / real Morpho behaviour."
+ },
+ "toolchain": {
+  "solc": "0.8.28",
+  "via_ir": true,
+  "openzeppelin": "v5.1.0@69c8def5f222ff96f2b5beff05dfba996368aa79",
+  "forge_std": "v1.16.2@bf647bd6046f2f7da30d0c2bf435e5c76a780c1b",
+  "foundry": "forge Version: 1.8.1"
+ },
+ "requirements": {
+  "1_paused_by_default_no_generic_executor": "HeldController: active=false at construction; two typed entries only",
+  "2_epoch_bound_eip712_plus_executor_route": "test_RetiredRunnerCannotExecuteEvenWithSameExecutor, test_OnlyConfiguredExecutorMayCall, test_MalleableSignatureIsRejected",
+  "3_consumption_counters_cooldowns_lanes": "test_SupplySucceedsAndConsumesExactly, test_ReplayOfConsumedOperationIsRejected, test_CeilingAndFloorAreEnforced",
+  "4_atomic_call_sequence_checked_nested": "test_NestedFailureRollsBackEverything; execTransactionWithRoleReturnData with success flag AND token return checked",
+  "5_roles_conditions_no_double_counting": "supply + withdraw each bound WithinAllowance to their own non-refilling key; Roles charged exactly once per economic call",
+  "6_activation_consistency_guards": "test_ActivationRefusesStaleAllowanceAndAcceptsConsistentOne, test_StaleExpectedStateIsRejected, test_CeilingBelowConsumptionIsRejected",
+  "7_effects_read_not_inferred": "exact debit/receipt, EXACT share accounting, zero borrow, unchanged collateral, zero managed allowance. The controller decodes Morpho's returned (assets, shares) and binds it to the observed position delta: supply requires shares1-shares0 == reportedShares, withdraw requires shares0-shares1 == reportedShares, and reportedAssets must equal the fixed amount. A return that is not two words reverts UnexpectedReturnShape before anything is inferred from it. Tests: test_ExactShareAccountingHoldsAcrossRoundingBoundaries, test_ReportedSharesMustEqualTheObservedPositionChange, test_MalformedEconomicReturnIsRefusedBeforeAnyInference",
+  "8_new_lineage_no_imported_history": "counters start at 0; the native fixture's 30,000 is not imported"
+ },
+ "known_gaps": [
+  "Owner authority for non-batch tests is modelled with vm.prank; the atomic activation batch DOES use a real two-signature Safe ceremony.",
+  "Nothing is deployed publicly. Local fork only.",
+  "The adversarial suite runs WITHOUT the fork. ESTABLISHED: standalone passes, fork suite passes, combined fails with VM::deployCode fallback and a zero-gas revert (trace preserved). NOT ESTABLISHED: the precise cause; the harness-interaction explanation is the executor's diagnosis, not a proven root cause - no minimal reproduction was built.",
+  "No long-running stateful invariant campaign; properties are bounded fuzz at 256 runs with a pinned seed.",
+  "The temporary EOA role membership exists only inside the isolated condition probes; the installed route remains controller-only."
+ ],
+ "next_phase": "P03 - composed native->KeeperHub->controller route. Its mandatory public execution depends on L10 (unresolved); local preparation is unblocked.",
+ "completeness": "P02 required clauses covered, including property/fuzz coverage and the declared rounding/share-effect contract; independent acceptance still pending",
+ "closed_gaps": {
+  "reentrancy": "test_ReentrancyIsRefused - a token reenters executeSupply during the approval leg; the controller refuses with Reentrancy() and the fixture surfaces that through a unique error",
+  "cooldowns": "test_CooldownBlocksThenAllows - dn=3600, refused at 3599s, permitted at 3600s, and a REFUSED op does not advance lastNormalAt or consumption",
+  "timestamps_across_handover": "test_TimestampsAndConsumptionSurviveRunnerAndPolicyChange",
+  "restoration_separation": "test_RestorationLaneIsIndependentOfExhaustedNormalCapacity - the restoration lane is now its OWN Zodiac role with its OWN non-refilling allowance key, because one role permits one condition tree per (target, selector). Worked case: floor 1,000, cash 200, normal count exhausted -> an 800 restoration still succeeds, charges the restoration key only, and leaves the normal key and count untouched.",
+  "nested_false_return": "test_TokenReturningFalseIsRejected -> TokenReturnedFalse",
+  "cleanup_failure_after_economic_action": "test_CleanupFailureAfterEconomicActionRollsBackEverything - the token refuses the cleanup approval ONLY after observing supplyCount>0, so the revert identity itself proves the economic action was reached before cleanup failed; everything then rolls back",
+  "atomic_owner_batch": "test_OwnerBatchActivationIsAtomicAndRollsBackAllowance - a REAL Safe execTransaction with two owner signatures delegatecalling MultiSendCallOnly: [setAllowance, activate]. A stale expected state reverts the whole batch AND rolls back the allowance update.",
+  "failure_stage_labelled": "the quota test is renamed test_RolesRefusalBeforeMorphoRollsBackEverything and asserts the Morpho position is identical - Roles refused PERMISSION; Morpho was never entered",
+  "property_coverage": "test/contracts/property/HeldControllerProperties.t.sol - 14 fuzz properties, 256 runs each, pinned seed. Covers all four required families: supply succeeds EXACTLY when an independent reference predicate holds; consumption monotonic/bounded with remaining exact; a successful supply touches ONLY normal-lane state; withdrawals never refill supply capacity; a handover preserves consumption and both timestamps; both cooldown boundaries; activation succeeds iff BOTH Roles lanes agree and a rejected activation changes nothing; zero capacity disables a lane; large values do not wrap; consumed ids never re-execute; actionHash injective; mutated envelopes never verify; withdraw lane derived from balance.",
+  "operating_synchronisation": "A1 operating half. _syncedRemaining is now called in executeSupply and executeWithdraw, not only activate(), for the lane's amount key AND count key; _requireConsumed then asserts the native quota was charged by exactly the amount and exactly one count. Regressions: test_OperatingDriftInTheNativeQuotaIsRefused (drift UP to 60,000 with ample capacity -> AllowanceDesynchronised(60000e6, 50000e6); restoring agreement lets the SAME operation through) and test_OperatingDriftInTheNativeCountIsRefused.",
+  "non_refilling_validation": "A1. _syncedRemaining reads refill/period, not only the stored balance, and refuses any non-zero refill with AllowanceRefillsNotPermitted. test_RefillingAllowanceIsRefusedAtActivationAndAtOperatingTime covers BOTH boundaries with a balance that still matches.",
+  "roles_approval_and_callback": "A2. _scopeApproveBounded pins the spender to Morpho and bounds the value with LessThan (Ms+1) - deliberately NOT WithinAllowance, so the approval never charges the economic amount quota; cleanup approve(0) stays permitted. The supply callback is pinned to empty bytes with EqualTo on the Dynamic param. test_RolesIndependentlyBoundsApprovalAndRequiresEmptyCallback exercises both from a role member with the controller out of the picture, asserts the specific Roles condition error for the callback, and includes bounded-approval and approve(0) controls.",
+  "mock_fixture_repaired": "MockRoles previously forwarded calls without decrementing, which would have let the new operating checks pass against a fixture that charged nothing. It now consumes per (role, selector) - matching how real Roles scopes one condition tree per (role, target, selector) - and charges ONLY on the economic call, never on the approval or cleanup. Keying by role alone charged the wrong quota and refused legitimate normal withdrawals.",
+  "cross_language_hash": "The deployed controller's actionHash() is now checked against a vector the Python adapter derives from the REAL compiler output (fixtures/crosslang-vectors.json, read by test_ControllerActionHashMatchesTheAdapterVector). Verified non-vacuous by mutating the vector: the fork test fails with both hashes printed, and passes once restored. The earlier self-consistency caveat is retired.",
+  "rounding_share_effects": {
+   "gap": "Rounding/share-effect semantics were not pinned: the controller checked share DIRECTION only and discarded Morpho's returned (assets, shares).",
+   "closed_by": "Exact share accounting via HeldController._decodeEconomicReturn + ReportedEffectMismatch, on both entry points and both withdrawal lanes.",
+   "native_semantics": "Morpho Blue fixed-asset SUPPLY rounds shares DOWN and fixed-asset WITHDRAW rounds them UP, both after _accrueInterest. No tolerance, no ratio and no direction substitute is used: the reported tuple is compared for EXACT equality with the observed position change.",
+   "rounding_boundaries": "test_ExactShareAccountingHoldsAcrossRoundingBoundaries supplies 1_000e6, 1_000e6+1, 3_333_333_333 and 7_777e6 with 6h of interest accrual warped between each, then withdraws 1_234_567_891 on the normal lane and a non-round 862_345_679 shortfall on the RESTORATION lane. Because interest accrues between operations, a stale pre-accrual ratio could not satisfy the check.",
+   "non_vacuity": "test_ReportedSharesMustEqualTheObservedPositionChange reached the real revert ReportedEffectMismatch(\"supply shares\", 4493559506845609, 0) on the fork, so the binding is live rather than trivially satisfied. It matches on the selector only, because the reported share count depends on live market state.",
+   "rollback": "That test also asserts a refused operation rolls back the token effect, the native Roles quota, both counters and the operation id, then replays the SAME envelope and signature successfully once the disagreement is removed.",
+   "fixture_labelling": "vm.mockCall is used ONLY to make the position readback disagree (the supply itself really executes and really moves USDC) and to return a malformed shape. Labelled cheat-code fixtures; NOT native Morpho behaviour."
   },
-  "evidence_kind": {
-    "local_fork": "REAL pinned Base-mainnet Safe 1.4.1, Zodiac Roles v2.1, Morpho Blue and native USDC on an anvil fork at block 51353212. Nothing mocked.",
-    "owner_authority": "modelled with vm.prank(safe); the real 2-of-3 ceremony is P00 evidence",
-    "authenticated_hosted": "NONE - L10",
-    "public_chain": "NONE - nothing deployed publicly",
-    "adversarial_mocks": "LABELLED hostile fixtures (MockRoles/MockMorpho/MockToken variants) used ONLY for reentrancy, false-return and cleanup-failure branches. NOT the production profile and never described as native USDC / real Roles / real Morpho behaviour."
+  "drift_recovery_same_operation": {
+   "gap": "The same-operation drift-recovery assertion switched operation ids (op-drift -> op-drift-ok), so it never showed the SAME operation recovering.",
+   "closed_by": "test_OperatingDriftInTheNativeQuotaIsRefused now replays the identical envelope and signature after the drift is repaired, and asserts the original id is consumed."
   },
-  "toolchain": {
-    "solc": "0.8.28",
-    "via_ir": true,
-    "openzeppelin": "v5.1.0@69c8def5f222ff96f2b5beff05dfba996368aa79",
-    "forge_std": "v1.16.2@bf647bd6046f2f7da30d0c2bf435e5c76a780c1b",
-    "foundry": "forge Version: 1.8.1"
+  "approval_negative_specificity": {
+   "gap": "The unlimited-approval negative asserted only that the call failed, so a revert for any other reason would have satisfied it.",
+   "closed_by": "It now asserts the specific Zodiac Roles condition-violation selector 0xd0a9bf58, matching the empty-callback negative."
   },
-  "requirements": {
-    "1_paused_by_default_no_generic_executor": "HeldController: active=false at construction; two typed entries only",
-    "2_epoch_bound_eip712_plus_executor_route": "test_RetiredRunnerCannotExecuteEvenWithSameExecutor, test_OnlyConfiguredExecutorMayCall, test_MalleableSignatureIsRejected",
-    "3_consumption_counters_cooldowns_lanes": "test_SupplySucceedsAndConsumesExactly, test_ReplayOfConsumedOperationIsRejected, test_CeilingAndFloorAreEnforced",
-    "4_atomic_call_sequence_checked_nested": "test_NestedFailureRollsBackEverything; execTransactionWithRoleReturnData with success flag AND token return checked",
-    "5_roles_conditions_no_double_counting": "supply + withdraw each bound WithinAllowance to their own non-refilling key; Roles charged exactly once per economic call",
-    "6_activation_consistency_guards": "test_ActivationRefusesStaleAllowanceAndAcceptsConsistentOne, test_StaleExpectedStateIsRejected, test_CeilingBelowConsumptionIsRejected",
-    "7_effects_read_not_inferred": "exact debit/receipt, share direction, zero borrow, unchanged collateral, zero managed allowance",
-    "8_new_lineage_no_imported_history": "counters start at 0; the native fixture's 30,000 is not imported"
-  },
-  "known_gaps": [
-    "Owner authority for non-batch tests is modelled with vm.prank; the atomic activation batch DOES use a real two-signature Safe ceremony.",
-    "Nothing is deployed publicly. Local fork only.",
-    "The adversarial suite runs WITHOUT the fork. ESTABLISHED: standalone passes, fork suite passes, combined fails with VM::deployCode fallback and a zero-gas revert (trace preserved). NOT ESTABLISHED: the precise cause; the harness-interaction explanation is the executor's diagnosis, not a proven root cause - no minimal reproduction was built.",
-    "No long-running stateful invariant campaign; properties are bounded fuzz at 256 runs with a pinned seed.",
-    "Rounding evidence: the controller asserts share DIRECTION and exact token deltas, and does not consume Morpho's returned (assets, shares) tuple. Exact rounding semantics are not separately pinned. OPEN.",
-    "The temporary EOA role membership exists only inside the isolated condition probes; the installed route remains controller-only."
-  ],
-  "next_phase": "P03 - composed native->KeeperHub->controller route. Its mandatory public execution depends on L10 (unresolved); local preparation is unblocked.",
-  "completeness": "P02 required clauses covered, including property/fuzz coverage; independent acceptance still pending",
-  "closed_gaps": {
-    "reentrancy": "test_ReentrancyIsRefused - a token reenters executeSupply during the approval leg; the controller refuses with Reentrancy() and the fixture surfaces that through a unique error",
-    "cooldowns": "test_CooldownBlocksThenAllows - dn=3600, refused at 3599s, permitted at 3600s, and a REFUSED op does not advance lastNormalAt or consumption",
-    "timestamps_across_handover": "test_TimestampsAndConsumptionSurviveRunnerAndPolicyChange",
-    "restoration_separation": "test_RestorationLaneIsIndependentOfExhaustedNormalCapacity - the restoration lane is now its OWN Zodiac role with its OWN non-refilling allowance key, because one role permits one condition tree per (target, selector). Worked case: floor 1,000, cash 200, normal count exhausted -> an 800 restoration still succeeds, charges the restoration key only, and leaves the normal key and count untouched.",
-    "nested_false_return": "test_TokenReturningFalseIsRejected -> TokenReturnedFalse",
-    "cleanup_failure_after_economic_action": "test_CleanupFailureAfterEconomicActionRollsBackEverything - the token refuses the cleanup approval ONLY after observing supplyCount>0, so the revert identity itself proves the economic action was reached before cleanup failed; everything then rolls back",
-    "atomic_owner_batch": "test_OwnerBatchActivationIsAtomicAndRollsBackAllowance - a REAL Safe execTransaction with two owner signatures delegatecalling MultiSendCallOnly: [setAllowance, activate]. A stale expected state reverts the whole batch AND rolls back the allowance update.",
-    "failure_stage_labelled": "the quota test is renamed test_RolesRefusalBeforeMorphoRollsBackEverything and asserts the Morpho position is identical - Roles refused PERMISSION; Morpho was never entered",
-    "property_coverage": "test/contracts/property/HeldControllerProperties.t.sol - 14 fuzz properties, 256 runs each, pinned seed. Covers all four required families: supply succeeds EXACTLY when an independent reference predicate holds; consumption monotonic/bounded with remaining exact; a successful supply touches ONLY normal-lane state; withdrawals never refill supply capacity; a handover preserves consumption and both timestamps; both cooldown boundaries; activation succeeds iff BOTH Roles lanes agree and a rejected activation changes nothing; zero capacity disables a lane; large values do not wrap; consumed ids never re-execute; actionHash injective; mutated envelopes never verify; withdraw lane derived from balance.",
-    "operating_synchronisation": "A1 operating half. _syncedRemaining is now called in executeSupply and executeWithdraw, not only activate(), for the lane's amount key AND count key; _requireConsumed then asserts the native quota was charged by exactly the amount and exactly one count. Regressions: test_OperatingDriftInTheNativeQuotaIsRefused (drift UP to 60,000 with ample capacity -> AllowanceDesynchronised(60000e6, 50000e6); restoring agreement lets the SAME operation through) and test_OperatingDriftInTheNativeCountIsRefused.",
-    "non_refilling_validation": "A1. _syncedRemaining reads refill/period, not only the stored balance, and refuses any non-zero refill with AllowanceRefillsNotPermitted. test_RefillingAllowanceIsRefusedAtActivationAndAtOperatingTime covers BOTH boundaries with a balance that still matches.",
-    "roles_approval_and_callback": "A2. _scopeApproveBounded pins the spender to Morpho and bounds the value with LessThan (Ms+1) - deliberately NOT WithinAllowance, so the approval never charges the economic amount quota; cleanup approve(0) stays permitted. The supply callback is pinned to empty bytes with EqualTo on the Dynamic param. test_RolesIndependentlyBoundsApprovalAndRequiresEmptyCallback exercises both from a role member with the controller out of the picture, asserts the specific Roles condition error for the callback, and includes bounded-approval and approve(0) controls.",
-    "mock_fixture_repaired": "MockRoles previously forwarded calls without decrementing, which would have let the new operating checks pass against a fixture that charged nothing. It now consumes per (role, selector) - matching how real Roles scopes one condition tree per (role, target, selector) - and charges ONLY on the economic call, never on the approval or cleanup. Keying by role alone charged the wrong quota and refused legitimate normal withdrawals.",
-    "cross_language_hash": "The deployed controller's actionHash() is now checked against a vector the Python adapter derives from the REAL compiler output (fixtures/crosslang-vectors.json, read by test_ControllerActionHashMatchesTheAdapterVector). Verified non-vacuous by mutating the vector: the fork test fails with both hashes printed, and passes once restored. The earlier self-consistency caveat is retired."
-  },
-  "build_provenance": {
-    "solc": "0.8.28",
-    "via_ir": true,
-    "optimizer": true,
-    "optimizer_runs": 200,
-    "evm_version": "solc 0.8.28 default (cancun)",
-    "openzeppelin": "v5.1.0@69c8def5f222ff96f2b5beff05dfba996368aa79",
-    "forge_std": "v1.16.2@bf647bd6046f2f7da30d0c2bf435e5c76a780c1b",
-    "foundry": "forge Version: 1.8.1",
-    "reinstall": "forge install OpenZeppelin/openzeppelin-contracts@v5.1.0 && forge install foundry-rs/forge-std@v1.16.2  (lib/ is excluded from the archive)",
-    "git_state": {
-      "note": "forge install required `git init` in held/; the tree had no git metadata before P02",
-      "commits": "0",
-      "tracked_files": "3",
-      "uncommitted_or_untracked_entries": "18",
-      "honest_status": "NOTHING IS COMMITTED. Git metadata exists but the working tree is the source of truth; the archive, not git, is the snapshot."
-    }
-  },
-  "fuzz_findings": {
-    "1": "testFuzz_MutatedEnvelopeNeverVerifies initially FAILED with counterexample [field=138, delta=1e11]. Diagnosis: a flaw in the TEST, not the controller -- the policyVersion branch computed 1 + (delta % 1000), and 1e11 % 1000 == 0, so it wrote back the original value and the envelope was never actually mutated. Fixed so every branch strictly changes its field, plus an assertion that something really changed."
-  },
-  "fuzz_configuration": {
-    "runs_per_property": 256,
-    "seed": "0x48454c4400000000000000000000000000000000000000000000000000000001 (pinned in foundry.toml)",
-    "override": "FOUNDRY_FUZZ_SEED=... to explore a different corpus",
-    "families": [
-      "lifetime accounting / lane isolation / rollback",
-      "normal-restoration classification, independent capacity, BOTH cooldowns",
-      "activation consistency and atomicity of a rejected activation",
-      "zero capacity, exact boundaries, large supported values, no wrap"
-    ]
-  },
-  "check_phase_03_local": "24 passed; 0 failed (17 parser-level + 7 against the REAL pinned compiler)",
-  "history": [
-    {
-      "note": "earlier recorded states, preserved as history, not current",
-      "snapshots": [
-        "39 tests / 21 fork at d245b64",
-        "41 tests / 23 fork at 55e7053",
-        "git: 0 commits observed before the first checkpoint push"
-      ]
-    }
-  ],
-  "git_state": {
-    "remote": "https://github.com/pvgirish/held-keeperhub (PRIVATE)",
-    "branch": "main",
-    "head": "55e7053d99405d0cfeb44149119e8aa532e6b0ff",
-    "commits": "5",
-    "note": "history begins at the first checkpoint; nothing backdated"
-  },
-  "still_open": {
-    "L10": "Authenticated KeeperHub organisation caller/payer. Separate gate; no local fixture closes it.",
-    "B_remaining": "The native CONNECTION is closed (CompilationResult -> action_bundle -> Held record -> admission, byte-identical economic calldata, cross-language hash). Still to come in P03: envelope signing from a key reference, the KeeperHub client with dry-run/broadcast and conflict semantics, journal/result wiring, and the concrete public-execution manifest."
+  "crosslang_vector_provenance": {
+   "gap": "fixtures/crosslang-vectors.json carried no provenance, so a fresh checkout could not tell which producer or SDK tree it came from and a stale vector would keep passing.",
+   "closed_by": "The vector now records producer, almanakSdkCommit, heldRecordVersion and economicCalldataDigest. The producer reads the commit from the SDK checkout the almanak module was imported FROM and refuses to write a vector unless it equals the pin 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938.",
+   "hash_unchanged": "0x51bb5c6557d3ea42937270b2ded34f064af9a3ec0f46df379dd5f7ee2e88dbed before and after, so adding provenance did not move the value under test."
   }
+ },
+ "build_provenance": {
+  "solc": "0.8.28",
+  "via_ir": true,
+  "optimizer": true,
+  "optimizer_runs": 200,
+  "evm_version": "solc 0.8.28 default (cancun)",
+  "openzeppelin": "v5.1.0@69c8def5f222ff96f2b5beff05dfba996368aa79",
+  "forge_std": "v1.16.2@bf647bd6046f2f7da30d0c2bf435e5c76a780c1b",
+  "foundry": "forge Version: 1.8.1",
+  "reinstall": "forge install OpenZeppelin/openzeppelin-contracts@v5.1.0 && forge install foundry-rs/forge-std@v1.16.2  (lib/ is excluded from the archive)",
+  "git_state": {
+   "note": "forge install required `git init` in held/; the tree had no git metadata before P02",
+   "commits": "0",
+   "tracked_files": "3",
+   "uncommitted_or_untracked_entries": "18",
+   "honest_status": "NOTHING IS COMMITTED. Git metadata exists but the working tree is the source of truth; the archive, not git, is the snapshot."
+  }
+ },
+ "fuzz_findings": {
+  "1": "testFuzz_MutatedEnvelopeNeverVerifies initially FAILED with counterexample [field=138, delta=1e11]. Diagnosis: a flaw in the TEST, not the controller -- the policyVersion branch computed 1 + (delta % 1000), and 1e11 % 1000 == 0, so it wrote back the original value and the envelope was never actually mutated. Fixed so every branch strictly changes its field, plus an assertion that something really changed."
+ },
+ "fuzz_configuration": {
+  "runs_per_property": 256,
+  "seed": "0x48454c4400000000000000000000000000000000000000000000000000000001 (pinned in foundry.toml)",
+  "override": "FOUNDRY_FUZZ_SEED=... to explore a different corpus",
+  "families": [
+   "lifetime accounting / lane isolation / rollback",
+   "normal-restoration classification, independent capacity, BOTH cooldowns",
+   "activation consistency and atomicity of a rejected activation",
+   "zero capacity, exact boundaries, large supported values, no wrap"
+  ]
+ },
+ "check_phase_03_local": "24 passed; 0 failed (17 parser-level + 7 against the REAL pinned compiler)",
+ "history": [
+  {
+   "note": "earlier recorded states, preserved as history, not current",
+   "snapshots": [
+    "39 tests / 21 fork at d245b64",
+    "41 tests / 23 fork at 55e7053",
+    "git: 0 commits observed before the first checkpoint push"
+   ]
+  }
+ ],
+ "git_state": {
+  "remote": "https://github.com/pvgirish/held-keeperhub (PRIVATE)",
+  "branch": "main",
+  "head": "55e7053d99405d0cfeb44149119e8aa532e6b0ff",
+  "commits": "5",
+  "note": "history begins at the first checkpoint; nothing backdated"
+ },
+ "still_open": {
+  "L10": "Authenticated KeeperHub organisation caller/payer. Separate gate; no local fixture closes it.",
+  "B_remaining": "The native CONNECTION is closed (CompilationResult -> action_bundle -> Held record -> admission, byte-identical economic calldata, cross-language hash). Still to come in P03: envelope signing from a key reference, the KeeperHub client with dry-run/broadcast and conflict semantics, journal/result wiring, and the concrete public-execution manifest."
+ }
 }

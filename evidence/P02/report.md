@@ -120,9 +120,32 @@ is sequential `CALL` through Roles with `shouldRevert=true` *and* the returned s
 flag checked. `execTransactionWithRoleReturnData` is used rather than the plain variant
 so an ERC20 that returns `false` instead of reverting cannot pass as success.
 
-**Effects are read, not inferred.** Exact Safe debit/receipt, share direction, borrow
-shares still zero, collateral unchanged, managed allowance zero on both sides. V4 §5
-forbids inferring success from the outer receipt alone.
+**Effects are read, not inferred.** Exact Safe debit/receipt, **exact share accounting**,
+borrow shares still zero, collateral unchanged, managed allowance zero on both sides. V4
+§5 forbids inferring success from the outer receipt alone.
+
+Share accounting is an equality, not a direction. Morpho returns the `(assets, shares)`
+it actually moved — fixed-asset supply rounds shares **down**, fixed-asset withdraw
+rounds them **up**, both after `_accrueInterest` — and the controller decodes that tuple
+and requires it to equal the observed position change exactly: `shares1 - shares0 ==
+reportedShares` on supply, `shares0 - shares1 == reportedShares` on withdraw, with
+`reportedAssets == amount` on both. No tolerance and no ratio is used. A return that is
+not two words reverts `UnexpectedReturnShape` before anything is inferred from it.
+
+This is exercised across amounts where the conversion is inexact (`1_000e6`,
+`1_000e6 + 1`, `3_333_333_333`, `7_777e6`) with interest warped forward between each, on
+the normal withdraw lane and on the restoration lane with a non-round shortfall — so a
+stale pre-accrual ratio could not satisfy it. That the check is live rather than
+trivially true was confirmed by reaching the real revert on the fork:
+`ReportedEffectMismatch("supply shares", 4493559506845609, 0)`. The same test then proves
+a refusal rolls back the token effect, the native Roles quota, both counters and the
+operation id, and that replaying the **identical** envelope and signature succeeds once
+the disagreement is removed.
+
+`vm.mockCall` appears in two tests, to make the position readback disagree with a
+truthful report and to return a malformed shape. These are labelled cheat-code fixtures;
+the supply itself really executes against real Morpho, and no result here is native
+Morpho behaviour.
 
 **The withdraw lane is derived, not chosen.** The controller reads the Safe balance and
 decides normal vs restoration itself, so a runner cannot select the restoration lane to

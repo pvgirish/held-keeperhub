@@ -50,6 +50,17 @@ HELD_RECORD_VERSION = "held.native-record.v1"
 SUPPORTED_INTENT_TYPES = {"SUPPLY", "WITHDRAW"}
 HOLD_INTENT_TYPES = {"HOLD", "NO_ACTION", "NOOP"}
 
+# The EXACT status contract from almanak/framework/intents/compiler_models.py at the
+# pin. Prefix matching was wrong and provably so: "SUCCESS_BUT_FAILED", "OKAY" and
+# "COMPILED_UNSAFE" all passed `startswith(("OK","SUCCESS","COMPILED"))`. Only these
+# three strings exist, and only one of them authorizes anything.
+STATUS_SUCCESS = "SUCCESS"
+STATUS_FAILED = "FAILED"
+STATUS_PARTIAL = "PARTIAL"
+KNOWN_STATUSES = frozenset({STATUS_SUCCESS, STATUS_FAILED, STATUS_PARTIAL})
+
+_MISSING = object()
+
 
 class NativeBoundaryError(Exception):
     """The native object could not be admitted into Held's representation."""
@@ -75,16 +86,14 @@ class ExecutionContext:
     These are checked against the installed profile rather than trusted. A bundle that
     disagrees with the profile is a contradiction, not something to normalise away.
 
-    `compiler_status` is a FALLBACK for callers holding a bare ActionBundle. When a
-    CompilationResult is available its own `.status` is authoritative and this field is
-    ignored.
+    There is deliberately NO status field here: the producer's own `.status` is the only
+    verdict, read once in `unwrap_compilation_result`.
     """
 
     chain_id: int
     safe: str
     source_decision_id: str
     action_index: int = 0
-    compiler_status: str = "SUCCESS"
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -124,11 +133,13 @@ def _copy_transaction(tx: Any, index: int) -> dict[str, Any]:
 
 
 def normalize_native_bundle(native_bundle: Any, context: ExecutionContext) -> HeldNativeRecord:
-    """Convert a native ActionBundle into Held's record, or fail closed."""
-    status = str(context.compiler_status or "").upper()
-    if not status.startswith(("OK", "SUCCESS", "COMPILED")):
-        raise NativeBoundaryError(f"native compilation did not succeed: {context.compiler_status!r}")
+    """Convert a native ActionBundle into Held's record, or fail closed.
 
+    The producer verdict is NOT re-checked here. `unwrap_compilation_result` is the one
+    place it is read; having a caller-supplied status second-guess the producer left two
+    competing sources of truth, with the documentation claiming one was ignored while
+    the code still enforced it.
+    """
     intent_type = _field(native_bundle, "intent_type")
     if intent_type is None:
         raise NativeBoundaryError(
@@ -136,12 +147,22 @@ def normalize_native_bundle(native_bundle: Any, context: ExecutionContext) -> He
             "{safe, calls} record is a different schema and must not be passed here."
         )
     intent = str(intent_type).upper()
+    transactions = _field(native_bundle, "transactions")
+
     if intent in HOLD_INTENT_TYPES:
+        # Inspect the transactions BEFORE accepting the label. A HOLD carrying
+        # executable transactions is contradictory input, not a successful no-action
+        # decision -- classifying it as HOLD would discard real calls silently.
+        if transactions:
+            raise NativeBoundaryError(
+                f"contradictory input: {intent} carries {len(transactions)} transaction(s). "
+                "A HOLD has no executable economic call."
+            )
         raise HoldDecision(f"native decision is {intent}: no economic call, no operation")
+
     if intent not in SUPPORTED_INTENT_TYPES:
         raise NativeBoundaryError(f"intent_type {intent!r} is outside the supported profile")
 
-    transactions = _field(native_bundle, "transactions")
     if transactions is None:
         raise NativeBoundaryError("native ActionBundle exposes 'transactions'; none found")
     if not isinstance(transactions, (list, tuple)) or not transactions:
@@ -164,24 +185,60 @@ def normalize_native_bundle(native_bundle: Any, context: ExecutionContext) -> He
     )
 
 
-def unwrap_compilation_result(result: Any) -> Any:
+def unwrap_compilation_result(result: Any, *, require_verdict: bool = True) -> Any:
     """Take the producer's own verdict, then hand back its ActionBundle.
 
-    Fails closed on a non-SUCCESS status, a recorded error, or a native safety refusal.
-    A safety refusal is the native risk check doing its job; V4 §3 says native risk
-    validation is preserved, so Held must not route around it.
+    `require_verdict=True` is the authorizing contract: an object with no status is
+    refused rather than assumed successful. A bag of well-formed transactions is not
+    evidence that compilation and native risk validation succeeded, and the earlier
+    version returned exactly such an object untouched -- before it had even looked at
+    `error` or `is_safety_refusal`.
+
+    Ordering matters and was previously inverted. The SDK documents `is_safety_refusal`
+    as "whether a **FAILED** status is a pre-execution SAFETY-GUARD refusal", so the
+    refusal must be classified while handling FAILED. The old code only reached it after
+    the success gate, which meant the ordinary native refusal shape (FAILED + refusal)
+    was reported as a generic error and the category was lost.
     """
-    status = _field(result, "status")
-    if status is None:
-        return result  # already an ActionBundle, or a caller-built object
-    status_text = str(getattr(status, "value", status)).upper()
-    if not status_text.startswith(("OK", "SUCCESS", "COMPILED")):
-        raise NativeBoundaryError(f"native compilation did not succeed: status={status_text}")
+    status = _field(result, "status", _MISSING)
+    if status is _MISSING or status is None:
+        if require_verdict:
+            raise NativeBoundaryError(
+                "no producer verdict: this object carries no compilation status, so there "
+                "is no evidence that compilation and native risk checks succeeded. "
+                "Use normalize_bare_bundle() explicitly if you are parsing without one."
+            )
+        return result
+
+    status_text = str(getattr(status, "value", status))
+    if status_text not in KNOWN_STATUSES:
+        raise NativeBoundaryError(
+            f"unrecognised compilation status {status_text!r}; the pinned contract is "
+            f"{sorted(KNOWN_STATUSES)}"
+        )
+
+    if status_text == STATUS_FAILED:
+        if _field(result, "is_safety_refusal"):
+            # The native guard did its job: zero transactions were built and the
+            # position is untouched. V4 §3 preserves native risk validation, so Held
+            # reports this as a refusal rather than routing around it.
+            raise NativeRefusal(
+                f"the native compiler refused on safety grounds: {_field(result, 'error')!r}"
+            )
+        raise NativeBoundaryError(f"native compilation FAILED: {_field(result, 'error')!r}")
+
+    if status_text == STATUS_PARTIAL:
+        raise NativeBoundaryError(
+            "native compilation is PARTIAL: some transactions built and some failed. "
+            "A partial bundle is never a supported single economic action."
+        )
+
+    # SUCCESS. Contradicting fields still fail closed.
     if _field(result, "is_safety_refusal"):
-        raise NativeRefusal("the native compiler refused this action on safety grounds")
+        raise NativeBoundaryError("contradictory result: SUCCESS carrying is_safety_refusal")
     error = _field(result, "error")
     if error:
-        raise NativeBoundaryError(f"native compilation reported an error: {error!r}")
+        raise NativeBoundaryError(f"contradictory result: SUCCESS carrying error {error!r}")
 
     bundle = _field(result, "action_bundle")
     if bundle is None:
@@ -213,4 +270,23 @@ def admit_native_bundle(native_bundle: Any, context: ExecutionContext, profile: 
     admitted = admit_bundle(
         record.as_bundle(), profile, context.source_decision_id, context.action_index
     )
+    # The declared intent label and the family decoded from calldata must agree. The
+    # label was previously read and then discarded, so a SUPPLY-labelled bundle whose
+    # calls were a withdraw would have been admitted as a withdraw without comment.
+    if admitted.action.family.name != record.intent_type:
+        raise NativeBoundaryError(
+            f"declared intent_type {record.intent_type} disagrees with the family decoded "
+            f"from calldata ({admitted.action.family.name})"
+        )
     return record, admitted
+
+
+def normalize_bare_bundle(bundle: Any, context: ExecutionContext) -> HeldNativeRecord:
+    """Parse an ActionBundle WITHOUT a producer verdict. NOT an authorizing path.
+
+    Exists for parser-level tests and for callers who have separately established that
+    compilation succeeded. It is named so that using it is a visible decision rather
+    than an accident: nothing here shows that native compilation or risk validation
+    succeeded, so its output must not be signed or submitted on its own.
+    """
+    return normalize_native_bundle(bundle, context)

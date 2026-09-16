@@ -1,9 +1,13 @@
 {
   "note": "Computed by the Python adapter from the REAL compiler output. test/contracts/HeldController.t.sol reads this and asserts the DEPLOYED controller's actionHash() agrees, which is what makes the hash claim a cross-language check rather than Python agreeing with itself.",
+  "producer": "tests/integration/test_p03_native_bundle.py",
+  "almanakSdkCommit": "6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938",
+  "heldRecordVersion": "held.native-record.v1",
   "family": 1,
   "marketId": "0x13c42741a359ac4a8aa8287d2be109dcf28344484f91185f9a79bd5a805a55ae",
   "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
   "amount": "100000000",
   "onBehalf": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
-  "expectedActionHash": "0x51bb5c6557d3ea42937270b2ded34f064af9a3ec0f46df379dd5f7ee2e88dbed"
+  "expectedActionHash": "0x51bb5c6557d3ea42937270b2ded34f064af9a3ec0f46df379dd5f7ee2e88dbed",
+  "economicCalldataDigest": "0x3763f9f19440ca2f3442fc6ccf3c103e619916aeadfde172e9154179e23b73b4"
 }

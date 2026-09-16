@@ -161,6 +161,8 @@ contract HeldController {
     error NestedCallFailed(address target);
     error TokenReturnedFalse(address target);
     error EffectNotObserved(string what);
+    error ReportedEffectMismatch(string what, uint256 reported, uint256 observed);
+    error UnexpectedReturnShape(uint256 length);
     error BorrowSharesPresent();
     error CollateralChanged();
     error StaleActivation();
@@ -301,7 +303,11 @@ contract HeldController {
         uint256 countQuotaBefore = _syncedRemaining(normalCountKey, uint256(p.Nn) - uint256(normalCount));
 
         _approveThroughRoles(amount);
-        _callThroughRoles(morpho, abi.encodeCall(IMorpho.supply, (mp, amount, 0, safe, bytes(""))), normalRoleKey);
+        (uint256 reportedAssets, uint256 reportedShares) = _decodeEconomicReturn(
+            _callThroughRoles(
+                morpho, abi.encodeCall(IMorpho.supply, (mp, amount, 0, safe, bytes(""))), normalRoleKey
+            )
+        );
         _approveThroughRoles(0);
 
         // Read the EXACT effects. V4 §5: never infer success from the outer receipt.
@@ -309,6 +315,16 @@ contract HeldController {
         if (balanceBefore - balanceAfter != amount) revert EffectNotObserved("safe debit");
         if (balanceAfter < p.F) revert FloorViolated();
         (uint256 shares1, uint128 borrow1, uint128 collateral1) = IMorpho(morpho).position(marketId, safe);
+        // EXACT share accounting, not merely a direction. Morpho reports what it
+        // actually did -- for a fixed-asset supply it rounds shares DOWN after accruing
+        // interest -- and the observed position change must equal that report exactly.
+        // Reading only the sign would accept a position that moved by some other amount.
+        if (reportedAssets != amount) {
+            revert ReportedEffectMismatch("supply assets", reportedAssets, amount);
+        }
+        if (shares1 - shares0 != reportedShares) {
+            revert ReportedEffectMismatch("supply shares", reportedShares, shares1 - shares0);
+        }
         if (shares1 <= shares0) revert EffectNotObserved("supply shares did not increase");
         if (borrow1 != 0) revert BorrowSharesPresent();
         if (collateral1 != collateral0) revert CollateralChanged();
@@ -367,15 +383,25 @@ contract HeldController {
             countKey,
             restoration ? uint256(p.Nr) - uint256(restorationCount) : uint256(p.Nn) - uint256(normalCount)
         );
-        _callThroughRoles(
-            morpho,
-            abi.encodeCall(IMorpho.withdraw, (mp, amount, 0, safe, safe)),
-            restoration ? restorationRoleKey : normalRoleKey
+        (uint256 reportedAssets, uint256 reportedShares) = _decodeEconomicReturn(
+            _callThroughRoles(
+                morpho,
+                abi.encodeCall(IMorpho.withdraw, (mp, amount, 0, safe, safe)),
+                restoration ? restorationRoleKey : normalRoleKey
+            )
         );
 
         uint256 balanceAfter = IERC20(token).balanceOf(safe);
         if (balanceAfter - balanceBefore != amount) revert EffectNotObserved("safe receipt");
         (uint256 shares1, uint128 borrow1, uint128 collateral1) = IMorpho(morpho).position(marketId, safe);
+        // Fixed-asset withdraw rounds shares UP after accrual. Same contract: the
+        // observed decrease must equal exactly what Morpho reported burning.
+        if (reportedAssets != amount) {
+            revert ReportedEffectMismatch("withdraw assets", reportedAssets, amount);
+        }
+        if (shares0 - shares1 != reportedShares) {
+            revert ReportedEffectMismatch("withdraw shares", reportedShares, shares0 - shares1);
+        }
         if (shares1 >= shares0) revert EffectNotObserved("supply shares did not decrease");
         if (borrow1 != 0) revert BorrowSharesPresent();
         if (collateral1 != collateral0) revert CollateralChanged();
@@ -485,6 +511,17 @@ contract HeldController {
             )
         );
         return keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
+    }
+
+    /// @dev Decode the economic call's own (assets, shares) report.
+    ///
+    ///      The controller previously discarded this and checked only the SIGN of the
+    ///      position change, which does not state the expected conversion. Binding the
+    ///      report to the observed effect pins the rounding without reimplementing
+    ///      Morpho's math or assuming one share equals one token base unit.
+    function _decodeEconomicReturn(bytes memory ret) internal pure returns (uint256, uint256) {
+        if (ret.length != 64) revert UnexpectedReturnShape(ret.length);
+        return abi.decode(ret, (uint256, uint256));
     }
 
     /// @dev ERC20 `approve` through Roles, with the token's own return value checked.
