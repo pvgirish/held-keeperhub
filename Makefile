@@ -4,7 +4,7 @@ SDK ?= $(HOME)/src/sdk
 export PY
 export SDK
 
-.PHONY: check-plan-digests check-phase-00 check-phase-01 check-phase-02 check-phase-03-local check-phase-03 check-phase-03-composed check-phase-04 check-phase-05 check-manifests check-probe \
+.PHONY: check-plan-digests check-phase-00 check-phase-01 check-phase-02 check-phase-03-local check-phase-03 check-phase-03-composed check-bootstrap-rehearsal check-phase-04 check-phase-05 check-manifests check-probe \
         check-baseline check-native-workflow gate-tests
 
 check-phase-00:
@@ -76,6 +76,12 @@ check-phase-03-local:
 	@$(PY) tests/integration/test_p03_keeperhub.py
 	@$(PY) tests/integration/test_p03_submit.py
 	@$(PY) tests/integration/test_p03_recovery.py
+
+## P03 required work 6, REHEARSAL: the bounded bootstrap checklist collected manually
+## against the FORK fixture. Not public-Safe activation evidence and not the P04
+## automated authority service. Exits non-zero if any section is INCOMPLETE.
+check-bootstrap-rehearsal:
+	@./script/collect_bootstrap_evidence.sh
 
 ## The composed LOCAL run: real compiler -> admitted -> signed -> typed request ->
 ## executed by the REAL controller on the fork -> journal reconciled from that reading.

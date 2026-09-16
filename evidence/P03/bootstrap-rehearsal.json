@@ -1,0 +1,109 @@
+{
+ "observation": {
+  "block_number": 51353228,
+  "block_hash": "0xdd9aa149d181446fee02e9e26ca757f9f5c0ac272c296032e5cb7bd6d919f213",
+  "chain_id": 8453,
+  "finality": "NONE \u2014 anvil fork. This is the observation point, not finalized evidence. A public installation must state a finalized block/hash.",
+  "scope": "FORK REHEARSAL. Not the public installation, not the P04 automated service."
+ },
+ "safe": {
+  "complete": true,
+  "owners": [
+   "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+   "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+   "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+  ],
+  "threshold": 2,
+  "implementation_version": "\"1.4.1\"",
+  "enabled_modules": [
+   "0x3875311CC0D4017A033893a9653A0725378acA1C"
+  ],
+  "unrecognised_modules": [],
+  "guard": "0x0000000000000000000000000000000000000000",
+  "guard_is_set": false,
+  "fallback_handler": "0x0000000000000000000000000000000000000000",
+  "note": "An unrecognised enabled module is an unrecognised delegated path and blocks protected activation (V4 \u00a76)."
+ },
+ "roles": {
+  "complete": true,
+  "module": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+  "owner": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180",
+  "avatar": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180",
+  "target": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180",
+  "role_key": "0x68656c642d6f70657261746f722d763100000000000000000000000000000000",
+  "allowance_key": "0x68656c642d737570706c792d6361700000000000000000000000000000000000",
+  "allowance": {
+   "refill": "0",
+   "maxRefill": "50000000000",
+   "period": "0",
+   "balance": "20000000000",
+   "timestamp": "1789495779"
+  },
+  "non_refilling": true,
+  "note": "A refilling allowance is refused by the controller at activation AND during operation. Read back here rather than trusted from the setup script."
+ },
+ "morpho_grants": {
+  "complete": true,
+  "checked": {
+   "safe_self": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
+   "roles_module": "0x3875311cc0d4017a033893a9653a0725378aca1c"
+  },
+  "grants": {
+   "safe_self": false,
+   "roles_module": false
+  },
+  "external_delegates": [],
+  "note": "Confirmed by mapping readback, not by history alone. BOUNDARY: this checks the identities listed above. It does not and cannot enumerate every address that might hold a grant, so completeness is within the declared discovery set."
+ },
+ "token_approvals": {
+  "complete": true,
+  "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "allowances": {
+   "morpho": "0",
+   "roles": "0",
+   "permit2": "0"
+  },
+  "nonzero": [],
+  "note": "The managed Safe->Morpho allowance must be zero at rest; the controller also requires it zero on entry and exit of every operation."
+ },
+ "identities": {
+  "complete": true,
+  "public_chain_facts": {
+   "safe_owners": [
+    "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+   ],
+   "threshold": 2,
+   "roles_owner": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180"
+  },
+  "attested_not_verified": {
+   "statement": "Control of the runner and executor keys, and of any KeeperHub organisation credential, is ATTESTED and NOT verified here.",
+   "why": "Public chain data cannot prove private-key ownership. V4 \u00a76 requires this distinction to be explicit rather than folded into the chain findings.",
+   "fork_note": "Every key in this fixture is a well-known anvil account. It is not custody and proves nothing about a production installation."
+  }
+ },
+ "verdict": {
+  "all_sections_complete": true,
+  "incomplete_sections": [],
+  "activation_would_be": "PERMITTED BY THIS CHECKLIST",
+  "important": "'PERMITTED BY THIS CHECKLIST' means the declared sections read clean at this observation point on a FORK. It is not authorization, not finality, and not evidence about the public installation."
+ },
+ "non_vacuity_control": {
+  "why": "A checklist that cannot fail is decoration. This records that it does fail, with the exact injected state.",
+  "method": "On the same fork, impersonated the Safe and injected two supported-profile violations: Morpho.setAuthorization(0x\u2026dEaD, true) and USDC.approve(Morpho, 1).",
+  "observed_injected_state": {
+   "morpho_isAuthorized_stranger": true,
+   "usdc_allowance_morpho": "1"
+  },
+  "result": {
+   "morpho_grants": "INCOMPLETE \u2014 external delegate detected",
+   "token_approvals": "INCOMPLETE \u2014 non-zero managed allowance",
+   "safe": "COMPLETE (correctly unaffected)",
+   "roles": "COMPLETE (correctly unaffected)",
+   "verdict": "BLOCKED",
+   "exit_code": 1
+  },
+  "reading": "The two sections that should notice did, the two that should not were unaffected, and the run exited non-zero. V4 \u00a76: incomplete evidence blocks activation."
+ }
+}

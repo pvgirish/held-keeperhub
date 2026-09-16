@@ -220,5 +220,21 @@
    "persistence_failure": "An in-memory advance is not transactional and cannot be undone. So the guarantee is not 'the machine is restored' -- it cannot be. The consumer is NOT authoritative until verify_committed() confirms the snapshot, and require_authoritative() raises otherwise. Exercised with a consumer that fails AFTER the advance: machine COMPLETED, nothing durable, authoritative False.",
    "ordering_note": "results.deliver() INSERTs the results row BEFORE apply(), so a foreign-key failure never reaches the machine. That path was already safe; the hazard is a failure between the advance and the commit, which is what the test models."
   }
+ },
+ "bootstrap_checklist": {
+  "status": "REHEARSED on the fork. NOT satisfied for any public installation.",
+  "gate": "make check-bootstrap-rehearsal",
+  "requirement": "P03 required work 6 / V4 \u00a76: at ONE stated block, report separately Safe ownership/threshold/implementation and enabled modules/guard/fallback; Roles implementation, members, conditions and allowance state; Morpho grants confirmed by mapping readback; relevant token approvals and delegated spend paths; runner/executor identities with attested control kept DISTINCT from chain facts.",
+  "method": "Every value is READ with cast from the running fork. Nothing is taken from the fixture scripts' own output, because the checklist's job is to verify the installation independently of whatever built it.",
+  "result": "All five sections COMPLETE at fork block 51353228; verdict PERMITTED BY THIS CHECKLIST.",
+  "non_vacuity": "Proven. Injecting Morpho.setAuthorization(0x\u2026dEaD, true) and USDC.approve(Morpho, 1) on the same fork turned morpho_grants and token_approvals INCOMPLETE, left safe and roles COMPLETE, and exited 1 with verdict BLOCKED.",
+  "declared_boundaries": [
+   "FORK ONLY. The public installation needs its own bounded collection and readback against its own addresses before any authorized activation; these addresses and conclusions cannot stand in for it.",
+   "NO FINALITY. An anvil fork has none. The block is the observation point, not finalized evidence.",
+   "NOT the P04 automated authority service. This is hand-driven collection that P04 is meant to automate and generalise.",
+   "Morpho grant completeness is WITHIN THE DECLARED DISCOVERY SET. The readback checks the listed identities; it cannot enumerate every address that might hold a grant.",
+   "Private-key and credential control is ATTESTED, never verified. Public chain data cannot prove it, and the fork's keys are well-known anvil accounts that are not custody."
+  ],
+  "effect_on_request_B": "This removes the rehearsal from the critical path but NOT the requirement. Request B still needs the same collection performed against the actual public Safe/controller/Roles at a stated finalized block."
  }
 }
