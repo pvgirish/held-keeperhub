@@ -1,0 +1,129 @@
+{
+ "schema": "held.public-execution-manifest.v1",
+ "phase": "P03",
+ "recorded_utc": "2026-09-16",
+ "status": "NOT EXECUTED. Nothing in this manifest has been deployed, funded, signed for mainnet or submitted.",
+ "purpose": "The concrete, reviewable description of the ONE public execution Held would perform if L10 opened. It is written before the fact, so that the execution can be checked against a prior commitment rather than described afterwards.",
+
+ "blocking_gate": {
+  "id": "L10-authenticated-caller-payer",
+  "status": "BLOCKED-UNKNOWN",
+  "what_is_missing": "A KeeperHub organisation API key, and an authenticated preflight against POST /api/execute/contract-call.",
+  "not_closed_by": [
+   "The public chain catalog. Re-verified live on 2026-09-16: GET /api/chains answers 200 with NO credential, so it cannot be an authentication check.",
+   "Any local test in this repository. OfflineTransport stamps hosted=false and SendResult.assert_hosted_evidence() refuses a non-hosted result."
+  ],
+  "authorization_note": "Executing this manifest would deploy a contract and spend funds on a public chain. That is NOT authorized by the current instructions and must be requested explicitly before any step below is taken."
+ },
+
+ "target": {
+  "chain": "Base mainnet",
+  "chain_id": 8453,
+  "chain_id_field_caveat": "KeeperHub's catalog exposes an internal string id per chain (Base = '9wr4m6zv2dwflb1trbzsx') alongside the numeric chainId. Held sends chainId. Which the authenticated contract-call route expects is NOT established, because that route requires the credential. If it wants the internal id, the field to change is ContractCallRequest.to_payload in adapter/held_adapter/execution/keeperhub.py.",
+  "morpho_blue": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+  "market_id": "0x13c42741a359ac4a8aa8287d2be109dcf28344484f91185f9a79bd5a805a55ae",
+  "market_params": {
+   "loan_token_usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+   "collateral_token": "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452",
+   "oracle": "0xD7A1abA119a236Fea5BBC5cAC6836465cbe9289A",
+   "irm": "0x46415998764C29aB2a25CbeA6254146D50D22687",
+   "lltv": "860000000000000000"
+  }
+ },
+
+ "prerequisites_in_order": [
+  {
+   "step": 1,
+   "action": "Deploy HeldController to Base mainnet.",
+   "status": "NOT DONE",
+   "note": "Requires explicit authorization. No contract has been deployed to any public chain.",
+   "constructor_inputs": "safe, roles, morpho, token, marketId, lineage, Keys{normalRole, restorationRole, supplyAmount, normalWithdrawAmount, restorationAmount, normalCount, restorationCount}",
+   "invariant": "The controller is paused at construction (active=false) and has two typed entry points. It cannot execute anything before step 4."
+  },
+  {
+   "step": 2,
+   "action": "Deploy or identify the customer Safe (2-of-3) and its Zodiac Roles module.",
+   "status": "NOT DONE on mainnet. A genuine 2-of-3 Safe 1.4.1 + Zodiac Roles v2.1 fixture is exercised on the Base-mainnet fork."
+  },
+  {
+   "step": 3,
+   "action": "Owner ceremony: scope the roles, bind the non-refilling allowances, enable the controller as a role member.",
+   "status": "NOT DONE on mainnet.",
+   "constraint": "Allowances must be non-refilling. The controller refuses a refilling allowance both at activation and during operation (AllowanceRefillsNotPermitted)."
+  },
+  {
+   "step": 4,
+   "action": "Activate the controller with an explicit ExpectedState.",
+   "status": "NOT DONE.",
+   "constraint": "Activation refuses stale expected state and refuses a ceiling below existing consumption."
+  },
+  {
+   "step": 5,
+   "action": "Fund the Safe with USDC.",
+   "status": "NOT DONE. No funds have been moved on any public chain."
+  },
+  {
+   "step": 6,
+   "action": "Authenticated KeeperHub preflight (simulate-mode contract call).",
+   "status": "BLOCKED on L10.",
+   "note": "This is the first step that produces genuine L10 evidence."
+  }
+ ],
+
+ "the_execution": {
+  "description": "A single SUPPLY of USDC into the pinned Morpho market, decided by the native Almanak strategy, intercepted by Held, authorized by the runner and submitted through KeeperHub.",
+  "outer_call": {
+   "route": "POST https://app.keeperhub.com/api/execute/contract-call",
+   "to": "the deployed HeldController",
+   "function": "executeSupply(Envelope env, MarketParams mp, uint256 amount, bytes signature)",
+   "value": "0 (the entry points are non-payable; the client refuses a non-zero value)",
+   "idempotency": "idempotencyKey = keccak(\"held.keeperhub.execution-key.v1\" || operationId || attemptId). A retry of the same attempt reuses it; a replacement attempt gets a new one."
+  },
+  "inner_calls_through_roles": [
+   "USDC.approve(Morpho, amount)  -- bounded, then reset to 0 in the same transaction",
+   "Morpho.supply(marketParams, amount, 0, safe, 0x)  -- fixed-asset, empty callback, onBehalf = the customer Safe"
+  ],
+  "what_the_controller_checks_before_it_returns": [
+   "Exact Safe debit equals the amount.",
+   "Exact share accounting: the (assets, shares) Morpho reports must equal the observed position change. Supply rounds shares DOWN after interest accrual; the controller compares for equality, not direction, and uses no tolerance.",
+   "Borrow shares still zero, collateral unchanged.",
+   "Managed allowance zero on both sides of the call.",
+   "The native Roles quota and the shared normal count were each charged exactly once.",
+   "consumed[operationId] = payloadHash, written in the SAME transaction as the economic effect."
+  ]
+ },
+
+ "limits_in_force": {
+  "note": "Concrete values are set by the customer at activation. The manifest fixes the DIMENSIONS, so no limit can be silently absent.",
+  "dimensions": [
+   "Ls cumulative supply ceiling", "Ln cumulative normal-withdraw ceiling",
+   "Lr cumulative restoration ceiling", "ms/Ms per-action supply range",
+   "mn/Mn per-action normal-withdraw range", "Mr per-action restoration maximum",
+   "F cash floor", "Nn shared normal count", "Nr restoration count",
+   "dn normal cooldown", "dr restoration cooldown"
+  ],
+  "enforced_twice": "Held's own typed limits AND the native Zodiac Roles conditions. Roles independently refuses bad arguments from a role member, bounds the approval, and requires an empty SUPPLY callback -- proven on the fork against real Roles v2.1, including the specific condition-violation selector 0xd0a9bf58."
+ },
+
+ "funds_at_risk": {
+  "statement": "Whatever USDC the customer funds the Safe with, bounded by the limits above. Held never takes custody: the Safe owns the position, onBehalf is the Safe, and a withdraw can only pay the Safe.",
+  "controller_cannot": [
+   "move funds to any address other than the Safe",
+   "execute any call other than the two typed entry points",
+   "exceed a native Roles allowance, or refill one",
+   "execute a second time under the same operation id"
+  ]
+ },
+
+ "what_would_be_published": {
+  "transaction_link": "One Basescan link to the executed controller call.",
+  "not_included": "No credentials, no private keys, no private RPC URLs. The repository is private and nothing here authorizes making it public or publishing a release."
+ },
+
+ "honest_boundaries": [
+  "This manifest is a COMMITMENT, not evidence. It records what would happen; it does not show that it did.",
+  "Everything proven so far is proven on a Base-mainnet FORK at block 51353212, plus local tests. A fork is real pinned code but it is not a public transaction.",
+  "The hosted KeeperHub route has never been exercised. L10 is BLOCKED-UNKNOWN and is neither stubbed nor simulated anywhere in this repository.",
+  "Independent acceptance of every phase remains pending. accepted=false."
+ ]
+}

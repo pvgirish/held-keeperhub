@@ -1,0 +1,57 @@
+{
+ "phase": "P03",
+ "title": "Native interception, runner signing, the KeeperHub client and the submission path",
+ "implementation_status": "locally verified; the hosted route is NOT established",
+ "independent_review_status": "pending",
+ "accepted": false,
+ "accepted_note": "Claude authored and ran this. Self-testing is not independent acceptance.",
+
+ "gate": {
+  "command": "make check-phase-03-local",
+  "interception": "17 passed; 0 failed",
+  "native_bundle": "9 passed; 0 failed (against the REAL pinned compiler)",
+  "signing": "18 passed; 0 failed",
+  "keeperhub_client": "28 passed; 0 failed",
+  "submission_path": "17 passed; 0 failed",
+  "total": 89,
+  "dependency": "The signing check reproduces fixtures/generated/signing-vector.json, which the FORK suite writes. It fails loudly rather than skipping when the vector is absent, so it cannot pass without check-phase-02 having run against a live fork."
+ },
+
+ "what_is_established": {
+  "native_connection": "CompilationResult -> action_bundle -> Held record -> admission, with economic calldata copied byte for byte. The producer verdict is strictly fail-closed: exact status set, no prefix match, no default success for a missing verdict, FAILED+is_safety_refusal preserved as a refusal, PARTIAL refused, self-contradictory SUCCESS refused, and a declared intent_type that disagrees with the family decoded from calldata refused.",
+  "cross_language_action_hash": "Python -> Solidity. fixtures/crosslang-vectors.json carries its own provenance (producer, SDK commit read from the imported tree, record version, calldata digest) and is only written when the installed SDK matches the pin.",
+  "cross_language_signing": "Solidity -> Python, the reverse direction, because the envelope digest commits to the domain separator and therefore to the controller address, which Python cannot know before the fork deploys it. The fork publishes envelope, digest and signature; the Python signer reproduces the signature BYTE FOR BYTE from held_core alone. Two implementations sharing no code agree on both the digest and the ECDSA output.",
+  "signing_discipline": "Keys are referenced (env:NAME, keystore:/path), never held. A key-shaped 'reference' is refused. sign() recovers from its own output and requires the configured runner, and rejects non-low-s output, so a signature the controller would reject is caught locally instead of after an execution is spent.",
+  "executor_semantics": "Execution keys bound to the attempt (retry reuses, replacement does not). Exponential backoff with jitter and a cap; the server's Retry-After always wins. 409 is IN_PROGRESS and is not retried. Every ambiguous result -- timeouts, dropped connections, all 5xx, unrecognised statuses -- is UNKNOWN and never REJECTED.",
+  "submission_ordering": "The attempt row is durable BEFORE any network I/O, verified by inspecting the journal at the moment the request goes out. A crash there reads as outcome-unknown rather than as nothing-sent.",
+  "reconciliation": "The verdict comes from the controller's consumed[operationId], compared for EQUALITY with the payload hash -- not from an execution id, not from a transaction hash, and not from KeeperHub's status. A presence-only check would have accepted an id consumed by a different action; a test covers exactly that. With no chain reader there is no verdict at all."
+ },
+
+ "what_is_NOT_established": {
+  "L10": "BLOCKED-UNKNOWN, unchanged. No KeeperHub organisation API key exists, so the authenticated caller/payer route has never been called. It is neither stubbed nor simulated.",
+  "anti_simulation_measures": [
+   "Only HttpsTransport can produce hosted=true, and it requires an https:// origin with a real credential.",
+   "OfflineTransport stamps hosted=false on everything it touches.",
+   "SendResult.assert_hosted_evidence() refuses a non-hosted result, so no local fixture can be filed as an L10 pass.",
+   "Three tests exist solely to prove a local result cannot pass as hosted evidence."
+  ],
+  "public_chain": "NOTHING is deployed, funded or executed on any public chain. All controller evidence is from a Base-mainnet fork at block 51353212.",
+  "chain_reader_scope": "The reconciliation tests use an in-test chain double. It stands in for chain ACCESS, not chain BEHAVIOUR -- that the controller writes consumed[id]=payloadHash in the same transaction as the economic effect is proven separately against real pinned Morpho on the fork in P02."
+ },
+
+ "defect_found_and_fixed_this_phase": {
+  "what": "The first draft of KeeperHubClient.preflight() used GET /api/chains as the authentication check.",
+  "why_it_was_wrong": "That endpoint is public. Re-verified live on 2026-09-16: it answers 200 with the full catalog and no credential at all. A preflight built on it would have reported 'passed' for an invalid key and for no key -- a vacuous check standing exactly where L10 is supposed to be.",
+  "fix": "preflight() is now a SIMULATE-mode call on the authenticated contract-call route. The public catalog is its own explicitly-unauthenticated method that sends no credential. A test asserts preflight targets the authenticated path and does not broadcast."
+ },
+
+ "open_unknowns": {
+  "chain_id_field": "KeeperHub's catalog exposes an internal string chain id (Base = '9wr4m6zv2dwflb1trbzsx') alongside the numeric chainId. Which the authenticated contract-call route expects cannot be established without a credential. Held sends chainId; the alternative is recorded in the client rather than guessed silently.",
+  "response_schema": "Field names for the execution id and transaction hash are read defensively (executionId|id, transactionHash|txHash) because the authenticated response shape has not been observed."
+ },
+
+ "manifest": "evidence/P03/execution-manifest.json -- the concrete public execution, written BEFORE the fact as a commitment. Executing it would require deploying a contract and spending funds on a public chain, which is not authorized.",
+
+ "completeness": "P03's local half is complete: interception, signing, executor client, submission path, reconciliation and the execution manifest. The composed public-execution evidence that Criterion 2 needs remains blocked on L10.",
+ "next": "P04 authority inventory, owner fencing, change and handover -- which is independent of L10 and can proceed."
+}
