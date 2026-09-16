@@ -1003,6 +1003,27 @@ contract HeldControllerForkTest is Test {
         assertTrue(okZero, "cleanup approve(0) must stay permitted");
     }
 
+    /// @dev CROSS-LANGUAGE check. The vector in fixtures/crosslang-vectors.json is
+    ///      produced by the Python adapter from the REAL pinned compiler's output; this
+    ///      asserts the DEPLOYED controller computes the same actionHash. Until now the
+    ///      Python test recomputed the hash with the same ABI library, which only ever
+    ///      proved Python agreed with itself.
+    function test_ControllerActionHashMatchesTheAdapterVector() public view {
+        string memory raw = vm.readFile("fixtures/crosslang-vectors.json");
+        uint8 family = uint8(vm.parseJsonUint(raw, ".family"));
+        bytes32 market = vm.parseJsonBytes32(raw, ".marketId");
+        address asset = vm.parseJsonAddress(raw, ".asset");
+        uint256 amount = vm.parseUint(vm.parseJsonString(raw, ".amount"));
+        address onBehalf = vm.parseJsonAddress(raw, ".onBehalf");
+        bytes32 expected = vm.parseJsonBytes32(raw, ".expectedActionHash");
+
+        assertEq(
+            controller.actionHash(family, market, asset, amount, onBehalf),
+            expected,
+            "the deployed controller and the Python adapter disagree on actionHash"
+        );
+    }
+
     function test_ForeignMarketIsRejected() public {
         _activate(1, runnerB);
         MarketParams memory other = _mp();

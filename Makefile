@@ -51,3 +51,4 @@ check-phase-02:
 ## authenticated organisation caller/payer (L10) and is neither stubbed nor simulated.
 check-phase-03-local:
 	@$(PY) tests/integration/test_p03_interception.py
+	@$(PY) tests/integration/test_p03_native_bundle.py

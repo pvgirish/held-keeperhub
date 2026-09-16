@@ -9,8 +9,8 @@
     "command": "make check-phase-02",
     "stage_0_property_fuzz_local": "14 passed; 0 failed (256 runs each, pinned seed)",
     "stage_1_adversarial_local": "4 passed; 0 failed",
-    "stage_2_real_pinned_fork": "27 passed; 0 failed",
-    "total": 45,
+    "stage_2_real_pinned_fork": "28 passed; 0 failed",
+    "total": 46,
     "failure_propagation_verified": "check-phase-02 exits non-zero if ANY stage fails (verified by simulating a failing stage)"
   },
   "evidence_kind": {
@@ -60,7 +60,8 @@
     "operating_synchronisation": "A1 operating half. _syncedRemaining is now called in executeSupply and executeWithdraw, not only activate(), for the lane's amount key AND count key; _requireConsumed then asserts the native quota was charged by exactly the amount and exactly one count. Regressions: test_OperatingDriftInTheNativeQuotaIsRefused (drift UP to 60,000 with ample capacity -> AllowanceDesynchronised(60000e6, 50000e6); restoring agreement lets the SAME operation through) and test_OperatingDriftInTheNativeCountIsRefused.",
     "non_refilling_validation": "A1. _syncedRemaining reads refill/period, not only the stored balance, and refuses any non-zero refill with AllowanceRefillsNotPermitted. test_RefillingAllowanceIsRefusedAtActivationAndAtOperatingTime covers BOTH boundaries with a balance that still matches.",
     "roles_approval_and_callback": "A2. _scopeApproveBounded pins the spender to Morpho and bounds the value with LessThan (Ms+1) - deliberately NOT WithinAllowance, so the approval never charges the economic amount quota; cleanup approve(0) stays permitted. The supply callback is pinned to empty bytes with EqualTo on the Dynamic param. test_RolesIndependentlyBoundsApprovalAndRequiresEmptyCallback exercises both from a role member with the controller out of the picture, asserts the specific Roles condition error for the callback, and includes bounded-approval and approve(0) controls.",
-    "mock_fixture_repaired": "MockRoles previously forwarded calls without decrementing, which would have let the new operating checks pass against a fixture that charged nothing. It now consumes per (role, selector) - matching how real Roles scopes one condition tree per (role, target, selector) - and charges ONLY on the economic call, never on the approval or cleanup. Keying by role alone charged the wrong quota and refused legitimate normal withdrawals."
+    "mock_fixture_repaired": "MockRoles previously forwarded calls without decrementing, which would have let the new operating checks pass against a fixture that charged nothing. It now consumes per (role, selector) - matching how real Roles scopes one condition tree per (role, target, selector) - and charges ONLY on the economic call, never on the approval or cleanup. Keying by role alone charged the wrong quota and refused legitimate normal withdrawals.",
+    "cross_language_hash": "The deployed controller's actionHash() is now checked against a vector the Python adapter derives from the REAL compiler output (fixtures/crosslang-vectors.json, read by test_ControllerActionHashMatchesTheAdapterVector). Verified non-vacuous by mutating the vector: the fork test fails with both hashes printed, and passes once restored. The earlier self-consistency caveat is retired."
   },
   "build_provenance": {
     "solc": "0.8.28",
@@ -94,7 +95,7 @@
       "zero capacity, exact boundaries, large supported values, no wrap"
     ]
   },
-  "check_phase_03_local": "17 passed; 0 failed (native bundle admission, parser-level)",
+  "check_phase_03_local": "24 passed; 0 failed (17 parser-level + 7 against the REAL pinned compiler)",
   "history": [
     {
       "note": "earlier recorded states, preserved as history, not current",
@@ -113,7 +114,7 @@
     "note": "history begins at the first checkpoint; nothing backdated"
   },
   "still_open": {
-    "B_native_bundle_connection": "The interceptor reads Held's internal {safe, calls} record, not the SDK's ActionBundle{intent_type, transactions, metadata, sensitive_data}. The real compiler-to-interceptor connection, the live controller actionHash cross-check and the HOLD no-economic-call path are the next task.",
-    "L10": "Authenticated KeeperHub organisation caller/payer. Separate gate; no local fixture closes it."
+    "L10": "Authenticated KeeperHub organisation caller/payer. Separate gate; no local fixture closes it.",
+    "B_remaining": "The native CONNECTION is closed (CompilationResult -> action_bundle -> Held record -> admission, byte-identical economic calldata, cross-language hash). Still to come in P03: envelope signing from a key reference, the KeeperHub client with dry-run/broadcast and conflict semantics, journal/result wiring, and the concrete public-execution manifest."
   }
 }
