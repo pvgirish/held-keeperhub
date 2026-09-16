@@ -4,7 +4,7 @@ SDK ?= $(HOME)/src/sdk
 export PY
 export SDK
 
-.PHONY: check-phase-00 check-phase-01 check-phase-02 check-phase-03-local check-manifests check-probe \
+.PHONY: check-phase-00 check-phase-01 check-phase-02 check-phase-03-local check-phase-04 check-manifests check-probe \
         check-baseline check-native-workflow gate-tests
 
 check-phase-00:
@@ -45,6 +45,11 @@ check-phase-01:
 ## inside ONE with_fork.sh invocation.
 check-phase-02:
 	@./script/run_p02_fork_tests.sh
+
+## P04: authority inventory, owner fencing, change and handover, against the REAL
+## pinned Safe/Roles/Morpho on the same Base-mainnet fork fixture as P02.
+check-phase-04:
+	@./script/run_p04_fork_tests.sh
 
 ## P03 LOCAL HALF ONLY: native ActionBundle interception and envelope binding.
 ## This does NOT establish the hosted KeeperHub route. That gate needs an

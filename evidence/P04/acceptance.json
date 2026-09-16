@@ -1,0 +1,76 @@
+{
+ "phase": "P04",
+ "title": "Authority inventory, owner fencing, change and handover",
+ "implementation_status": "locally verified on a Base-mainnet fork",
+ "independent_review_status": "pending",
+ "accepted": false,
+ "accepted_note": "Claude authored and ran this. Self-testing is not independent acceptance.",
+
+ "gate": {
+  "command": "make check-phase-04",
+  "result": "10 passed; 0 failed",
+  "evidence_kind": "REAL pinned Base-mainnet Safe 1.4.1, Zodiac Roles v2.1, Morpho Blue and native USDC on an anvil fork at block 51353212. Nothing mocked; this phase has no adversarial stage.",
+  "shared_fixture": "test/contracts/HeldForkHarness.sol, extracted from the P02 suite so both phases build the same fixture and cannot drift apart. P02 re-verified at 50 tests after the extraction."
+ },
+
+ "the_claim_under_test": "An operator can change limits or replace the runner without losing consumption history or guessing what an interrupted operation did.",
+
+ "authority_inventory": {
+  "method": "Enumerated by exercising each authority against the live fork, not asserted in prose. Every party is either used successfully or shown refused, with the SPECIFIC refusal recorded.",
+  "parties": {
+   "safe_owner": "The only party that may activate or fence. A stranger calling either is refused.",
+   "runner": "Authorizes by EIP-712 signature and cannot call the controller directly (NotExecutor). Holds no Zodiac role.",
+   "executor": "May call, but cannot authorize: an envelope naming the executor and signed by the runner is refused (BadSignature). Not a module on the Safe.",
+   "zodiac_roles": "An independent refusal layer the controller cannot talk past. The controller's membership is established by a supply that actually succeeded through Roles -- stronger than a probe, since a non-member could not have moved the funds.",
+   "nobody_else": "An arbitrary address holds none of the authorities."
+  },
+  "refusals_are_distinguished": {
+   "NoMembership_0xfd8e9f28": "runnerA -- an enabled module (from the fixture's isolated condition probes) that holds no role, so it reaches the membership check and fails there.",
+   "NotAuthorized_0x4a0bfec1": "runnerB, the executor and any stranger -- not modules on the Safe at all, so they are turned away one step earlier.",
+   "why_it_matters": "Both mean 'cannot act through Roles', but flattening them to one boolean would have hidden that runnerA holds module standing at all."
+  },
+  "immutability": "safe, roles, morpho, token, marketId and lineage are immutable. No party, including the owner, can repoint them after deployment; the only state-changing external functions are activate, fence and the two typed entries."
+ },
+
+ "fencing": {
+  "stops_work_already_authorized": "A signature minted BEFORE the fence cannot execute after it (Paused). This is the realistic case: the operator fences precisely because something is in flight.",
+  "leaves_nothing_ambiguous": "The fenced operation's id was never consumed, so its outcome is readable rather than guessable.",
+  "preserves_history": "Consumption counters, counts, cooldown timestamps and consumed ids all survive a fence. Fencing is not a reset.",
+  "cannot_be_lifted_casually": "Only an owner activation under a NEW epoch lifts a fence. A stranger is refused; re-activating the same epoch is refused (StaleActivation)."
+ },
+
+ "change_and_handover": {
+  "runner_replacement_mid_flight": "An operation signed by the outgoing runner is unambiguous in BOTH directions after handover: it cannot execute (WrongEpoch) and it did not execute (id not consumed). The same action may then be reauthorized by the new runner -- a first execution, not a re-execution.",
+  "executed_work_survives": "An operation that already executed stays consumed across handover, and the new runner re-signing the same id is refused (OperationConsumed). Consumption carries forward.",
+  "retired_runner_is_fully_retired": "Not just for the in-flight operation: three fresh ids signed by the retired runner are all refused (BadSignature).",
+  "limit_change_binds_against_history": "A ceiling below existing consumption is refused (CeilingBelowConsumption). A tightened-but-valid ceiling is accepted, and the remaining budget is the NEW ceiling minus what was already spent -- 8,000 ceiling with 5,000 spent leaves 3,000, and the native Roles allowance agrees. A customer cannot be surprised by a budget that silently refills on reconfiguration.",
+  "layers_cannot_drift": "A reconfiguration that changes a ceiling without re-syncing the native Roles quota is refused (AllowanceDesynchronised), and a refused reconfiguration changes nothing: still fenced, consumption intact, epoch unchanged."
+ },
+
+ "defects_found_in_my_own_work_this_phase": [
+  {
+   "what": "The membership probe hard-coded a NoMembership() selector I had not verified.",
+   "effect": "Every address read as a role member, so the inventory assertions were passing for the wrong reason.",
+   "fix": "Selectors are now derived by hashing the signatures and checked against what Roles actually returned on the fork. The probe distinguishes three real outcomes instead of guessing at two."
+  },
+  {
+   "what": "Four tests passed _policy() and _expected() as inline arguments to activate() under vm.prank.",
+   "effect": "NotOwner() -- _expected() makes external view calls that consume the prank before activate runs. The harness documents this exact trap and I walked into it anyway.",
+   "fix": "Hoisted into locals before the prank."
+  },
+  {
+   "what": "Handover tests activated policyVersion 2 while the harness envelope carries version 1.",
+   "effect": "WrongPolicyVersion, masking the assertions that were actually under test.",
+   "fix": "Runner replacement is tested WITHOUT a policy change, which is the scenario it is about; version changes are covered by the limit-change test."
+  }
+ ],
+
+ "known_gaps": [
+  "Owner authority is modelled with vm.prank(safe). The real two-signature 2-of-3 ceremony is exercised in the P02 atomic activation batch and evidenced in P00; it is not re-proven per test here.",
+  "Nothing is deployed publicly. Local fork only.",
+  "runnerA holds module standing on the Safe as a fixture artifact of the isolated condition probes. It holds no role and cannot act, and the inventory records this rather than hiding it -- but a production deployment should not leave a spare EOA enabled as a module."
+ ],
+
+ "completeness": "P04 clauses covered: authority inventory, owner fencing, change and handover, all against the real pinned fork. Independent acceptance still pending.",
+ "next": "P05 the private operator console (V4 forbids substituting a CLI without a versioned product amendment), then P06."
+}
