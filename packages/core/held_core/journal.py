@@ -505,6 +505,33 @@ class Journal:
         ).fetchone()
         return dict(row) if row else None
 
+    def settle_live_attempts(self, operation_id: bytes | str, state: str) -> list[str]:
+        """Settle every live attempt for an operation, in one transaction.
+
+        Called when authoritative evidence resolves the OPERATION. Leaving an attempt
+        live after its operation is settled is not cosmetic: a live attempt is what
+        recovery resumes, so a CONFIRMED operation with a live attempt is a client that
+        will happily resend work it already knows is complete.
+        """
+        oid = _as_hash(operation_id, "operation_id")
+        if state not in SETTLED_ATTEMPT_STATES:
+            raise UnitError(f"state: expected one of {sorted(SETTLED_ATTEMPT_STATES)}")
+        self._begin()
+        try:
+            rows = self._db.execute(
+                f"SELECT attempt_id FROM attempts WHERE operation_id=? "
+                f"AND state IN ({_LIVE_PLACEHOLDERS})",
+                (oid, *LIVE_ATTEMPT_STATES),
+            ).fetchall()
+            ids = [r["attempt_id"] for r in rows]
+            for aid in ids:
+                self._db.execute("UPDATE attempts SET state=? WHERE attempt_id=?", (state, aid))
+            self._commit()
+            return ids
+        except Exception:
+            self._rollback()
+            raise
+
     def settle_attempt(self, attempt_id: str, state: str, note: str | None = None) -> None:
         """Mark an attempt terminally settled so it stops blocking the operation.
 

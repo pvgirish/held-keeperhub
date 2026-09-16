@@ -56,6 +56,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol, Sequence
 
+from held_core import identity
 from held_core.canonical import hex32
 from held_core.journal import Journal, OperationState, StateTransitionError
 
@@ -198,6 +199,41 @@ class Submitter:
         self._now = now or time.time
 
     # ------------------------------------------------------------------ sending --
+    def _require_consistent_scope(self, admitted, envelope) -> None:
+        """The admitted operation and the envelope must belong to the SAME scope.
+
+        `operation_id()` binds chain, controller, Safe and lineage. Admitting under one
+        profile and then signing an envelope for another produces a well-formed signature
+        over an id that was never minted for that deployment: the controller accepts it,
+        while Held's own business identity is wrong.
+
+        That is not hypothetical -- the composed test did exactly this, admitting against
+        a profile whose controller and lineage differed from the deployed controller it
+        then signed for. Comparing copied ids, payload hashes and families did not catch
+        it, because all three were copied from the same place.
+        """
+        expected = identity.operation_id(
+            envelope.scope, admitted.source_decision_id, admitted.action_index)
+        if bytes(expected) != bytes(admitted.operation_id):
+            raise SubmissionError(
+                "scope mismatch: the admitted operation id does not derive from the "
+                "envelope's scope.\n"
+                f"  envelope scope : chain {envelope.scope.chain_id}, controller "
+                f"{envelope.scope.controller}, safe {envelope.scope.safe}, lineage "
+                f"{envelope.scope.lineage}\n"
+                f"  admitted id    : {hex32(admitted.operation_id)}\n"
+                f"  derives to     : {hex32(expected)}\n"
+                "Admit and sign under ONE profile built from the verified deployment "
+                "context.")
+        if envelope.scope.chain_id != self.chain_id:
+            raise SubmissionError(
+                f"the envelope is scoped to chain {envelope.scope.chain_id} but this "
+                f"submitter targets chain {self.chain_id}")
+        if envelope.scope.controller.lower() != self.controller.lower():
+            raise SubmissionError(
+                f"the envelope is scoped to controller {envelope.scope.controller} but "
+                f"this submitter targets {self.controller}")
+
     def submit(self, admitted, envelope, *, attempt_id: str | None = None) -> Submission:
         """Journal, sign, build the call, claim atomically, send, record.
 
@@ -205,6 +241,7 @@ class Submitter:
         and the signature produced here, so the submitted call and the signed
         authorization cannot be two unrelated objects.
         """
+        self._require_consistent_scope(admitted, envelope)
         operation_id = hex32(admitted.operation_id)
         payload_hash = hex32(admitted.payload_hash)
 
@@ -273,6 +310,7 @@ class Submitter:
 
     def dry_run(self, admitted, envelope) -> Submission:
         """Simulate. Never claims the operation and never becomes an economic attempt."""
+        self._require_consistent_scope(admitted, envelope)
         operation_id = hex32(admitted.operation_id)
         auth = self.signer.sign(envelope)
         function_name, args, calldata = build_execute_call(
@@ -297,13 +335,30 @@ class Submitter:
         resend would be a genuinely new submission. Beyond the window this refuses unless
         chain evidence has established non-execution.
         """
-        attempt = self.journal.unresolved_attempt(operation_id)
-        if attempt is None:
-            raise SubmissionError(f"operation {operation_id} has no unresolved attempt to resume")
-
         op = self.journal.get(operation_id)
         if op is None:
             raise SubmissionError(f"unknown operation {operation_id}")
+
+        # TERMINAL FIRST, before anything reaches the network. An operation can be
+        # CONFIRMED while an older attempt is still live -- reconciliation used to settle
+        # the operation without settling its attempt -- and resuming then sent work
+        # already known to be complete. The prohibited state transition was caught, but
+        # only AFTER the outbound call decision, which is far too late.
+        if op.state is OperationState.CONFIRMED:
+            settled = self.journal.settle_live_attempts(operation_id, "CONFIRMED")
+            raise SubmissionError(
+                f"operation {operation_id} is CONFIRMED: it executed on chain. Nothing to "
+                f"resume. {len(settled)} stale attempt(s) settled. Recover its result; "
+                "never re-execute it.")
+        if op.state is OperationState.FAILED:
+            raise SubmissionError(
+                f"operation {operation_id} is FAILED: definitively not executed. Do not "
+                "resume the old request; reauthorize the SAME id and payload under a new "
+                "epoch.")
+
+        attempt = self.journal.unresolved_attempt(operation_id)
+        if attempt is None:
+            raise SubmissionError(f"operation {operation_id} has no unresolved attempt to resume")
 
         # An ACCEPTED or IN_PROGRESS attempt is already with the executor. Resending it
         # is not recovery, it is a second submission; poll and reconcile instead.
@@ -313,7 +368,10 @@ class Submitter:
                 "it. Poll its execution and reconcile against the chain; do not resend.")
 
         age = self._now() - float(attempt["created_at"])
-        if age > IDEMPOTENCY_WINDOW_SECONDS:
+        # >= not >: at exactly the documented window the provider may already have
+        # dropped the key, and being one second early costs nothing while being one
+        # second late costs an unprotected duplicate submission.
+        if age >= IDEMPOTENCY_WINDOW_SECONDS:
             # Past the documented window the provider no longer dedupes, so a resend is a
             # genuinely NEW submission and the idempotency key protects nothing.
             if chain is None:
@@ -381,6 +439,15 @@ class Submitter:
             state=result.outcome.value)
         target = _OUTCOME_TO_STATE[result.outcome]
         current = self.journal.get(operation_id).state
+
+        # A request-level rejection is definitive about THIS request only. If the
+        # operation was already UNKNOWN, some EARLIER submission may have reached the
+        # chain, and a 401 on a later retry -- a revoked credential, say -- says nothing
+        # about it. Collapsing that to FAILED would licence reauthorizing an operation
+        # that might already have executed.
+        if (result.outcome is SendOutcome.REJECTED
+                and current is OperationState.UNKNOWN):
+            target = OperationState.UNKNOWN
         if target is not current:
             try:
                 self.journal.transition(operation_id, target, epoch=epoch)
@@ -456,7 +523,11 @@ class Submitter:
                 f"{evidence.marker}, not {op.payload_hash}. This id executed a DIFFERENT "
                 "action.")
 
-        return self.journal.transition(operation_id, OperationState.CONFIRMED).state
+        state = self.journal.transition(operation_id, OperationState.CONFIRMED).state
+        # Settle the attempts in the same breath. A live attempt under a CONFIRMED
+        # operation is exactly what resume() would pick up and resend.
+        self.journal.settle_live_attempts(operation_id, "CONFIRMED")
+        return state
 
     def resolve_in_progress(self, submission: Submission, chain: ChainReader | None):
         """Poll an in-flight execution, then reconcile against the chain regardless.

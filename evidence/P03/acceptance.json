@@ -14,9 +14,9 @@
   "signing": "18 passed",
   "keeperhub_wire_contract": "27 passed",
   "submission_binding_and_reconciliation": "18 passed",
-  "crash_restart_recovery": "14 passed",
-  "total_local": 103,
-  "composed": "make check-phase-03-composed \u2014 PASS (local only)"
+  "crash_restart_recovery": "19 passed",
+  "total_local": 108,
+  "composed": "make check-phase-03-composed \u2014 PASS, 8 checks (local only)"
  },
  "what_is_established": {
   "native_connection": "CompilationResult -> action_bundle -> Held record -> admission, with economic calldata copied byte for byte. The producer verdict is strictly fail-closed: exact status set, no prefix match, no default success for a missing verdict, FAILED+is_safety_refusal preserved as a refusal, PARTIAL refused, self-contradictory SUCCESS refused, and a declared intent_type that disagrees with the family decoded from calldata refused.",
@@ -89,9 +89,9 @@
  "still_not_established": {
   "L10": "BLOCKED-UNKNOWN. No KeeperHub organisation API key. The authenticated route has never been called; it is neither stubbed nor simulated.",
   "server_side_encoding": "Whether KeeperHub's encoder reproduces the intended calldata from functionArgs. One authenticated dry run would settle it.",
-  "native_result_ack": "The COMMIT BOUNDARY is now exercised end to end with a local consumer harness: delivery and acknowledgement in one transaction, idempotent duplicate, refused conflict. What is still absent is the actual Almanak consumer on the other side of it.",
   "composed_trace": "A LOCAL composed trace now exists (see composed_local_run). What is still missing is the same trace THROUGH KeeperHub, which is L10-blocked.",
-  "public_chain": "Nothing deployed, funded or executed on any public chain."
+  "public_chain": "Nothing deployed, funded or executed on any public chain.",
+  "native_strategy_loop": "The acknowledgement boundary is connected to the real IntentStateMachine, but a full native strategy run driving many intents end to end is not exercised."
  },
  "composed_local_run": {
   "gate": "make check-phase-03-composed",
@@ -155,5 +155,49 @@
    "was": "Two recovery tests could `return` before exercising their assertions when an attempt was no longer PENDING.",
    "now": "The early returns are gone. A shared _expired_rig() asserts a live attempt exists before each expired-window case, and the restart test asserts the claim is visible rather than branching on it."
   }
+ },
+ "third_review_findings_repaired": {
+  "when": "1883b4d review, 2026-09-16",
+  "all_reproduced_against_the_real_journal_before_fixing": true,
+  "confirmed_operation_resend": {
+   "was": "reconcile() settled the OPERATION but left its attempt live, and resume() reached broadcast() before noticing. Observed: 1 outbound call for a CONFIRMED operation. The prohibited state transition was caught only AFTER the outbound-call decision.",
+   "now": "resume() checks terminal operation state FIRST, before anything reaches the network, and reconcile() settles every live attempt in the same breath as confirming the operation. A live attempt under a CONFIRMED operation is precisely what recovery would pick up and resend.",
+   "note": "This never established two economic executions -- provider dedupe and the consumed-id guard are separate defences. It established a client sending work it already knew was complete."
+  },
+  "later_rejection_erasing_uncertainty": {
+   "was": "An operation that was UNKNOWN, then retried and REJECTED, became FAILED without any chain read. A 401 from a revoked credential does not prove the EARLIER ambiguous request never executed, and FAILED licences reauthorization.",
+   "now": "A REJECTED outcome cannot move an already-UNKNOWN operation. The same rule applies INSIDE the client's retry loop: once any attempt has been ambiguous, a later definitive rejection is reported as UNKNOWN with an explanation, because it is definitive about the retry only."
+  },
+  "window_boundary": {
+   "was": "age > IDEMPOTENCY_WINDOW_SECONDS, so exactly at the window a resend still happened.",
+   "now": ">=. At exactly the documented window the provider may already have dropped the key; being a second early costs nothing, being a second late costs an unprotected duplicate."
+  },
+  "empty_2xx_preflight": {
+   "was": "In simulate mode a bare 2xx with an empty body classified as SIMULATED -- a positive preflight from the mere absence of a reported revert.",
+   "now": "An empty body is UNKNOWN. A positive preflight requires the documented affirmative result."
+  },
+  "composed_identity_scope": {
+   "was": "The composed run admitted against the native-bundle test's PROFILE (controller 0x3875311c..., lineage 0x1111...) and then signed an envelope scoped to the DEPLOYED controller 0x5615dEB7... with lineage 0x...0011. operation_id() binds chain, controller, Safe and lineage, so the admitted id was never minted for the deployment it was signed for. Comparing copied ids, payload hashes and families could not catch it -- all three were copied from the same place.",
+   "now": "ONE profile is built from the verified deployment context BEFORE admission and used for operation-id derivation, signing, request targeting, journaling and reconciliation. Submitter._require_consistent_scope() re-derives operation_id from the envelope's scope and refuses a mismatch, and checks the envelope's chain and controller against the submission destination. This is in the PRODUCTION path, not only the test.",
+   "side_effect": "The check immediately caught the test fixtures' own hardcoded 0xaa... operation id, which had passed every earlier check because those checks compared copies of it. The fixture now derives its id from its scope."
+  }
+ },
+ "native_result_acknowledgement": {
+  "status": "CONNECTED to the actual pinned Almanak consumer.",
+  "component": "almanak.framework.intents.state_machine.IntentStateMachine at 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938",
+  "why_it_is_checkable": "_handle_validating is explicit: with no receipt it returns needs_execution=True and keeps asking to be executed. So 'the native consumer acknowledged' has a concrete meaning -- it reached COMPLETED and STOPPED asking.",
+  "observed": [
+   "Before delivery: state VALIDATING_SUPPLY, needs_execution True.",
+   "R.deliver(...) with NativeStateMachineConsumer -> APPLIED; native state COMPLETED.",
+   "The follow-up step reports needs_execution False, is_complete True, success True -- the consumer will not have Held resubmit.",
+   "Redelivery of the same result -> DUPLICATE, with no second advance.",
+   "A FAILED receipt sends the machine to sadflow, the apply RAISES, the transaction rolls back and NO acknowledgement survives."
+  ],
+  "atomicity": "The advanced native state (to_dict()) and the acknowledgement are written on the SAME journal connection, closing the V4 \u00a74 crash window: there is no point at which the consumer has moved but the ack has not.",
+  "still_labelled": [
+   "The receipt's tx_hash is a fixture value: the fork does not surface a transaction hash to this process. The ECONOMIC effect is what was verified, in composed-result.json.",
+   "This is not a full native strategy loop, and the receipt is built from Held's own verified on-chain reading rather than handed over by a gateway.",
+   "The local harness test is KEPT beside it, relabelled MODEL ONLY. It was never the native consumer."
+  ]
  }
 }

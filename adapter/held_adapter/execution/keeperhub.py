@@ -508,6 +508,10 @@ class KeeperHubClient:
         body = json.dumps(payload).encode() if payload is not None else None
         headers = self._headers(idempotency_key) if authenticated else self._public_headers()
         last: SendResult | None = None
+        # Once ANY attempt in this loop has been ambiguous, the request may already have
+        # reached KeeperHub. A later definitive rejection is then definitive about the
+        # LATER request only -- it says nothing about the earlier one.
+        saw_ambiguous = False
 
         for attempt in range(1, self.backoff.max_attempts + 1):
             try:
@@ -516,6 +520,7 @@ class KeeperHubClient:
             except Exception as exc:  # timeout, connection reset, DNS, TLS
                 # The request may have reached KeeperHub and been acted on. Calling this
                 # "not sent" is exactly how an operation gets executed twice.
+                saw_ambiguous = True
                 last = SendResult(
                     SendOutcome.UNKNOWN, self.transport.hosted,
                     error=f"{type(exc).__name__}: {exc}", attempts_made=attempt)
@@ -530,11 +535,23 @@ class KeeperHubClient:
             # caller does that. Only rate limits and ambiguous server errors are resent,
             # and always under the identical key and body.
             if resp.status_code == 429 or 500 <= resp.status_code < 600:
+                saw_ambiguous = saw_ambiguous or 500 <= resp.status_code < 600
                 last = result
                 if attempt < self.backoff.max_attempts:
                     self._sleep(self.backoff.delay_for(attempt, _retry_after_seconds(resp)))
                     continue
                 return last
+
+            if saw_ambiguous and result.outcome is SendOutcome.REJECTED:
+                return SendResult(
+                    SendOutcome.UNKNOWN, self.transport.hosted, resp.status_code,
+                    result.execution_id, result.tx_hash,
+                    error=(
+                        "a previous attempt in this send was ambiguous, so this "
+                        f"rejection ({result.error}) is definitive about the RETRY only. "
+                        "The earlier request may have been acted on; the outcome is "
+                        "unknown."),
+                    error_code=result.error_code, raw=result.raw, attempts_made=attempt)
 
             return result
 
@@ -581,6 +598,17 @@ class KeeperHubClient:
                 or data.get("simulated") is True
                 or data.get("simulation") is not None
             )
+            if simulate_requested and not data:
+                # A bare 2xx with an empty body is not an affirmative simulation result.
+                # The documented success carries `success: true` and `wouldRevert: false`;
+                # treating "nothing said" as a green light is exactly how a preflight
+                # becomes vacuous.
+                return make(
+                    SendOutcome.UNKNOWN,
+                    error=("simulate returned an empty body. A positive preflight "
+                           "requires the documented affirmative result "
+                           "(success/status/wouldRevert), not merely the absence of a "
+                           "reported revert."))
             if simulate_requested or looks_simulated:
                 if simulate_requested and not looks_simulated and status_text:
                     return make(

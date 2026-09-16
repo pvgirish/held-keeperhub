@@ -24,7 +24,12 @@ from held_adapter.execution.keeperhub import (  # noqa: E402
 )
 from held_adapter.execution.submit import ChainEvidence, Submitter  # noqa: E402
 from held_adapter.signing.runner_signer import RunnerSigner  # noqa: E402
-from held_core.identity import ActionFamily, AuthorizationEnvelope, OperationScope  # noqa: E402
+from held_core.identity import (  # noqa: E402
+    ActionFamily,
+    AuthorizationEnvelope,
+    OperationScope,
+    operation_id,
+)
 from held_core.journal import Journal  # noqa: E402
 
 API_ENV = "HELD_KEEPERHUB_API_KEY"
@@ -43,8 +48,13 @@ MARKET_PARAMS = (USDC, COLL, ORACLE, IRM, LLTV)
 CHAIN_ID = 8453
 SCOPE = OperationScope(CHAIN_ID, CONTROLLER, SAFE, "0x" + "11" * 32)
 
-OP_ID = bytes.fromhex("aa" * 32)
-OP_HEX = "0x" + "aa" * 32
+SOURCE_DECISION_ID = "decision-1"
+ACTION_INDEX = 0
+# DERIVED, not invented. operation_id() binds chain, controller, Safe and lineage, and
+# the Submitter now re-derives it from the envelope scope before signing. A hardcoded
+# 0xaa... id passed every earlier check because those checks compared copies of it.
+OP_ID = operation_id(SCOPE, SOURCE_DECISION_ID, ACTION_INDEX)
+OP_HEX = "0x" + OP_ID.hex()
 EMPTY = "0x" + "00" * 32
 
 
@@ -58,8 +68,8 @@ class Admitted:
     """The fields the Submitter reads off an AdmittedOperation."""
 
     operation_id = OP_ID
-    source_decision_id = "decision-1"
-    action_index = 0
+    source_decision_id = SOURCE_DECISION_ID
+    action_index = ACTION_INDEX
     action = Action()
 
     def __init__(self, payload_hash: bytes | None = None):

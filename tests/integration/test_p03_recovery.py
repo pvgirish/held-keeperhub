@@ -48,7 +48,7 @@ from held_core.journal import Journal, OperationState, StateTransitionError  # n
 
 from p03_fixtures import (  # noqa: E402
     API_ENV, CONTROLLER, EMPTY, MARKET_PARAMS, OP_HEX, PAYLOAD_HEX, RUNNER, RUNNER_KEY,
-    Admitted, Chain, accepted, envelope, rig,
+    Admitted, Chain, accepted, envelope, response, rig,
 )
 
 PASSED: list[str] = []
@@ -352,6 +352,91 @@ def _():
             "a conflicting body means the ORIGINAL body's outcome is unknown; treating it "
             "as in-flight would invite a poll for something that was never accepted")
         assert "non-deterministic" in (s.send.error or "")
+
+
+# ------------------------------------------- outcome-state consistency (review 3) --
+@test("REGRESSION: a CONFIRMED operation never submits through resume()")
+def _():
+    # reconcile() settled the OPERATION but left its attempt live, and resume() reached
+    # broadcast() before noticing. The prohibited transition was caught afterwards --
+    # long after the outbound-call decision.
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "held.sqlite")
+        j1, t1, sub1 = rig([TimeoutError("t")] * 4, path=path)
+        sub1.submit(Admitted(), envelope())
+        sub1.reconcile(OP_HEX, PAYLOAD_HEX, Chain(PAYLOAD_HEX))
+        assert j1.get(OP_HEX).state is OperationState.CONFIRMED
+        assert j1.unresolved_attempt(OP_HEX) is None, (
+            "reconciliation left a live attempt under a CONFIRMED operation")
+        j1.close()
+
+        j2, t2, sub2 = rig([accepted()], path=path)   # fresh process, in-window
+        msg = expect(SubmissionError, sub2.resume, OP_HEX)
+        assert "CONFIRMED" in msg and "never re-execute" in msg, msg
+        assert len(t2.calls) == 0, "resume sent work already known to be complete"
+
+
+@test("a stale live attempt under a CONFIRMED operation is settled, not resent")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "held.sqlite")
+        j, t, sub = rig([TimeoutError("t")] * 4, path=path)
+        sub.submit(Admitted(), envelope())
+        # Confirm the operation WITHOUT going through reconcile(), so a live attempt
+        # survives -- the exact state the defect produced.
+        j.transition(OP_HEX, OperationState.CONFIRMED, epoch=1)
+        assert j.unresolved_attempt(OP_HEX) is not None
+        before = len(t.calls)   # the submit above already spent its retry attempts
+        msg = expect(SubmissionError, sub.resume, OP_HEX)
+        assert "stale attempt(s) settled" in msg, msg
+        assert j.unresolved_attempt(OP_HEX) is None
+        assert len(t.calls) == before, "resume sent a request for a CONFIRMED operation"
+
+
+@test("REGRESSION: a later rejection does not erase earlier uncertainty")
+def _():
+    # A 401 on a retry -- a revoked credential, say -- is definitive about THAT request.
+    # It says nothing about an earlier ambiguous submission that may have executed.
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "held.sqlite")
+        j1, t1, sub1 = rig([TimeoutError("t")] * 4, path=path)
+        sub1.submit(Admitted(), envelope())
+        assert j1.get(OP_HEX).state is OperationState.UNKNOWN
+        j1.close()
+
+        j2, t2, sub2 = rig([response({"message": "key revoked"}, 401)], path=path)
+        sub2.resume(OP_HEX)
+        assert j2.get(OP_HEX).state is OperationState.UNKNOWN, (
+            "a later rejection collapsed an operation that may already have executed "
+            "into FAILED, which would licence reauthorizing it")
+
+
+@test("REGRESSION: ambiguity inside the client's own retry loop is preserved")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        j, t, sub = rig([TimeoutError("t"), response({"message": "revoked"}, 401)],
+                        path=os.path.join(d, "held.sqlite"))
+        s = sub.submit(Admitted(), envelope())
+        assert s.send.outcome is SendOutcome.UNKNOWN, (
+            "the first attempt was ambiguous, so a rejection on the retry is definitive "
+            "about the retry only")
+        assert "ambiguous" in (s.send.error or "")
+        assert j.get(OP_HEX).state is OperationState.UNKNOWN
+
+
+@test("the exact idempotency-window boundary counts as expired")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "held.sqlite")
+        j1, t1, sub1 = rig([TimeoutError("t")] * 4, path=path)
+        sub1.submit(Admitted(), envelope())
+        created = float(j1.attempts_for(OP_HEX)[0]["created_at"])
+        j1.close()
+        # Exactly at the window: the provider may already have dropped the key. Being a
+        # second early costs nothing; a second late costs an unprotected duplicate.
+        j2, t2, sub2 = rig([accepted()], path=path, now=lambda: created + 86400)
+        expect(NotReconcilable, sub2.resume, OP_HEX, Chain(EMPTY, controller_epoch=1))
+        assert len(t2.calls) == 0, "resent at the exact window boundary"
 
 
 def main() -> int:

@@ -44,7 +44,17 @@ from held_adapter.execution.keeperhub import (  # noqa: E402
     OfflineTransport,
     SendOutcome,
 )
-from held_adapter.execution.native_boundary import admit_native_bundle  # noqa: E402
+from held_adapter.execution.interceptor import Profile  # noqa: E402
+from held_adapter.execution.native_result import (  # noqa: E402
+    NativeAcknowledgementError,
+    NativeStateMachineConsumer,
+    native_ack_state,
+    native_state_after,
+)
+from held_adapter.execution.native_boundary import (  # noqa: E402
+    ExecutionContext,
+    admit_native_bundle,
+)
 from held_adapter.execution.submit import (  # noqa: E402
     ChainEvidence,
     ResumeRequired,
@@ -56,7 +66,12 @@ from held_core import results as R  # noqa: E402
 from eth_utils import keccak  # noqa: E402
 
 from held_core.canonical import hex32  # noqa: E402
-from held_core.identity import ActionFamily, AuthorizationEnvelope, OperationScope  # noqa: E402
+from held_core.identity import (  # noqa: E402
+    ActionFamily,
+    AuthorizationEnvelope,
+    OperationScope,
+    operation_id,
+)
 from held_core.journal import Journal, OperationState  # noqa: E402
 
 PASSED: list[str] = []
@@ -73,6 +88,9 @@ JOURNAL_PATH = os.path.join(GENERATED, "composed-journal.sqlite")
 ADMITTED = None
 NATIVE_CALLS = None
 BUILT = None
+PROFILE = None
+SOURCE_DECISION_ID = "composed-local-run"
+MORPHO = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
 
 
 class ForkReading:
@@ -153,22 +171,16 @@ class ComposedAdmitted:
 
 
 def envelope_for(v: dict, admitted) -> AuthorizationEnvelope:
-    """Held's OWN envelope for the admitted action.
+    """Held's OWN envelope for the admitted action, in the SAME scope it was admitted in.
 
-    Only the CONTROLLER ADDRESS is taken from the fork -- Python cannot know it before
-    deployment, and the EIP-712 domain separator commits to it. Everything else comes
-    from the adapter: the operation id the compiler's decision produced, and the payload
-    hash derived from the compiler's own output.
-
-    An earlier version reused the fork's whole published envelope, whose operation id was
-    keccak("xlang-sign") -- a fork test fixture, not an admitted operation. That made the
-    "composed" run execute an id the adapter had never minted.
+    The scope comes from the single deployment profile, so the envelope and the operation
+    id cannot disagree. The Submitter re-derives and checks this before signing.
     """
-    scope = OperationScope(int(v["chainId"]), v["controller"], v["safe"], v["lineage"])
+    scope = PROFILE.scope()
     return AuthorizationEnvelope(
         scope=scope,
         operation_id=bytes(admitted.operation_id),
-        source_identity_hash=keccak(admitted.source_decision_id.encode()),
+        source_identity_hash=keccak(SOURCE_DECISION_ID.encode()),
         payload_hash=bytes(admitted.payload_hash),
         action_family=admitted.action.family,
         epoch=1,           # the epoch the composed fork pass activates
@@ -178,16 +190,54 @@ def envelope_for(v: dict, admitted) -> AuthorizationEnvelope:
 
 
 # ------------------------------------------------------------------- the build --
-@test("the REAL pinned compiler produces the action this run admits")
+def deployment_profile(v: dict) -> Profile:
+    """ONE profile, built from the VERIFIED DEPLOYMENT CONTEXT, before admission.
+
+    This is the repair for a real connection error. The composed run used to admit
+    against the native-bundle test's PROFILE -- controller 0x3875311c..., lineage
+    0x1111... -- and then sign an envelope scoped to the DEPLOYED controller
+    0x5615dEB7... with lineage 0x...0011. Since operation_id() binds chain, controller,
+    Safe and lineage, the admitted id was never minted for the deployment it was signed
+    for. The controller accepts such a signature happily; Held's own business identity is
+    simply wrong.
+
+    So the deployment context is obtained FIRST and one profile is used throughout:
+    operation-id derivation, signing, request targeting, journaling and reconciliation.
+    """
+    return Profile(
+        chain_id=int(v["chainId"]),
+        controller=v["controller"],
+        safe=v["safe"],
+        lineage=v["lineage"],
+        morpho=MORPHO,
+        token=v["loanToken"],
+        market_params=(v["loanToken"], v["collateralToken"], v["oracle"], v["irm"],
+                       int(v["lltv"])),
+    )
+
+
+@test("the REAL pinned compiler produces the action this run admits, in ONE scope")
 def _():
-    """No pre-baked vector: the compiler actually runs here."""
-    global ADMITTED, NATIVE_CALLS
+    """No pre-baked vector, and no borrowed profile: both come from this deployment."""
+    global ADMITTED, NATIVE_CALLS, PROFILE
     sys.path.insert(0, HERE)
-    from test_p03_native_bundle import PROFILE, compile_real_supply, context
+    from test_p03_native_bundle import compile_real_supply
+
+    v = load_vector()
+    PROFILE = deployment_profile(v)
+    ctx = ExecutionContext(
+        chain_id=PROFILE.chain_id, safe=PROFILE.safe,
+        source_decision_id=SOURCE_DECISION_ID, action_index=0)
 
     result = compile_real_supply()
-    record, admitted = admit_native_bundle(result, context(), PROFILE)
+    record, admitted = admit_native_bundle(result, ctx, PROFILE)
     ADMITTED, NATIVE_CALLS = admitted, record.calls
+
+    # The admitted id must derive from THIS deployment's scope, not from any other.
+    assert bytes(admitted.operation_id) == operation_id(
+        PROFILE.scope(), SOURCE_DECISION_ID, 0), "the admitted id is not scope-derived"
+    assert PROFILE.controller == v["controller"].lower()
+    assert PROFILE.lineage == v["lineage"].lower()
 
     assert record.intent_type == "SUPPLY"
     assert admitted.action.amount == 100_000_000, admitted.action.amount
@@ -390,15 +440,118 @@ def _():
     journal.close()
 
 
-@test("the native result is delivered and acknowledged in ONE commit, idempotently")
-def _():
-    """The native result/ack boundary, closed locally.
+def native_state_machine(v: dict):
+    """The REAL pinned IntentStateMachine for this run's intent."""
+    from decimal import Decimal
 
-    V4 §4: at-least-once delivery with an idempotent consumer acknowledgement, where the
-    ack is written in the SAME transaction as the consumer's own state update. The
-    consumer here is a LOCAL harness standing in for a native strategy's result sink --
-    labelled as such. What it exercises is the commit boundary, which is the part that
-    can be wrong.
+    from almanak.framework.intents import SupplyIntent
+    from almanak.framework.intents.compiler import IntentCompiler
+    from almanak.framework.intents.state_machine import IntentStateMachine
+
+    kwargs = dict(chain="base", wallet_address=v["safe"], default_protocol="morpho_blue",
+                  rpc_url=os.environ.get("HELD_BASE_RPC"), rpc_timeout=30.0)
+    if os.environ.get("HELD_PRICE_MODE") == "testing-only":
+        kwargs["price_oracle"] = {"USDC": Decimal("1")}  # TESTING-ONLY, never runtime evidence
+    intent = SupplyIntent(protocol="morpho_blue", chain="base", token="USDC",
+                          amount=Decimal("100"),
+                          market_id=hex32(PROFILE.market_id()), use_as_collateral=False)
+    return IntentStateMachine(intent, IntentCompiler(**kwargs))
+
+
+@test("the ACTUAL pinned Almanak consumer advances to COMPLETED on Held's result")
+def _():
+    """P03 required work 4, with the real consumer rather than a model.
+
+    `IntentStateMachine._handle_validating` is explicit: with no receipt it returns
+    needs_execution=True and will keep asking to be executed. So "the native consumer
+    acknowledged" has a checkable meaning -- it reached COMPLETED and stopped asking.
+
+    The receipt is built from Held's OWN verified on-chain reading, not handed over by a
+    gateway; that part is labelled, not claimed.
+    """
+    with open(RESULT_FILE) as fh:
+        result = json.load(fh)
+    v = load_vector()
+
+    machine = native_state_machine(v)
+    consumer = NativeStateMachineConsumer(machine)
+
+    # Before the result: the native machine is waiting to be executed.
+    assert consumer.needs_execution() is True, (
+        f"the native machine is not awaiting execution (state {consumer.state})")
+    assert consumer.state.startswith("VALIDATING"), consumer.state
+
+    with tempfile.TemporaryDirectory() as d:
+        journal = Journal(os.path.join(d, "native.sqlite"))
+        oid = result["operationId"]
+        journal.create_or_reopen(oid, result["consumedPayload"], SOURCE_DECISION_ID, 0, 1)
+
+        receipt = json.dumps({
+            "success": True,
+            "tx_hash": "0x" + "ef" * 32,   # LABEL: the fork does not surface a tx hash to
+                                           # this process; the ECONOMIC effect is what was
+                                           # verified, in composed-result.json.
+            "block_number": 51353228,
+            "gas_used": 210000,
+        })
+        outcome = R.deliver(journal, oid, result["consumedPayload"], receipt, consumer)
+        assert outcome is R.DeliveryOutcome.APPLIED, outcome
+
+        # The NATIVE state advanced -- this is the acknowledgement, not a Held row.
+        assert consumer.state == "COMPLETED", consumer.state
+        assert native_ack_state(journal, oid) == "COMPLETED"
+        assert native_state_after(journal, oid) is not None, "native state was not persisted"
+
+        # And it has stopped asking to be executed, which is the part that matters:
+        # a consumer still requesting execution would have Held resubmit.
+        follow_up = machine.step()
+        assert follow_up.needs_execution is False, "the native machine still wants execution"
+        assert follow_up.is_complete and follow_up.success
+
+        # Redelivery is a no-op at the consumer: at-least-once, applied once.
+        again = R.deliver(journal, oid, result["consumedPayload"], receipt,
+                          NativeStateMachineConsumer(machine))
+        assert again is R.DeliveryOutcome.DUPLICATE, again
+        journal.close()
+
+
+@test("a native consumer that refuses the result leaves NO acknowledgement")
+def _():
+    """The rollback half. An ack the consumer never honoured is the lie to prevent."""
+    with open(RESULT_FILE) as fh:
+        result = json.load(fh)
+    v = load_vector()
+    machine = native_state_machine(v)
+    consumer = NativeStateMachineConsumer(machine)
+    consumer.needs_execution()
+
+    with tempfile.TemporaryDirectory() as d:
+        journal = Journal(os.path.join(d, "native-fail.sqlite"))
+        oid = result["operationId"]
+        journal.create_or_reopen(oid, result["consumedPayload"], SOURCE_DECISION_ID, 0, 1)
+
+        # A FAILED receipt: the native machine goes to sadflow, not COMPLETED.
+        bad = json.dumps({"success": False, "tx_hash": "0x" + "11" * 32,
+                          "block_number": 1, "gas_used": 0, "error": "reverted"})
+        try:
+            R.deliver(journal, oid, "0x" + "dd" * 32, bad, consumer)
+            raise AssertionError("a refusing consumer still produced an acknowledgement")
+        except NativeAcknowledgementError as e:
+            assert "did not complete" in str(e), str(e)
+
+        assert native_ack_state(journal, oid) is None, "an ack survived a rolled-back apply"
+        assert R.delivery_status(journal, oid) is None or \
+            R.delivery_status(journal, oid).get("acked_at") is None
+        journal.close()
+
+
+@test("MODEL ONLY: the local harness exercises the same commit boundary")
+def _():
+    """A LOCAL harness, kept as a model test beside the real connection above.
+
+    It is NOT the native consumer and never was. It stays because it exercises the
+    commit boundary against a trivially inspectable consumer, which makes a failure here
+    easy to localise. The real acknowledgement is the test above it.
     """
     with open(RESULT_FILE) as fh:
         result = json.load(fh)
