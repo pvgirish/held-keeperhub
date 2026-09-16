@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # P02 acceptance, in TWO clearly separated evidence classes.
 #
+#   Stage 0 — PROPERTY/FUZZ, local. Checks the controller against an INDEPENDENT
+#             reference predicate across the input space, not just at chosen points.
+#
 #   Stage 1 — ADVERSARIAL, local, no fork. Labelled hostile mock fixtures for branches
 #             that well-behaved contracts cannot reach: reentrancy, an ERC20 returning
 #             false, and cleanup failing AFTER the economic action ran. No result here
@@ -22,6 +25,11 @@ cd "$HERE"
 
 rc=0
 
+echo "=== stage 0: property / fuzz suite (local, reference-predicate equivalence) ==="
+forge test --match-path "test/contracts/property/*" -vv 2>&1 | tail -12 || rc=1
+[ "${PIPESTATUS[0]:-0}" -eq 0 ] || rc=1
+
+echo
 echo "=== stage 1: adversarial fixtures (local, NOT the production profile) ==="
 forge test --match-path "test/contracts/adversarial/*" -vv 2>&1 | tail -20 || rc=1
 [ "${PIPESTATUS[0]:-0}" -eq 0 ] || rc=1
@@ -51,5 +59,5 @@ echo "=== stage 2: real pinned Safe / Roles / Morpho on a Base-mainnet fork ==="
 ' || rc=1
 
 echo
-if [ $rc -eq 0 ]; then echo "check-phase-02: PASS (both stages)"; else echo "check-phase-02: FAIL"; fi
+if [ $rc -eq 0 ]; then echo "check-phase-02: PASS (all three stages)"; else echo "check-phase-02: FAIL"; fi
 exit $rc

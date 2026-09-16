@@ -7,9 +7,10 @@
   "accepted_note": "Claude authored and ran this. Self-testing is not independent acceptance.",
   "gate": {
     "command": "make check-phase-02",
+    "stage_0_property_fuzz_local": "6 passed; 0 failed (256 runs each)",
     "stage_1_adversarial_local": "4 passed; 0 failed",
     "stage_2_real_pinned_fork": "21 passed; 0 failed",
-    "total": 25
+    "total": 31
   },
   "evidence_kind": {
     "local_fork": "REAL pinned Base-mainnet Safe 1.4.1, Zodiac Roles v2.1, Morpho Blue and native USDC on an anvil fork at block 51353212. Nothing mocked.",
@@ -39,10 +40,10 @@
     "Owner authority for non-batch tests is modelled with vm.prank; the atomic activation batch DOES use a real two-signature Safe ceremony.",
     "Nothing is deployed publicly. Local fork only.",
     "The adversarial suite runs WITHOUT the fork: forge falls back to VM::deployCode for that oversized test contract and a call to it reverts under --fork-url. Harness interaction, not a controller defect - the same controller deploys and activates under the fork in stage 2.",
-    "No fuzz/invariant campaign over the policy arithmetic; the suite is example-based."
+    "Fuzz properties are example-space equivalence checks at 256 runs; no long-running stateful invariant campaign with a handler yet."
   ],
   "next_phase": "P03 - composed native->KeeperHub->controller route. Its mandatory public execution depends on L10 (unresolved); local preparation is unblocked.",
-  "completeness": "P02 required clauses now covered; independent acceptance still pending",
+  "completeness": "P02 required clauses covered, including property/fuzz coverage; independent acceptance still pending",
   "closed_gaps": {
     "reentrancy": "test_ReentrancyIsRefused - a token reenters executeSupply during the approval leg; the controller refuses with Reentrancy() and the fixture surfaces that through a unique error",
     "cooldowns": "test_CooldownBlocksThenAllows - dn=3600, refused at 3599s, permitted at 3600s, and a REFUSED op does not advance lastNormalAt or consumption",
@@ -51,7 +52,8 @@
     "nested_false_return": "test_TokenReturningFalseIsRejected -> TokenReturnedFalse",
     "cleanup_failure_after_economic_action": "test_CleanupFailureAfterEconomicActionRollsBackEverything - the token refuses the cleanup approval ONLY after observing supplyCount>0, so the revert identity itself proves the economic action was reached before cleanup failed; everything then rolls back",
     "atomic_owner_batch": "test_OwnerBatchActivationIsAtomicAndRollsBackAllowance - a REAL Safe execTransaction with two owner signatures delegatecalling MultiSendCallOnly: [setAllowance, activate]. A stale expected state reverts the whole batch AND rolls back the allowance update.",
-    "failure_stage_labelled": "the quota test is renamed test_RolesRefusalBeforeMorphoRollsBackEverything and asserts the Morpho position is identical - Roles refused PERMISSION; Morpho was never entered"
+    "failure_stage_labelled": "the quota test is renamed test_RolesRefusalBeforeMorphoRollsBackEverything and asserts the Morpho position is identical - Roles refused PERMISSION; Morpho was never entered",
+    "property_coverage": "test/contracts/property/HeldControllerProperties.t.sol - 6 fuzz properties at 256 runs each: supply succeeds EXACTLY when an independent reference predicate holds; consumption monotonic and bounded with remaining exact; a consumed id never re-executes; actionHash injective over amount/onBehalf/family; any mutated envelope fails under the original signature; the withdraw lane is derived from the Safe balance, never chosen."
   },
   "build_provenance": {
     "solc": "0.8.28",
@@ -70,5 +72,8 @@
       "uncommitted_or_untracked_entries": "18",
       "honest_status": "NOTHING IS COMMITTED. Git metadata exists but the working tree is the source of truth; the archive, not git, is the snapshot."
     }
+  },
+  "fuzz_findings": {
+    "1": "testFuzz_MutatedEnvelopeNeverVerifies initially FAILED with counterexample [field=138, delta=1e11]. Diagnosis: a flaw in the TEST, not the controller -- the policyVersion branch computed 1 + (delta % 1000), and 1e11 % 1000 == 0, so it wrote back the original value and the envelope was never actually mutated. Fixed so every branch strictly changes its field, plus an assertion that something really changed."
   }
 }
