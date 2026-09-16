@@ -1,0 +1,68 @@
+{
+ "phase": "P05",
+ "title": "The private operator console",
+ "implementation_status": "built and locally verified, including in a real browser",
+ "independent_review_status": "pending",
+ "accepted": false,
+ "accepted_note": "Claude authored, ran and looked at this. Self-testing is not independent acceptance, and 'independently tested usability' in particular is NOT satisfied: no person other than the author has used it.",
+
+ "gate": {
+  "command": "make check-phase-05",
+  "result": "29 passed; 0 failed",
+  "also_exercised": "Run for real (console/run.py) and driven in a browser: sign-in, dashboard, limit-change preparation and the prepared-change page were rendered and read, not just asserted."
+ },
+
+ "the_four_operator_jobs": {
+  "provenance": "DERIVED, not quoted. The locked V4 spec is not in this working tree; docs/decisions/phase-priority.md:23 requires 'all four operator jobs' but does not enumerate them. The derivation was put to the user, who confirmed proceeding with it. The wording below comes directly from the locked product sentence.",
+  "J1_run_under_limits": "Dashboard: status, customer-approved limits with used/ceiling/remaining, cooldowns, and the full authority list. Amounts are rendered in USDC, never raw base units -- showing 50000000000 to someone approving a limit is how a person approves a thousand times what they meant to.",
+  "J2_change_limits": "A limit change is described in plain language before approval: what changes, from what to what, how much is already spent and what remains. A ceiling below existing consumption is warned about with the exact error the controller will raise, rather than discovered in a reverted ceremony.",
+  "J3_replace_runner": "Explains that the epoch advances and every signature the outgoing runner produced is retired, calls out in-flight work as knowable rather than lost, and flags a no-op replacement.",
+  "J4_resolve_interrupted": "Every unresolved operation gets a READING rather than a state code. UNKNOWN is presented as 'may or may not have executed -- this is NOT it failed', with the instruction to read consumed[operationId] and explicitly not to resend.",
+  "if_the_derivation_is_wrong": "held_console/state.py is the single place the enumeration lives, and the tests name the jobs explicitly, so a correction is a small edit with visible consequences."
+ },
+
+ "what_the_console_cannot_do": {
+  "statement": "It holds no keys and broadcasts nothing. It cannot fence, activate, sign or send.",
+  "why": "Those are owner and runner authorities. A console that held them would be a fourth authority over customer funds that the P04 authority inventory does not contain.",
+  "instead": "It READS state and PREPARES a described owner action, which the owner executes in their own Safe. Every prepared change records executed_by_console=false.",
+  "this_is_also_the_approval_design": "The owner approves a described change -- 'the supply ceiling drops from 50,000 to 8,000 USDC, 17,500 is already spent, so 0 remains, and nothing else changes' -- rather than a calldata blob. 'What does NOT change' is stated as prominently as what does, because that is the real question when approving."
+ },
+
+ "authentication_and_privacy": {
+  "binding": "127.0.0.1 only. Binding elsewhere raises ConsoleNotPrivate unless explicitly overridden, because a network-reachable console is a different product with a different threat model.",
+  "secret": "An env:NAME REFERENCE, never a literal. An absent secret is refused; one shorter than 16 characters is refused.",
+  "comparison": "hmac.compare_digest, so a wrong secret cannot be recovered by timing. Asserted by a test that reads the source.",
+  "sessions": "In-memory, one-hour TTL, not persisted -- a restart logs everyone out. Expired cookies do not authenticate.",
+  "csrf": "State-changing forms carry a token bound to the session; a missing or wrong token is refused with 403.",
+  "escaping": "Every interpolated value is escaped; a hostile controller address renders as text, verified by test.",
+  "headers": "Verified over real HTTP: X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy no-referrer, Content-Security-Policy default-src 'none'. The session cookie is HttpOnly, SameSite=Strict.",
+  "no_partial_reads": "An unauthenticated request to any route returns a 302 with an EMPTY body. There is no read-only peek.",
+  "logging": "Request logging strips query strings, which can carry a CSRF token."
+ },
+
+ "recovery_export": {
+  "endpoint": "/export, authenticated only, schema held.recovery-export.v1",
+  "contents": "Every unresolved operation with its payload hash, state, epoch and attempts.",
+  "no_secrets": "Signer fields are REFERENCES (env:NAME, keystore:path). Verified by a test that writes a real journal row and asserts no key material and no console secret appears in the export.",
+  "instructions_included": "How to resolve each case, including the ambiguous one: read consumed[operationId]; equal to payload_hash means it executed and must never be re-executed; zero after a definitive refusal means it may be reauthorized under a new epoch; zero after an ambiguous send means it may still be in flight -- re-read, do not resend."
+ },
+
+ "defects_found_by_looking_at_it": [
+  {
+   "what": "The operator-action links rendered near-black on the dark background and were close to invisible.",
+   "found_by": "Rendering the page in a browser. No test would have caught it; every assertion about those links passed.",
+   "fix": "Explicit link, visited, hover and focus colours."
+  }
+ ],
+
+ "known_gaps": [
+  "INDEPENDENTLY TESTED USABILITY IS NOT SATISFIED. The console has been used only by its author. P05 requires usability tested by someone else, and that has not happened.",
+  "console/run.py renders a DEMONSTRATION state when no state source is given, labelled as such in the module docstring. It is not a reading of any deployed controller and is not evidence about one.",
+  "The live state provider is an injected callable. Wiring it to a real chain reader is straightforward but is not done here, so the dashboard has not yet displayed a reading of the fork.",
+  "Implicit form submission (pressing Return) could not be exercised through the browser automation. The form is standard HTML with a submit button and the button works; this is most likely an automation artifact rather than a page defect, and it is recorded as unverified rather than claimed either way.",
+  "Nothing is deployed and the console is not served anywhere. It binds to localhost on demand."
+ ],
+
+ "completeness": "P05 delivers the private console with all four derived operator jobs, authentication, privacy, understandable owner approval and the recovery export. The independently-tested-usability clause remains OPEN and is not claimed.",
+ "next": "P06 composed adversarial faults and the Held half of the frozen comparison."
+}
