@@ -1,0 +1,16 @@
+{
+  "actionFamily": 1,
+  "chainId": 8453,
+  "controller": "0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f",
+  "epoch": 1,
+  "lineage": "0x0000000000000000000000000000000000000000000000000000000000000011",
+  "note": "Written BY the deployed controller on the fork. tests/integration/test_p03_signing.py must recompute signingHash from held_core and reproduce this signature with the same key. The runner key is the well-known anvil account #4: local-fork only, never custody.",
+  "operationId": "0x7821251001ab03d8e81ad09ebddebfc1aca05777d26aa59aed7724604bc0a18e",
+  "payloadHash": "0x51bb5c6557d3ea42937270b2ded34f064af9a3ec0f46df379dd5f7ee2e88dbed",
+  "policyVersion": 1,
+  "runner": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+  "safe": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180",
+  "signature": "0xae3e3939175b8abedcb116bda2eb275efdc07e92b847e55e6a2defc4db52fec57aa79cb1878c3f26785ca60efeae9d319517f8a76af24baac4ca6f62e52055511c",
+  "signingHash": "0x705d2e05bf37084e944a094fd0b02d1a532e033d691e23c5274948ee32ad3edd",
+  "sourceIdentityHash": "0x425a2fdcb094b0321d380f11c7efb1178b8b9e242afd71f902c02dce6d3ee2de"
+}

@@ -3,6 +3,8 @@ pragma solidity 0.8.28;
 
 import {Test, console2} from "forge-std/Test.sol";
 
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+
 import {HeldController} from "../../contracts/src/HeldController.sol";
 import {ConditionFlat, IERC20, IMorpho, IRoles, IRolesAdmin, IRolesTargets, MarketParams} from "../../contracts/src/Interfaces.sol";
 
@@ -1026,6 +1028,48 @@ contract HeldControllerForkTest is Test {
             expected,
             "the deployed controller and the Python adapter disagree on actionHash"
         );
+    }
+
+    /// @dev P03 cross-language signing vector, written for the Python signer to
+    ///      reproduce.
+    ///
+    ///      The actionHash vector goes Python -> Solidity, but the ENVELOPE digest
+    ///      cannot: it commits to the domain separator, which contains this controller's
+    ///      address, and Python cannot know that before the test deploys it. So this
+    ///      direction is reversed -- the deployed controller publishes the envelope it
+    ///      built, the digest it computed and the signature a known key produced over
+    ///      it, and tests/integration/test_p03_signing.py must reproduce all three from
+    ///      held_core alone. Without this, "the adapter signs what the controller
+    ///      verifies" would rest on Python agreeing with Python.
+    function test_WritesTheSigningVectorThePythonSignerMustReproduce() public {
+        HeldController.Envelope memory env = _envelope(keccak256("xlang-sign"), 1, 100_000_000, 1, runnerB);
+        bytes32 digest = controller.signingHash(env);
+        (uint8 v, bytes32 r, bytes32 sS) = vm.sign(PK_RUNNER_B, digest);
+        bytes memory sig = abi.encodePacked(r, sS, v);
+
+        // Prove on this side that the digest and signature actually belong together
+        // before publishing them, so a vector can never claim more than was checked.
+        assertEq(ECDSA.recover(digest, sig), runnerB, "vector signature does not recover the runner");
+
+        string memory o = "signvec";
+        vm.serializeString(o, "note",
+            "Written BY the deployed controller on the fork. tests/integration/test_p03_signing.py "
+            "must recompute signingHash from held_core and reproduce this signature with the same key. "
+            "The runner key is the well-known anvil account #4: local-fork only, never custody.");
+        vm.serializeUint(o, "chainId", block.chainid);
+        vm.serializeAddress(o, "controller", address(controller));
+        vm.serializeAddress(o, "safe", safe);
+        vm.serializeBytes32(o, "lineage", LINEAGE);
+        vm.serializeBytes32(o, "operationId", env.operationId);
+        vm.serializeBytes32(o, "sourceIdentityHash", env.sourceIdentityHash);
+        vm.serializeBytes32(o, "payloadHash", env.payloadHash);
+        vm.serializeUint(o, "actionFamily", env.actionFamily);
+        vm.serializeUint(o, "epoch", env.epoch);
+        vm.serializeUint(o, "policyVersion", env.policyVersion);
+        vm.serializeAddress(o, "runner", env.runner);
+        vm.serializeBytes32(o, "signingHash", digest);
+        string memory out = vm.serializeBytes(o, "signature", sig);
+        vm.writeJson(out, "./fixtures/generated/signing-vector.json");
     }
 
     /// @dev P02 required work 7: exact token/share rounding.

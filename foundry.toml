@@ -9,7 +9,13 @@ optimizer_runs = 200
 via_ir = true
 # Deterministic: never silently resolve a different pin.
 auto_detect_solc = false
-fs_permissions = [{ access = "read", path = "./fixtures" }]
+# Generated cross-language vectors are written under ./fixtures/generated ONLY. The
+# rest of ./fixtures stays read-only so a test cannot quietly rewrite a fixture it is
+# also asserting against.
+fs_permissions = [
+    { access = "read", path = "./fixtures" },
+    { access = "read-write", path = "./fixtures/generated" },
+]
 
 remappings = [
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",

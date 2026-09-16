@@ -49,6 +49,11 @@ check-phase-02:
 ## P03 LOCAL HALF ONLY: native ActionBundle interception and envelope binding.
 ## This does NOT establish the hosted KeeperHub route. That gate needs an
 ## authenticated organisation caller/payer (L10) and is neither stubbed nor simulated.
+##
+## The signing check reproduces a vector the FORK suite writes
+## (fixtures/generated/signing-vector.json), so check-phase-02 must have run against a
+## live fork at least once. It fails loudly rather than skipping if the vector is absent.
 check-phase-03-local:
 	@$(PY) tests/integration/test_p03_interception.py
 	@$(PY) tests/integration/test_p03_native_bundle.py
+	@$(PY) tests/integration/test_p03_signing.py
