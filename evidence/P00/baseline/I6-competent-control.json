@@ -1,0 +1,22 @@
+{
+  "control": "I6-competent",
+  "relates_to": "I6-legacy-grant-migration",
+  "question": "The declared scenario is a KNOWN legacy grant. Does the competent native workflow — which knows about it — close it, and at what cost?",
+  "procedure": "Inventory the Safe's Morpho authorizations, then include setAuthorization(legacy,false) in the SAME native MultiSend batch as the ceiling change and the role swap. Verify by readback and behaviourally.",
+  "grant_usable_before_revocation": "0x1",
+  "pre_revocation_simulation": "0x00000000000000000000000000000000000000000000000000000000000f4240000000000000000000000000000000000000000000000000000000d13f6754e1 ",
+  "probe_amount": "1000000 (1 USDC) — kept small so the test turns on AUTHORITY, not on the market's idle liquidity",
+  "shares_moved_by_legacy_before": "26961357077213220 -> 26960458365312964",
+  "inventory_detected_grant": "true",
+  "batch_status": "0x1",
+  "is_authorized_after": "false",
+  "legacy_withdraw_after_revocation": "REVERT",
+  "legacy_revert_text": "Error: execution reverted: unauthorized  Context: - server returned an error response: error code 3: execution reverted: unauthorized, data: \"0x08c379a000000000000000000000000000000000000000000000000",
+  "remaining_final": "50000000000",
+  "a_member_final": "false", "b_member_final": "true",
+  "ceremonies": 1, "individual_signatures": 2, "submitted_transactions": 1,
+  "experiment_result": "PASS",
+  "workflow_outcome": "PASS — the legacy grant is detected, revoked in the same ceremony as the handover, and the former agent's direct Morpho path is behaviourally dead",
+  "finding": "The I6 defect is entirely an omission defect. Morpho's setAuthorization is an ordinary Safe-originated call, so a competent operator batches the revocation into the very same MultiSend as the ceiling change and the role swap. It costs ZERO extra ceremonies, signatures or transactions. The legacy agent provably could move the Safe's position beforehand and provably cannot afterwards.",
+  "consequence_for_the_advantage_claim": "The I6 finding does NOT survive as evidence of a Held advantage. Native closes it for free once the grant is on the checklist, which the declared scenario stipulates it is. The 04 I6 trace is retained as an omission control only — it shows the cost of forgetting, not a native incapability."
+}

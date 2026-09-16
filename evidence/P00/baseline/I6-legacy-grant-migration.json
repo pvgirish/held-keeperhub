@@ -1,0 +1,20 @@
+{
+  "id": "I6-legacy-grant-migration",
+  "role": "DIAGNOSTIC CONTROL - the naive procedure. Superseded for the representative native comparison by I6-competent-control.json; retained to show the cost of the omission, never counted in native totals.",
+  "condition": "A known legacy Morpho grant — labelled migration fixture, not the protected baseline.",
+  "native_method": "Grant Morpho setAuthorization to a legacy agent, run the A->B handover, then read isAuthorized to test whether the handover fenced it.",
+  "ceremonies": 3, "individual_signatures": 6, "submitted_transactions": 3, "manual_steps": 9,
+  "legacy_agent": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+  "authorized_before": "true",
+  "authorized_after_role_swap": "true",
+  "authorized_after_explicit_revocation": "false",
+  "finding": "Replacing the Roles operator does NOT touch a Morpho-level authorization. The legacy agent keeps a fully independent on-chain path to move the Safe's position after the handover completes. Only an explicit setAuthorization(false) closes it, and nothing in the role swap surfaces that it is outstanding — it has to be on the inventory checklist or it is missed.",
+  "outcome": "PASS — handover alone leaves the legacy grant live; a separate owner revocation is required",
+  "recovery_effort": 1
+,
+  "experiment_result": "PASS",
+  "workflow_outcome": "NOT ACHIEVED by the role swap alone - the known legacy Morpho grant survived the handover as live independent authority. The competent workflow revokes it in the SAME batch at zero extra cost: see I6-competent-control.json. This case is retained as the omission control.",
+  "evidence_completeness": "COMPLETE within the measured contract scope",
+  "evidence_class": "local-fork contract behaviour against real Base-mainnet singletons (Safe 1.4.1, Zodiac Roles v2.1, MultiSendCallOnly 1.4.1, Morpho Blue, native USDC), driven by anvil/cast",
+  "unmeasured": "Almanak reconfiguration, native recovery machinery and native result consumption are NOT exercised by this case; the authenticated KeeperHub caller/payer boundary is blocked by L10"
+}

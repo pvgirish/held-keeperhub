@@ -1,0 +1,104 @@
+{
+  "phase": "P00",
+  "status": "PARTIAL",
+  "accepted": false,
+  "recorded_utc": "2026-09-15T17:09:13Z",
+  "executor_note": "Claude executed directly per Girish's override of the GLM dispatch. routing.jsonl and exact-session.json are N/A, not omitted.",
+  "gates": [
+    {
+      "id": "G1",
+      "name": "Route evidence by layer",
+      "status": "PASS",
+      "artifact": "docs/decisions/route-evidence.json"
+    },
+    {
+      "id": "G2",
+      "name": "Native SDK compile probe",
+      "status": "PASS_OFFLINE",
+      "cause": "REAL compilation achieved via the SDK's public IntentCompiler.compile(). SUCCESS, two calls: USDC approve(Morpho, 110000000) and Morpho supply(marketParams, 100000000, 0, Safe, ''). Verified by decoding the BYTES: market params hash to the intent market id, exact raw units, shares 0, onBehalf is the declared Safe, whole bundle accounted for. CAVEAT: offline, with an explicitly labelled testing-only price config. NOT runtime evidence.",
+      "artifact": "evidence/P00/native-seam-probe.json + commands.log"
+    },
+    {
+      "id": "G3",
+      "name": "Measured native baseline on a fork",
+      "status": "UNBLOCKED_NOT_RUN",
+      "cause": "The RPC policy denial is GONE (route-evidence L11). A pinned Base-mainnet fork now runs and is self-verified by fixtures/with_fork.sh (L12). The baseline itself has NOT been run: it still needs a fixture Safe + Zodiac Roles deployed on the fork, a funded starting position, and the nine predeclared interruption scenarios executed and measured."
+    },
+    {
+      "id": "G4",
+      "name": "Phase priority recorded",
+      "status": "PASS",
+      "artifact": "docs/decisions/phase-priority.md"
+    },
+    {
+      "id": "G5",
+      "name": "Pinned source and toolchain manifest",
+      "status": "PASS",
+      "artifact": "project-manifest.json"
+    },
+    {
+      "id": "G6",
+      "name": "make check-phase-00",
+      "status": "PASS",
+      "cause": "21/21 hold - 2 positives, 19 negatives including all reported false-passes and the bundle set.",
+      "artifact": "probes/checks/gate_tests.py (21 cases)"
+    },
+    {
+      "id": "G7",
+      "name": "Fixture Safe bootstrap checklist",
+      "status": "NOT_STARTED"
+    }
+  ],
+  "source_digests": {
+    "almanak_sdk_rev": "6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938",
+    "strategy_runner_lines": 13533,
+    "anchor_L9228_verified": true
+  },
+  "public_actions_taken": "none",
+  "next_permitted_phase": null,
+  "updated_utc": "2026-09-15T18:18:45Z",
+  "authority": "Standing execution authority granted by Girish 2026-09-15. Setup/install/debug/verify authorized without per-step asking.",
+  "environment_built": {
+    "python": "3.12.13 via uv at ~/venv312",
+    "sdk_installed": "editable from ~/src/sdk @ 6e83e00edcae",
+    "foundry": "1.8.3 installed from GitHub release, sha256 verified, anvil smoke tested (chain id 31337)"
+  },
+  "sdk_defect_found": "tests/support absent at pinned rev but imported by tests/conftest.py:39 - the SDK's own suite cannot collect from a clean clone (72 collection errors).",
+  "blocker": {
+    "kind": "egress_policy_denial",
+    "evidence": "agent proxy log: connect_rejected, gateway answered 403 to CONNECT",
+    "hosts_refused": [
+      "mainnet.base.org",
+      "base.llamarpc.com",
+      "base-rpc.publicnode.com",
+      "foundry.paradigm.xyz",
+      "base-mainnet.g.alchemy.com",
+      "base-mainnet.infura.io",
+      "base.drpc.org",
+      "rpc.ankr.com",
+      "base.gateway.tenderly.co"
+    ],
+    "minimum_permission_needed": "outbound HTTPS to ONE Base mainnet RPC host (base-mainnet.g.alchemy.com preferred, needs an API key; or mainnet.base.org / base-rpc.publicnode.com, public)",
+    "foundry_note": "RESOLVED - Foundry installed from the GitHub release. Only the RPC host remains."
+  },
+  "remaining_external_dependencies": [
+    {
+      "id": "L10_keeperhub_caller_payer_preflight",
+      "status": "BLOCKED-UNKNOWN",
+      "need": "a KeeperHub org API key and an authenticated preflight. Open into P03. The RPC unblock does NOT touch this."
+    }
+  ],
+  "findings_for_build": [
+    "The native compiler approves 110 USDC for a 100 USDC supply (10% headroom). Held's profile requires zero managed allowance at entry and exit, so the cleanup step MUST zero this residual approval.",
+    "IntentCompiler refuses to construct without a price_oracle; a testing-only config is the documented alternative and must never be presented as runtime evidence.",
+    "token='USDC' raises SymbolTokenResolutionWarning - use the contract address or a CAIP-19 id.",
+    "_ConnectorCompilerServices already exists in the SDK. Held must not implement a services layer."
+  ],
+  "corrections_to_claude": [
+    "Claude reported a CONSTRUCTION failure as though the compiler had been entered. Stages are now recorded separately: constructed / compile_entered / returned.",
+    "Claude concluded a concrete CompilerServices was needed. Wrong - the SDK ships one."
+  ],
+  "notes": [
+    "The IntentCompiler price_oracle requirement is a CONFIG requirement, not an RPC one: construction still fails with price_mode=none even against a live fork RPC. Verified both ways on the fork."
+  ]
+}

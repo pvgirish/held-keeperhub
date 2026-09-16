@@ -1,0 +1,717 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+import {Test, console2} from "forge-std/Test.sol";
+
+import {HeldController} from "../../contracts/src/HeldController.sol";
+import {ConditionFlat, IERC20, IMorpho, IRoles, IRolesAdmin, IRolesTargets, MarketParams} from "../../contracts/src/Interfaces.sol";
+
+/// @notice P02 fork tests against the REAL pinned Base-mainnet contracts.
+///
+/// These run against a live anvil fork that fixtures/scripts/01..03b has already
+/// populated with a genuine 2-of-3 Safe and a Zodiac Roles module, so the Safe,
+/// Roles, Morpho, USDC and market are all real code — nothing is mocked. The Safe's
+/// owner authority is exercised with `vm.prank(safe)`; the real two-signature
+/// ceremony is separately evidenced in P00 and is not re-proven here.
+contract HeldControllerForkTest is Test {
+    address constant MORPHO = 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb;
+    address constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    address constant COLL = 0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452;
+    address constant ORACLE = 0xD7A1abA119a236Fea5BBC5cAC6836465cbe9289A;
+    address constant IRM = 0x46415998764C29aB2a25CbeA6254146D50D22687;
+    uint256 constant LLTV = 860000000000000000;
+    uint256 constant USDC_SLOT = 9;
+
+    // anvil deterministic accounts — LOCAL FIXTURE IDENTITIES ONLY, never real custody
+    uint256 constant PK_RUNNER_B = 0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a;
+    uint256 constant PK_RUNNER_A = 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6;
+    address constant EXECUTOR = 0x976EA74026E726554dB657fA54763abd0C3a0aa9; // the configured outer sender
+
+    HeldController controller;
+    address safe;
+    address roles;
+    address runnerB;
+    address runnerA;
+    bytes32 roleKey;
+    bytes32 allowKey;
+    bytes32 marketId;
+    bytes32 constant LINEAGE = bytes32(uint256(0x11));
+
+    bytes32 constant WITHDRAW_KEY = keccak256("held-withdraw-cap");
+    bytes32 constant RESTORE_ROLE = keccak256("held-restoration-v1");
+    bytes32 constant RESTORE_KEY = keccak256("held-restoration-cap");
+    uint128 constant LN = 50_000e6;
+    uint128 constant LR = 10_000e6;
+    uint128 constant LS = 50_000e6;
+    uint128 constant MS = 40_000e6;
+
+    function setUp() public {
+        safe = vm.envAddress("HELD_SAFE");
+        roles = vm.envAddress("HELD_ROLES");
+        roleKey = vm.envBytes32("HELD_ROLE_KEY");
+        allowKey = vm.envBytes32("HELD_ALLOW_KEY");
+        runnerB = vm.addr(PK_RUNNER_B);
+        runnerA = vm.addr(PK_RUNNER_A);
+        marketId = keccak256(abi.encode(_mp()));
+
+        controller = new HeldController(
+            safe, roles, MORPHO, USDC, marketId, LINEAGE, roleKey, RESTORE_ROLE, allowKey, RESTORE_KEY
+        );
+
+        // Owner installs the new lineage: the controller becomes the role member and
+        // the previous operator is retired. V4 §3: the controller is the SOLE member
+        // of the operating role; neither runner gets a direct path around it.
+        vm.startPrank(safe);
+        _assign(address(controller), roleKey, true);
+        _assign(address(controller), RESTORE_ROLE, true);
+        _assign(runnerA, roleKey, false);
+        // A NEW lineage gets a clearly labelled NEW budget. The native fixture's
+        // historical 30,000 is deliberately NOT imported (V4 §6).
+        _setAllowance(LS, LS);
+        // Withdraw needs its own scoped function and its own non-refilling quota, or
+        // Roles rejects it outright (FunctionNotAllowed) -- scopeTarget sets
+        // Clearance.Function, so EVERY function must be scoped explicitly. Defence in
+        // depth: the amount is bound to a separate allowance key, exactly as supply is.
+        _scopeWithdraw(roleKey, WITHDRAW_KEY);
+        IRolesAdmin(roles).setAllowance(WITHDRAW_KEY, LN, LN, 0, 0, 0);
+        // The RESTORATION lane is a separate role with its OWN non-refilling key, because
+        // Zodiac allows one condition tree per (role, target, selector). V4 §3 permits
+        // separate normal/restoration roles; both remain controller-only.
+        IRolesTargets(roles).scopeTarget(RESTORE_ROLE, MORPHO);
+        _scopeWithdraw(RESTORE_ROLE, RESTORE_KEY);
+        IRolesAdmin(roles).setAllowance(RESTORE_KEY, LR, LR, 0, 0, 0);
+        vm.stopPrank();
+
+        _fundSafe(50_000e6);
+    }
+
+    // ------------------------------------------------------------------ helpers --
+    function _mp() internal pure returns (MarketParams memory) {
+        return MarketParams({loanToken: USDC, collateralToken: COLL, oracle: ORACLE, irm: IRM, lltv: LLTV});
+    }
+
+    function _assign(address who, bytes32 key, bool member) internal {
+        bytes32[] memory keys = new bytes32[](1);
+        bool[] memory members = new bool[](1);
+        keys[0] = key;
+        members[0] = member;
+        (bool ok,) = roles.call(abi.encodeWithSignature("assignRoles(address,bytes32[],bool[])", who, keys, members));
+        require(ok, "assignRoles failed");
+    }
+
+    function _setAllowance(uint128 balance, uint128 maxRefill) internal {
+        (bool ok,) = roles.call(
+            abi.encodeWithSignature(
+                "setAllowance(bytes32,uint128,uint128,uint128,uint64,uint64)", allowKey, balance, maxRefill, 0, 0, 0
+            )
+        );
+        require(ok, "setAllowance failed");
+    }
+
+    /// @dev Flat condition tree for Morpho.withdraw(MarketParams,uint256,uint256,address,address):
+    ///      root Calldata/Matches, param0 the MarketParams tuple with Pass on its five
+    ///      fields, param1 `assets` bound WithinAllowance to the withdraw key, Pass on
+    ///      the rest. Same shape as the supply tree built by fixture step 3b.
+    function _scopeWithdraw(bytes32 role, bytes32 allowanceKey) internal {
+        ConditionFlat[] memory c = new ConditionFlat[](11);
+        c[0] = ConditionFlat(0, 5, 5, "");                                   // root Calldata/Matches
+        c[1] = ConditionFlat(0, 3, 0, "");                                   // param0 tuple
+        c[2] = ConditionFlat(0, 1, 28, abi.encode(allowanceKey));            // param1 assets
+        c[3] = ConditionFlat(0, 1, 0, "");                                   // param2 shares
+        c[4] = ConditionFlat(0, 1, 0, "");                                   // param3 onBehalf
+        c[5] = ConditionFlat(0, 1, 0, "");                                   // param4 receiver
+        for (uint8 i = 6; i < 11; i++) {
+            c[i] = ConditionFlat(1, 1, 0, "");                               // tuple fields
+        }
+        IRolesAdmin(roles).scopeFunction(role, MORPHO, IMorpho.withdraw.selector, c, 0);
+    }
+
+    function _fundSafe(uint256 amount) internal {
+        vm.store(USDC, keccak256(abi.encode(safe, USDC_SLOT)), bytes32(amount));
+        assertEq(IERC20(USDC).balanceOf(safe), amount, "safe funding readback");
+    }
+
+    function _policy() internal pure returns (HeldController.Policy memory p) {
+        p = _policyWith(10, 0, 0);
+    }
+
+    function _policyWith(uint64 nn, uint64 dn, uint64 dr) internal pure returns (HeldController.Policy memory p) {
+        p.Ls = LS;
+        p.Ln = LN;
+        p.Lr = LR;
+        p.Ms = MS;
+        p.Mn = 10_000e6;
+        p.Mr = 5_000e6;
+        p.ms = 1_000e6;
+        p.mn = 1_000e6;
+        p.F = 1_000e6;
+        p.H = 0;
+        p.Nn = nn;
+        p.Nr = 5;
+        p.dn = dn;
+        p.dr = dr;
+    }
+
+    function _activateWith(uint64 ep, address who, HeldController.Policy memory p) internal {
+        HeldController.ExpectedState memory exp = _expected();
+        vm.prank(safe);
+        controller.activate(ep, 1, who, EXECUTOR, p, exp);
+    }
+
+    function _expected() internal view returns (HeldController.ExpectedState memory e) {
+        e.usedSupply = controller.usedSupply();
+        e.usedNormalWithdraw = controller.usedNormalWithdraw();
+        e.usedRestoration = controller.usedRestoration();
+        e.normalCount = controller.normalCount();
+        e.restorationCount = controller.restorationCount();
+    }
+
+    function _activate(uint64 ep, address who) internal {
+        // Hoisted deliberately: vm.prank applies to the NEXT call, and _expected()
+        // makes external view calls that would consume it before activate() runs.
+        HeldController.ExpectedState memory exp = _expected();
+        HeldController.Policy memory p = _policy();
+        vm.prank(safe);
+        controller.activate(ep, 1, who, EXECUTOR, p, exp);
+    }
+
+    function _envelope(bytes32 opId, uint8 family, uint256 amount, uint64 ep, address who)
+        internal
+        view
+        returns (HeldController.Envelope memory env)
+    {
+        env.operationId = opId;
+        env.sourceIdentityHash = keccak256("native-decision");
+        env.payloadHash = controller.actionHash(family, marketId, USDC, amount, safe);
+        env.actionFamily = family;
+        env.safe = safe;
+        env.lineage = LINEAGE;
+        env.epoch = ep;
+        env.policyVersion = 1;
+        env.runner = who;
+    }
+
+    function _sign(HeldController.Envelope memory env, uint256 pk) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, controller.signingHash(env));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _supply(bytes32 opId, uint256 amount, uint64 ep, uint256 pk, address who) internal {
+        HeldController.Envelope memory env = _envelope(opId, 1, amount, ep, who);
+        bytes memory sig = _sign(env, pk); // hoisted: signingHash() is an external view call
+        MarketParams memory mp = _mp();
+        vm.prank(EXECUTOR);
+        controller.executeSupply(env, mp, amount, sig);
+    }
+
+    // --------------------------------------- real 2-of-3 Safe batch helpers ----
+    address constant MULTISEND = 0x9641d764fc13c8B624c04430C7356C1C7C8102e2; // MultiSendCallOnly 1.4.1
+    uint256 constant PK_OWNER1 = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+    uint256 constant PK_OWNER2 = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+
+    function _msPart(address to, bytes memory data) internal pure returns (bytes memory) {
+        return abi.encodePacked(uint8(0), to, uint256(0), uint256(data.length), data);
+    }
+
+    function _batch(bytes memory rolesCall, bytes memory controllerCall) internal view returns (bytes memory) {
+        bytes memory payload = abi.encodePacked(_msPart(roles, rolesCall), _msPart(address(controller), controllerCall));
+        return abi.encodeWithSignature("multiSend(bytes)", payload);
+    }
+
+    /// @dev A genuine Safe execTransaction with TWO owner signatures, delegatecalling
+    ///      MultiSendCallOnly. This is the real ceremony, not vm.prank.
+    function _safeExecBatch(bytes memory multiSendCall) internal returns (bool, bytes memory) {
+        uint256 nonce = abi.decode(_staticcall(safe, abi.encodeWithSignature("nonce()")), (uint256));
+        bytes32 txHash = abi.decode(
+            _staticcall(
+                safe,
+                abi.encodeWithSignature(
+                    "getTransactionHash(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,uint256)",
+                    MULTISEND, uint256(0), multiSendCall, uint8(1), uint256(0), uint256(0), uint256(0),
+                    address(0), address(0), nonce
+                )
+            ),
+            (bytes32)
+        );
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(PK_OWNER1, txHash);
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(PK_OWNER2, txHash);
+        // Safe requires signatures ordered by ascending signer address; owner2 < owner1.
+        bytes memory sigs = abi.encodePacked(r2, s2, v2, r1, s1, v1);
+        return safe.call(
+            abi.encodeWithSignature(
+                "execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)",
+                MULTISEND, uint256(0), multiSendCall, uint8(1), uint256(0), uint256(0), uint256(0),
+                address(0), address(0), sigs
+            )
+        );
+    }
+
+    function _staticcall(address target, bytes memory data) internal view returns (bytes memory) {
+        (bool ok, bytes memory ret) = target.staticcall(data);
+        require(ok, "staticcall failed");
+        return ret;
+    }
+
+    // ================================================================== tests ====
+
+    function test_DeploymentIsPausedAndCannotOperate() public {
+        assertFalse(controller.active(), "a fresh controller must be paused");
+        assertEq(controller.epoch(), 0);
+        assertEq(controller.usedSupply(), 0, "Held starts its OWN history, not the native 30,000");
+
+        HeldController.Envelope memory env = _envelope(keccak256("op-paused"), 1, 5_000e6, 0, runnerB);
+        bytes memory sig_ = _sign(env, PK_RUNNER_B);
+        MarketParams memory mp_ = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert(HeldController.Paused.selector);
+        controller.executeSupply(env, mp_, 5_000e6, sig_);
+    }
+
+    function test_SupplySucceedsAndConsumesExactly() public {
+        _activate(1, runnerB);
+
+        uint256 safeBefore = IERC20(USDC).balanceOf(safe);
+        (uint256 shares0,,) = IMorpho(MORPHO).position(marketId, safe);
+        (,,, uint128 rolesBefore,) = IRoles(roles).allowances(allowKey);
+
+        _supply(keccak256("op-1"), 10_000e6, 1, PK_RUNNER_B, runnerB);
+
+        assertEq(IERC20(USDC).balanceOf(safe), safeBefore - 10_000e6, "exact safe debit");
+        (uint256 shares1,,) = IMorpho(MORPHO).position(marketId, safe);
+        assertGt(shares1, shares0, "supply shares increased");
+        assertEq(controller.usedSupply(), 10_000e6, "controller counter");
+        assertEq(controller.normalCount(), 1);
+        assertEq(IERC20(USDC).allowance(safe, MORPHO), 0, "managed allowance ends at zero");
+
+        // The economic budget is charged ONCE, on the protocol call -- the approval and
+        // its cleanup must not double-charge it (V4 §5).
+        (,,, uint128 rolesAfter,) = IRoles(roles).allowances(allowKey);
+        assertEq(rolesBefore - rolesAfter, 10_000e6, "Roles allowance charged exactly once");
+        assertEq(uint256(rolesAfter), controller.remainingSupply(), "controller and Roles agree");
+    }
+
+    function test_ReplayOfConsumedOperationIsRejected() public {
+        _activate(1, runnerB);
+        _supply(keccak256("op-replay"), 5_000e6, 1, PK_RUNNER_B, runnerB);
+
+        HeldController.Envelope memory env = _envelope(keccak256("op-replay"), 1, 5_000e6, 1, runnerB);
+        bytes memory sigR = _sign(env, PK_RUNNER_B);
+        MarketParams memory mpR = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert(
+            abi.encodeWithSelector(HeldController.OperationConsumed.selector, keccak256("op-replay"))
+        );
+        controller.executeSupply(env, mpR, 5_000e6, sigR);
+    }
+
+    function test_PayloadMutationUnderSignedEnvelopeIsRejected() public {
+        _activate(1, runnerB);
+        HeldController.Envelope memory env = _envelope(keccak256("op-mutate"), 1, 5_000e6, 1, runnerB);
+        bytes memory sig = _sign(env, PK_RUNNER_B);
+        // Same signed envelope, different economic amount.
+        vm.prank(EXECUTOR);
+        vm.expectRevert(HeldController.PayloadMismatch.selector);
+        controller.executeSupply(env, _mp(), 9_000e6, sig);
+    }
+
+    function test_OnlyConfiguredExecutorMayCall() public {
+        _activate(1, runnerB);
+        HeldController.Envelope memory env = _envelope(keccak256("op-exec"), 1, 5_000e6, 1, runnerB);
+        bytes memory sig = _sign(env, PK_RUNNER_B);
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(HeldController.NotExecutor.selector);
+        controller.executeSupply(env, _mp(), 5_000e6, sig);
+    }
+
+    /// @dev The decisive authority test: the transport sender is UNCHANGED, and the old
+    ///      runner's key still exists. Only the epoch retired. V4 §3: "Old Runner A
+    ///      credentials cannot become Runner B just by copying the new epoch number."
+    function test_RetiredRunnerCannotExecuteEvenWithSameExecutor() public {
+        _activate(1, runnerA);
+        _supply(keccak256("op-a1"), 5_000e6, 1, PK_RUNNER_A, runnerA);
+
+        vm.prank(safe);
+        controller.fence();
+        (,,, uint128 remaining,) = IRoles(roles).allowances(allowKey);
+        vm.prank(safe);
+        _setAllowance(remaining, LS); // owner keeps Roles consistent across the change
+        _activate(2, runnerB);
+
+        // A signs an envelope carrying the NEW epoch, submitted by the SAME executor.
+        HeldController.Envelope memory env = _envelope(keccak256("op-a2"), 1, 5_000e6, 2, runnerA);
+        bytes memory sig_ = _sign(env, PK_RUNNER_A);
+        MarketParams memory mp_ = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert(HeldController.BadSignature.selector);
+        controller.executeSupply(env, mp_, 5_000e6, sig_);
+
+        // B, on the same epoch and same executor, works.
+        _supply(keccak256("op-b1"), 5_000e6, 2, PK_RUNNER_B, runnerB);
+        assertEq(controller.usedSupply(), 10_000e6, "consumption preserved across the handover");
+    }
+
+    function test_HoldIsNeverExecutable() public {
+        _activate(1, runnerB);
+        HeldController.Envelope memory env = _envelope(keccak256("op-hold"), 0, 0, 1, runnerB);
+        bytes memory sig_ = _sign(env, PK_RUNNER_B);
+        MarketParams memory mp_ = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert(HeldController.HoldIsNotExecutable.selector);
+        controller.executeSupply(env, mp_, 0, sig_);
+    }
+
+    function test_CeilingAndFloorAreEnforced() public {
+        _activate(1, runnerB);
+
+        // 1. Above the per-action maximum Ms (40,000).
+        HeldController.Envelope memory tooBig = _envelope(keccak256("op-big"), 1, 45_000e6, 1, runnerB);
+        bytes memory sigBig = _sign(tooBig, PK_RUNNER_B);
+        MarketParams memory mpBig = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert(HeldController.AmountOutOfRange.selector);
+        controller.executeSupply(tooBig, mpBig, 45_000e6, sigBig);
+
+        // 2. Cumulative ceiling. Consume 40,000 of the 50,000 Ls, top the Safe back up so
+        //    the cash floor cannot be what binds, then ask for 15,000.
+        _supply(keccak256("op-ceil-setup"), 40_000e6, 1, PK_RUNNER_B, runnerB);
+        assertEq(controller.usedSupply(), 40_000e6);
+        _fundSafe(60_000e6);
+
+        HeldController.Envelope memory overCeiling = _envelope(keccak256("op-ceil"), 1, 15_000e6, 1, runnerB);
+        bytes memory sigCeil = _sign(overCeiling, PK_RUNNER_B);
+        MarketParams memory mpCeil = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert(HeldController.CeilingExceeded.selector);
+        controller.executeSupply(overCeiling, mpCeil, 15_000e6, sigCeil);
+
+        // 3. Liquid cash floor. With 10,000 in the Safe and F = 1,000, only 9,000 is
+        //    spendable; 9,500 is within Ms and within the remaining ceiling, so the
+        //    floor is the only thing that can refuse it.
+        _fundSafe(10_000e6);
+        HeldController.Envelope memory floorBreak = _envelope(keccak256("op-floor"), 1, 9_500e6, 1, runnerB);
+        bytes memory sigFloor = _sign(floorBreak, PK_RUNNER_B);
+        MarketParams memory mpFloor = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert(HeldController.FloorViolated.selector);
+        controller.executeSupply(floorBreak, mpFloor, 9_500e6, sigFloor);
+    }
+
+    /// @dev THE activation-consistency case, with the exact numbers from the review:
+    ///      after Held has verified 35,000 of consumption, an 80,000 ceiling is only
+    ///      consistent with 45,000 remaining. A stale 50,000 must be refused.
+    function test_ActivationRefusesStaleAllowanceAndAcceptsConsistentOne() public {
+        _activate(1, runnerB);
+        _supply(keccak256("op-35a"), 20_000e6, 1, PK_RUNNER_B, runnerB);
+        _supply(keccak256("op-35b"), 15_000e6, 1, PK_RUNNER_B, runnerB);
+        assertEq(controller.usedSupply(), 35_000e6, "Held verified 35,000 of its OWN consumption");
+
+        vm.prank(safe);
+        controller.fence();
+
+        HeldController.Policy memory p = _policy();
+        p.Ls = 80_000e6;
+
+        // The naive value: 80,000 - 30,000, i.e. computed from a stale Used figure.
+        vm.prank(safe);
+        _setAllowance(50_000e6, 80_000e6);
+        HeldController.ExpectedState memory e2 = _expected();
+        vm.prank(safe);
+        vm.expectRevert(
+            abi.encodeWithSelector(HeldController.AllowanceDesynchronised.selector, 50_000e6, 45_000e6)
+        );
+        controller.activate(2, 2, runnerB, EXECUTOR, p, e2);
+
+        // The consistent value.
+        vm.prank(safe);
+        _setAllowance(45_000e6, 80_000e6);
+        HeldController.ExpectedState memory e3 = _expected();
+        vm.prank(safe);
+        controller.activate(2, 2, runnerB, EXECUTOR, p, e3);
+        assertTrue(controller.active());
+        assertEq(controller.remainingSupply(), 45_000e6, "80,000 ceiling minus 35,000 consumed");
+    }
+
+    function test_CeilingBelowConsumptionIsRejected() public {
+        _activate(1, runnerB);
+        _supply(keccak256("op-c1"), 20_000e6, 1, PK_RUNNER_B, runnerB);
+        vm.prank(safe);
+        controller.fence();
+
+        HeldController.Policy memory p = _policy();
+        p.Ls = 10_000e6; // below the 20,000 already consumed
+        HeldController.ExpectedState memory e1 = _expected();
+        vm.prank(safe);
+        vm.expectRevert(HeldController.CeilingBelowConsumption.selector);
+        controller.activate(2, 2, runnerB, EXECUTOR, p, e1);
+    }
+
+    function test_StaleExpectedStateIsRejected() public {
+        _activate(1, runnerB);
+        HeldController.ExpectedState memory snapshot = _expected(); // taken BEFORE the supply
+        _supply(keccak256("op-stale"), 5_000e6, 1, PK_RUNNER_B, runnerB);
+
+        vm.prank(safe);
+        controller.fence();
+        vm.prank(safe);
+        vm.expectRevert(HeldController.StaleActivation.selector);
+        controller.activate(2, 2, runnerB, EXECUTOR, _policy(), snapshot);
+    }
+
+    function test_OnlyOwnerMayActivateOrFence() public {
+        HeldController.Policy memory p0 = _policy();
+        HeldController.ExpectedState memory e0 = _expected();
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(HeldController.NotOwner.selector);
+        controller.activate(1, 1, runnerB, EXECUTOR, p0, e0);
+
+        _activate(1, runnerB);
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(HeldController.NotOwner.selector);
+        controller.fence();
+    }
+
+    /// @dev PRECISE FAILURE STAGE: Roles refuses PERMISSION for the Morpho call, because
+    ///      the quota is set below the requested amount. Morpho itself is never entered,
+    ///      so this is NOT evidence that the economic action executed and then failed.
+    ///      The cleanup-failure branch -- approval succeeds, the economic action runs,
+    ///      THEN cleanup fails -- is covered separately in
+    ///      test/contracts/adversarial/HeldControllerAdversarial.t.sol.
+    function test_RolesRefusalBeforeMorphoRollsBackEverything() public {
+        _activate(1, runnerB);
+
+        vm.prank(safe);
+        _setAllowance(1_000e6, LS); // quota now smaller than the action
+
+        uint256 safeBefore = IERC20(USDC).balanceOf(safe);
+        (uint256 shares0,,) = IMorpho(MORPHO).position(marketId, safe);
+
+        HeldController.Envelope memory env = _envelope(keccak256("op-rollback"), 1, 5_000e6, 1, runnerB);
+        bytes memory sig_ = _sign(env, PK_RUNNER_B);
+        MarketParams memory mp_ = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert();
+        controller.executeSupply(env, mp_, 5_000e6, sig_);
+
+        assertEq(IERC20(USDC).balanceOf(safe), safeBefore, "no token moved");
+        (uint256 shares1,,) = IMorpho(MORPHO).position(marketId, safe);
+        assertEq(shares1, shares0, "no shares minted");
+        assertEq(controller.usedSupply(), 0, "counter not advanced");
+        assertEq(controller.normalCount(), 0, "count not advanced");
+        assertFalse(controller.isConsumed(keccak256("op-rollback")), "operation id NOT consumed");
+        assertEq(shares1, shares0, "Morpho was never entered: position identical");
+        assertEq(IERC20(USDC).allowance(safe, MORPHO), 0, "no residual approval");
+    }
+
+    function test_WithdrawReturnsToSafeAndDecreasesShares() public {
+        _activate(1, runnerB);
+        _supply(keccak256("op-w0"), 10_000e6, 1, PK_RUNNER_B, runnerB);
+
+        uint256 safeBefore = IERC20(USDC).balanceOf(safe);
+        (uint256 shares0,,) = IMorpho(MORPHO).position(marketId, safe);
+
+        HeldController.Envelope memory env = _envelope(keccak256("op-w1"), 2, 2_000e6, 1, runnerB);
+        bytes memory sig_ = _sign(env, PK_RUNNER_B);
+        MarketParams memory mp_ = _mp();
+        vm.prank(EXECUTOR);
+        controller.executeWithdraw(env, mp_, 2_000e6, sig_);
+
+        assertEq(IERC20(USDC).balanceOf(safe), safeBefore + 2_000e6, "exact safe receipt");
+        (uint256 shares1,,) = IMorpho(MORPHO).position(marketId, safe);
+        assertLt(shares1, shares0, "supply shares decreased");
+        assertEq(controller.usedNormalWithdraw(), 2_000e6);
+        assertEq(controller.usedSupply(), 10_000e6, "withdrawal never refills supply capacity");
+    }
+
+    function test_WrongEpochIsRejected() public {
+        _activate(1, runnerB);
+        HeldController.Envelope memory env = _envelope(keccak256("op-epoch"), 1, 5_000e6, 99, runnerB);
+        bytes memory sig_ = _sign(env, PK_RUNNER_B);
+        MarketParams memory mp_ = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert(abi.encodeWithSelector(HeldController.WrongEpoch.selector, uint64(99), uint64(1)));
+        controller.executeSupply(env, mp_, 5_000e6, sig_);
+    }
+
+    /// @dev V4 §3 requires a reviewed library rather than hand-written ecrecover.
+    ///      OpenZeppelin's ECDSA rejects the high-s counterpart of a valid signature, so
+    ///      a malleated signature cannot be replayed as a second distinct authorization.
+    function test_MalleableSignatureIsRejected() public {
+        _activate(1, runnerB);
+        HeldController.Envelope memory env = _envelope(keccak256("op-malleable"), 1, 5_000e6, 1, runnerB);
+        (uint8 v, bytes32 r, bytes32 sSig) = vm.sign(PK_RUNNER_B, controller.signingHash(env));
+
+        // s' = n - s, v flipped: the classic malleable twin of the same signature.
+        uint256 n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
+        bytes32 sMalleated = bytes32(n - uint256(sSig));
+        uint8 vFlipped = v == 27 ? 28 : 27;
+        bytes memory bad = abi.encodePacked(r, sMalleated, vFlipped);
+        MarketParams memory mp_ = _mp();
+
+        vm.prank(EXECUTOR);
+        vm.expectRevert(); // ECDSA rejects high-s before the controller ever compares signers
+        controller.executeSupply(env, mp_, 5_000e6, bad);
+
+        // The honest counterpart: the ORIGINAL signature still works.
+        bytes memory good = abi.encodePacked(r, sSig, v);
+        vm.prank(EXECUTOR);
+        controller.executeSupply(env, mp_, 5_000e6, good);
+        assertEq(controller.usedSupply(), 5_000e6);
+    }
+
+    // ------------------------------------------- cooldowns and lane separation --
+
+    /// @dev V4 §5: SUPPLY and NORMAL WITHDRAW share the normal count and timestamp;
+    ///      restoration has its own. The worked case: the floor is 1,000, cash has
+    ///      fallen to 200, and NORMAL capacity is exhausted -- a restoration withdrawal
+    ///      of up to the 800 shortfall must still be possible on its own budget.
+    function test_RestorationLaneIsIndependentOfExhaustedNormalCapacity() public {
+        HeldController.Policy memory p = _policyWith(1, 0, 0); // Nn = 1: one normal op only
+        _activateWith(1, runnerB, p);
+
+        _supply(keccak256("op-r-supply"), 5_000e6, 1, PK_RUNNER_B, runnerB);
+        assertEq(controller.normalCount(), 1, "normal count now exhausted");
+
+        // Cash falls below the floor.
+        _fundSafe(200e6);
+
+        // A normal withdrawal is impossible: the count is spent. Prove it by asking for
+        // an amount the restoration lane would also refuse, so only the lane matters.
+        HeldController.Envelope memory tooMuch = _envelope(keccak256("op-r-over"), 2, 5_000e6, 1, runnerB);
+        bytes memory sigOver = _sign(tooMuch, PK_RUNNER_B);
+        MarketParams memory mpOver = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert(HeldController.AmountOutOfRange.selector); // > F - B = 800
+        controller.executeWithdraw(tooMuch, mpOver, 5_000e6, sigOver);
+
+        // Restoration of exactly the 800 shortfall succeeds on its OWN count and budget.
+        (,,, uint128 restoreBefore,) = IRoles(roles).allowances(RESTORE_KEY);
+        (,,, uint128 normalWithdrawBefore,) = IRoles(roles).allowances(WITHDRAW_KEY);
+
+        HeldController.Envelope memory env = _envelope(keccak256("op-restore"), 2, 800e6, 1, runnerB);
+        bytes memory sig = _sign(env, PK_RUNNER_B);
+        MarketParams memory mp_ = _mp();
+        vm.prank(EXECUTOR);
+        controller.executeWithdraw(env, mp_, 800e6, sig);
+
+        assertEq(IERC20(USDC).balanceOf(safe), 1_000e6, "restored exactly to the floor");
+        assertEq(controller.usedRestoration(), 800e6, "restoration counter");
+        assertEq(controller.restorationCount(), 1);
+        assertEq(controller.usedNormalWithdraw(), 0, "normal withdraw budget untouched");
+        assertEq(controller.normalCount(), 1, "normal count unchanged by a restoration");
+
+        (,,, uint128 restoreAfter,) = IRoles(roles).allowances(RESTORE_KEY);
+        (,,, uint128 normalWithdrawAfter,) = IRoles(roles).allowances(WITHDRAW_KEY);
+        assertEq(restoreBefore - restoreAfter, 800e6, "restoration key charged");
+        assertEq(normalWithdrawAfter, normalWithdrawBefore, "normal key NOT charged");
+    }
+
+    function test_CooldownBlocksThenAllows() public {
+        HeldController.Policy memory p = _policyWith(10, 3600, 0); // dn = 1 hour
+        _activateWith(1, runnerB, p);
+
+        _supply(keccak256("op-cd1"), 5_000e6, 1, PK_RUNNER_B, runnerB);
+        uint64 stamped = controller.lastNormalAt();
+        assertEq(stamped, uint64(block.timestamp));
+
+        // One second before the cooldown expires.
+        vm.warp(block.timestamp + 3599);
+        HeldController.Envelope memory early = _envelope(keccak256("op-cd2"), 1, 5_000e6, 1, runnerB);
+        bytes memory sigE = _sign(early, PK_RUNNER_B);
+        MarketParams memory mpE = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert(HeldController.CooldownActive.selector);
+        controller.executeSupply(early, mpE, 5_000e6, sigE);
+
+        // A refused operation must NOT advance the successful-operation timestamp.
+        assertEq(controller.lastNormalAt(), stamped, "failed op advanced the timestamp");
+        assertEq(controller.usedSupply(), 5_000e6, "failed op advanced consumption");
+
+        // Exactly at the boundary it is permitted.
+        vm.warp(block.timestamp + 1);
+        _supply(keccak256("op-cd3"), 5_000e6, 1, PK_RUNNER_B, runnerB);
+        assertEq(controller.usedSupply(), 10_000e6);
+        assertGt(controller.lastNormalAt(), stamped);
+    }
+
+    function test_TimestampsAndConsumptionSurviveRunnerAndPolicyChange() public {
+        HeldController.Policy memory p = _policyWith(10, 3600, 0);
+        _activateWith(1, runnerA, p);
+        _supply(keccak256("op-ts1"), 5_000e6, 1, PK_RUNNER_A, runnerA);
+
+        uint64 stamped = controller.lastNormalAt();
+        uint128 used = controller.usedSupply();
+
+        vm.prank(safe);
+        controller.fence();
+        (,,, uint128 remaining,) = IRoles(roles).allowances(allowKey);
+        vm.prank(safe);
+        _setAllowance(remaining, LS);
+        HeldController.Policy memory p2 = _policyWith(10, 7200, 0); // new cooldown, new epoch
+        _activateWith(2, runnerB, p2);
+
+        assertEq(controller.lastNormalAt(), stamped, "timestamp preserved across handover");
+        assertEq(controller.usedSupply(), used, "consumption preserved across handover");
+        assertEq(controller.restorationCount(), 0);
+    }
+
+    // ------------------------------------------- atomic owner activation batch --
+
+    /// @dev The owner updates the Roles allowance AND activates in ONE Safe transaction,
+    ///      via MultiSendCallOnly delegatecall with two genuine owner signatures. If the
+    ///      activation guard rejects, the allowance update in the same batch must roll
+    ///      back too -- otherwise a failed activation would leave Roles rewritten.
+    function test_OwnerBatchActivationIsAtomicAndRollsBackAllowance() public {
+        _activate(1, runnerB);
+        _supply(keccak256("op-batch"), 20_000e6, 1, PK_RUNNER_B, runnerB);
+        vm.prank(safe);
+        controller.fence();
+
+        (,,, uint128 before,) = IRoles(roles).allowances(allowKey);
+        assertEq(before, 30_000e6, "50,000 ceiling less 20,000 consumed");
+
+        HeldController.Policy memory p = _policy();
+        p.Ls = 80_000e6;
+        HeldController.ExpectedState memory exp = _expected();
+
+        // STALE: the expected state claims no consumption. The batch must revert whole.
+        HeldController.ExpectedState memory stale;
+        bytes memory badBatch = _batch(
+            abi.encodeWithSignature(
+                "setAllowance(bytes32,uint128,uint128,uint128,uint64,uint64)", allowKey, uint128(60_000e6), uint128(80_000e6), uint128(0), uint64(0), uint64(0)
+            ),
+            abi.encodeCall(HeldController.activate, (2, 2, runnerB, EXECUTOR, p, stale))
+        );
+        (bool okBad,) = _safeExecBatch(badBatch);
+        assertFalse(okBad, "stale activation batch must fail");
+        (,,, uint128 afterBad,) = IRoles(roles).allowances(allowKey);
+        assertEq(afterBad, before, "the allowance update rolled back with the batch");
+        assertFalse(controller.active(), "controller stays paused");
+
+        // CONSISTENT: 80,000 ceiling less 20,000 consumed = 60,000.
+        bytes memory goodBatch = _batch(
+            abi.encodeWithSignature(
+                "setAllowance(bytes32,uint128,uint128,uint128,uint64,uint64)", allowKey, uint128(60_000e6), uint128(80_000e6), uint128(0), uint64(0), uint64(0)
+            ),
+            abi.encodeCall(HeldController.activate, (2, 2, runnerB, EXECUTOR, p, exp))
+        );
+        (bool okGood,) = _safeExecBatch(goodBatch);
+        assertTrue(okGood, "consistent activation batch succeeds");
+        assertTrue(controller.active());
+        assertEq(controller.remainingSupply(), 60_000e6);
+    }
+
+    function test_ForeignMarketIsRejected() public {
+        _activate(1, runnerB);
+        MarketParams memory other = _mp();
+        other.lltv = 770000000000000000; // a different, real-shaped market
+        uint256 amount = 5_000e6;
+
+        HeldController.Envelope memory env = _envelope(keccak256("op-market"), 1, amount, 1, runnerB);
+        env.payloadHash = controller.actionHash(1, keccak256(abi.encode(other)), USDC, amount, safe);
+        bytes memory sig_ = _sign(env, PK_RUNNER_B);
+        MarketParams memory mp_ = other;
+        vm.prank(EXECUTOR);
+        vm.expectRevert(HeldController.WrongScope.selector);
+        controller.executeSupply(env, mp_, amount, sig_);
+    }
+}

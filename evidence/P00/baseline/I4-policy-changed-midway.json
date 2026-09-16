@@ -1,0 +1,18 @@
+{
+  "id": "I4-policy-changed-midway",
+  "condition": "Policy changed between preparation and activation.",
+  "native_method": "Sign the batch at Safe nonce N, let an independent owner action consume nonce N, then submit the prepared batch.",
+  "ceremonies": 3, "individual_signatures": 6, "submitted_transactions": 4, "manual_steps": 11,
+  "prepared_at_nonce": "8", "intervening_change_status": "0x1",
+  "stale_submission_status": "REVERT", "remaining_after_stale_attempt": "15000000000",
+  "re_prepared": 1, "remaining_final": "65000000000", "a_member_final": "false",
+  "finding": "The Safe nonce already binds a preparation to the state it was prepared against. A stale activation cannot execute — it fails signature recovery outright. This is a genuine native safety property and is credited as such.",
+  "outcome": "PASS — stale activation refused by the Safe nonce; re-preparation required",
+  "recovery_effort": 1
+,
+  "experiment_result": "PASS",
+  "workflow_outcome": "ACHIEVED - the Safe nonce refused the stale activation outright and re-preparation succeeded",
+  "evidence_completeness": "COMPLETE within the measured contract scope",
+  "evidence_class": "local-fork contract behaviour against real Base-mainnet singletons (Safe 1.4.1, Zodiac Roles v2.1, MultiSendCallOnly 1.4.1, Morpho Blue, native USDC), driven by anvil/cast",
+  "unmeasured": "Almanak reconfiguration, native recovery machinery and native result consumption are NOT exercised by this case; the authenticated KeeperHub caller/payer boundary is blocked by L10"
+}

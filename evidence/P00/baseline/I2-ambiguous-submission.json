@@ -1,0 +1,23 @@
+{
+  "id": "I2-ambiguous-submission",
+  "role": "DIAGNOSTIC CONTROL - the naive procedure. Superseded for the representative native comparison by I2-competent-control.json; retained to show the cost of the omission, never counted in native totals.",
+  "condition": "A prior submission broadcast but unconfirmed at fence time.",
+  "native_method": "anvil automine disabled so the runner's supply and the owner's fence contend in one block; order observed from receipt transactionIndex, then reconciled against the allowance actually consumed.",
+  "ceremonies": 2, "individual_signatures": 4, "submitted_transactions": 3, "manual_steps": 10,
+  "runner_tx": "0x4a6242c9018686029fdbc549289b83e77b76d06724be19f2feee15f787036cb2", "owner_tx": "0xe8c271c831e3eba97f1a89fc65181e05714502a957b104be53632d3253b9eb8a",
+  "runner_index_status": "0 0x1", "owner_index_status": "1 0x1",
+  "observed_order": "supply-landed-before-fence",
+  "ordering_forced_by": "gas price — runner 5 gwei vs owner 1 gwei, so the in-flight supply is mined first. Unforced runs flip between orderings; the hazardous one is selected deliberately and is the condition this case declares.",
+  "remaining_written_by_batch": "50000000000",
+  "true_consumed": "35000000000", "correct_remaining": "45000000000", "remaining_final": "45000000000",
+  "supply_shares_after": "31454916584255197",
+  "finding": "setAllowance writes an absolute remaining value. A supply confirming in the same block as the fence is silently overwritten, so consumption can be erased unless the owner re-reads after finality and reconciles.",
+  "outcome": "PASS — resolved, but only by re-reading after the block and issuing a correcting ceremony",
+  "recovery_effort": 1
+,
+  "experiment_result": "PASS",
+  "workflow_outcome": "NOT ACHIEVED by this naive single-batch procedure - 5,000 of real consumption was silently regranted and only a second corrective ceremony repaired it. The competent fence-then-reconcile order DOES achieve it: see I2-competent-control.json. This case is retained as the naive control.",
+  "evidence_completeness": "COMPLETE within the measured contract scope",
+  "evidence_class": "local-fork contract behaviour against real Base-mainnet singletons (Safe 1.4.1, Zodiac Roles v2.1, MultiSendCallOnly 1.4.1, Morpho Blue, native USDC), driven by anvil/cast",
+  "unmeasured": "Almanak reconfiguration, native recovery machinery and native result consumption are NOT exercised by this case; the authenticated KeeperHub caller/payer boundary is blocked by L10"
+}

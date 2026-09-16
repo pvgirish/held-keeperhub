@@ -1,0 +1,29 @@
+# Build output and caches — regenerable, never source of truth
+contracts/out/
+cache/
+out/
+broadcast/
+**/__pycache__/
+*.pyc
+
+# Local runtime state. The P01 journal writes SQLite files to temp dirs; if one
+# ever lands here it is local state, not evidence.
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Real credentials and private endpoints. NOTE: fixtures/fork.env is deliberately
+# NOT matched here — it contains only the public Base RPC, the pinned block and
+# public contract addresses, and is required to reproduce the fork.
+.env
+.env.*
+*.key
+*.pem
+secrets/
+
+# Bulk handoff archives live outside this tree (../outputs) and are not source.
+*.tar.gz
+*.zip
+
+# Dependencies are tracked as pinned git submodules (see .gitmodules), so lib/ is
+# deliberately NOT ignored — ignoring it would drop the pinned revisions.

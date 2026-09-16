@@ -1,0 +1,36 @@
+{
+  "phase": "P01",
+  "title": "Versioned types, operation identity, durable journal/outbox, native result/ack contract",
+  "implementation_status": "locally verified",
+  "independent_review_status": "pending",
+  "accepted": false,
+  "accepted_note": "Claude authored and ran this. Self-testing is not independent acceptance; accepted stays false until a real reviewer inspects it.",
+  "gate": {
+    "command": "make check-phase-01",
+    "result": "all 31 P01 contract tests held",
+    "tests": 31
+  },
+  "evidence_kind": {
+    "synthetic_local_contracts": "units, canonical encoding, journal, results (pure, no network)",
+    "real_offline_sdk": "EIP-712 hashing cross-checked against eth_account; journal states reconciled against the real almanak reconciliation predicates via probes/p00_native_workflow_probe.py",
+    "local_fork": "not used by P01",
+    "authenticated_hosted": "NONE - blocked under L10",
+    "public_chain": "NONE"
+  },
+  "requirements": {
+    "1_versioned_schemas_and_vectors": "docs/contracts/vectors/canonical-vectors.json",
+    "2_eip712_envelope_epoch_runner_bound": "identity.py; operation id excludes epoch+runner, envelope binds both",
+    "3_durable_journal_outbox": "journal.py; outbox written before network I/O; same-id/different-payload refused",
+    "4_crash_safe_result_handling": "results.py; consumer state update + ack in ONE transaction",
+    "5_fresh_id_relabelling_out_of_scope": "documented explicitly in docs/contracts/identity.md",
+    "6_controller_abi_as_design_interface": "docs/contracts/controller-interface.md (NOT deployed)",
+    "7_recovery_after_db_loss": "assert_recoverable fails closed; tombstones outlive purged rows"
+  },
+  "limits": [
+    "No contract is deployed. controller-interface.md is a design interface only.",
+    "Exactly-once is claimed only AT THE CONSUMER, never from a local delivered flag.",
+    "No semantic dedup against a runner minting fresh ids for equivalent work.",
+    "The hosted result-delivery half is unmeasured under L10."
+  ],
+  "next_unblocked_phase": "P02 - typed controller, Roles enforcement, atomic approval/action/cleanup on the pinned fork"
+}

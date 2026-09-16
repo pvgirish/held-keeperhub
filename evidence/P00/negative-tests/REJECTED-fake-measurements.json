@@ -1,0 +1,13 @@
+{"ceremonies":1,"individual_signatures":2,"submitted_transactions":1,"manual_steps":14,
+ "stores_touched":6,"residual_authority":"none","environment":"anvil","pinned_revisions":{"sdk":"6e83e00"},
+ "protocol_frozen_before_run":true,
+ "raw_evidence_paths":["evidence/P00/does-not-exist.log"],
+ "interruptions":[{"id":"i1","outcome":"ok","recovery_effort":"low","evidence_path":"nope.log"},
+  {"id":"i1","outcome":"ok","recovery_effort":"low","evidence_path":"nope.log"},
+  {"id":"i1","outcome":"ok","recovery_effort":"low","evidence_path":"nope.log"},
+  {"id":"i1","outcome":"ok","recovery_effort":"low","evidence_path":"nope.log"},
+  {"id":"i1","outcome":"ok","recovery_effort":"low","evidence_path":"nope.log"},
+  {"id":"i1","outcome":"ok","recovery_effort":"low","evidence_path":"nope.log"},
+  {"id":"i1","outcome":"ok","recovery_effort":"low","evidence_path":"nope.log"},
+  {"id":"i1","outcome":"ok","recovery_effort":"low","evidence_path":"nope.log"},
+  {"id":"i1","outcome":"ok","recovery_effort":"low","evidence_path":"nope.log"}]}

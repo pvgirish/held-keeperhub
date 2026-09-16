@@ -1,0 +1,22 @@
+{
+  "id": "I5-missing-archive-data",
+  "condition": "Archive data missing for part of the history.",
+  "native_method": "Reconstruct consumption two ways: from Morpho Supply logs filtered to the Safe, and from Roles allowance state. Then truncate the log range to simulate a missing archive and compare.",
+  "ceremonies": 1, "individual_signatures": 2, "submitted_transactions": 1, "manual_steps": 6,
+  "supply_topic0": "0xedf8870433c83823eb071d3df1caa8d008f12f6440918c20d75a3602cda30fe0",
+  "full_range_events_and_assets": "3 30000000000",
+  "truncated_range_events_and_assets": "2 20000000000",
+  "consumption_from_state_only": "30000000000",
+  "history_reconstructs_total": "yes",
+  "truncated_history_reconstructs_total": "no",
+  "remaining_final": "50000000000",
+  "finding": "Missing archive data does NOT block the change. A non-refilling Zodiac allowance carries consumption in current state — ceiling minus remaining gives 30,000 with no history access whatsoever. History is needed only to ATTRIBUTE consumption to individual operations, and that is what degrades when the archive is truncated.",
+  "outcome": "PASS — total consumption recoverable from state; per-operation attribution is what is lost",
+  "recovery_effort": 1
+,
+  "experiment_result": "PASS",
+  "workflow_outcome": "ACHIEVED - the change completed; total consumption stayed recoverable from state, only per-operation attribution degraded",
+  "evidence_completeness": "COMPLETE within the measured contract scope",
+  "evidence_class": "local-fork contract behaviour against real Base-mainnet singletons (Safe 1.4.1, Zodiac Roles v2.1, MultiSendCallOnly 1.4.1, Morpho Blue, native USDC), driven by anvil/cast",
+  "unmeasured": "Almanak reconfiguration, native recovery machinery and native result consumption are NOT exercised by this case; the authenticated KeeperHub caller/payer boundary is blocked by L10"
+}

@@ -1,0 +1,47 @@
+{
+  "note": "Cross-language conformance vectors. An independent implementation reproduces these bytes and hashes or it is not interoperable. Amounts are decimal STRINGS.",
+  "rules": [
+    "UTF-8, no BOM",
+    "object keys sorted by code point",
+    "separators ',' and ':'",
+    "integers as decimal strings, never JSON numbers",
+    "no floats anywhere",
+    "addresses lower-cased (EIP-55 case would change the hash)"
+  ],
+  "action_canonical_bytes": "{\"amount\":\"10000000000\",\"asset\":\"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913\",\"family\":\"SUPPLY\",\"market_id\":\"0x13c42741a359ac4a8aa8287d2be109dcf28344484f91185f9a79bd5a805a55ae\",\"on_behalf\":\"0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180\",\"schema\":\"held.action.v1\"}",
+  "action_payload_hash": "0xcc81c21f9b6034d1eaa27adac62ce8af75799b6cbf03533becd624e16d4ffc6e",
+  "operation_id": "0x6543a51df00b9db37b65b0527600e0b782c244cab1b4e9710dd64a6a679b88cd",
+  "operation_id_preimage_fields": [
+    "schema",
+    "scope{chain_id,controller,safe,lineage}",
+    "source_decision_id",
+    "action_index"
+  ],
+  "operation_id_excludes": [
+    "epoch",
+    "runner"
+  ],
+  "eip712": {
+    "domain": {
+      "name": "Held",
+      "version": "1",
+      "chainId": 8453,
+      "verifyingContract": "0x3875311cc0d4017a033893a9653a0725378aca1c"
+    },
+    "envelope_type": "Envelope(bytes32 operationId,bytes32 sourceIdentityHash,bytes32 payloadHash,uint8 actionFamily,address safe,bytes32 lineage,uint64 epoch,uint32 policyVersion,address runner)",
+    "envelope_typehash": "0xa05b2c8c2406b95c635982ca3a45594136f27725ff7feffc20aed649aef2be0d",
+    "domain_separator": "0x97f6ce581b85d1d1498afae63b7261ec67edda3215c8e90029d625919c5ea23b"
+  },
+  "epoch_runner_independence": {
+    "epoch1_runnerA": {
+      "operation_id": "0x6543a51df00b9db37b65b0527600e0b782c244cab1b4e9710dd64a6a679b88cd",
+      "signing_hash": "0x5483e2f8643f6cf50a57c02002df54d84614128299663a016a5205fc9f480851"
+    },
+    "epoch99_runnerB": {
+      "operation_id": "0x6543a51df00b9db37b65b0527600e0b782c244cab1b4e9710dd64a6a679b88cd",
+      "signing_hash": "0xc0119935f4f99f5e8cdb50217f57d4671327f3e46d3a44d14e49afb7db14f597"
+    },
+    "assertion": "operation_id IDENTICAL, signing_hash DIFFERENT",
+    "holds": true
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "case": "quota-isolation",
+  "why": "C8 recorded the over-quota refusal as NOT fully isolated: its top-up had failed, so balance could also have blocked the transfer. This run repairs the top-up and reads it back.",
+  "canonical_before": {
+    "quota_remaining": "20000000000",
+    "ceiling": "50000000000",
+    "safe_usdc": "20000000000",
+    "supply_shares": "26961357077213220"
+  },
+  "over_quota_attempt": {
+    "attempted_assets": "25000000000",
+    "safe_usdc_at_attempt": "100000000000",
+    "erc20_allowance_at_attempt": "25000000000",
+    "roles_quota_at_attempt": "20000000000",
+    "balance_sufficient": true,
+    "approval_sufficient": true,
+    "only_binding_constraint": "roles_quota",
+    "revert": "Error: execution reverted: ConditionViolation(17, 0x68656c642d737570706c792d6361700000000000000000000000000000000000)  Context: - server returned an error response: error code 3: execution reverted: custom error 0xd0a9bf58: held-supply-cap, data: \"0xd0a9bf58000000000000000000000000000000000000000000000000000000000000001168656c642d737570706c792d6361700000000000000000000000000000000000\" ",
+    "verdict": "REJECTED_BY_QUOTA",
+    "economic_state_moved": "no",
+    "isolated": true
+  },
+  "exact_quota_control": {
+    "assets": "20000000000",
+    "status": "0x1",
+    "quota_after": "0",
+    "run_in_snapshot": true,
+    "reverted": true
+  },
+  "canonical_after": {
+    "quota_remaining": "20000000000",
+    "ceiling": "50000000000",
+    "safe_usdc": "20000000000",
+    "supply_shares": "26961357077213220",
+    "restored_exactly": "yes"
+  }
+}

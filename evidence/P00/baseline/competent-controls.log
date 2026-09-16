@@ -1,0 +1,27 @@
+==============================================================
+I2-competent — the full native fence / reconcile / activate order
+==============================================================
+   canonical: ceiling 50000000000, remaining 20000000000
+   in-flight supply (index,status)=0 0x1     fence (index,status)=1 0x1
+   reconciled from chain: remaining=15000000000 -> used=35000000000 -> correct new remaining=45000000000
+   A fenced? false  (no further consumption can occur while preparing)
+   activation 0x1 -> ceiling 80000000000, remaining 45000000000 (want 45000000000)
+   A member=false  B member=true
+   competent native workflow outcome: PASS
+   -> evidence/P00/baseline/I2-competent-control.json
+
+==============================================================
+I6-competent — inventory, revoke in the same batch, verify behaviourally
+==============================================================
+   fixture: legacy grant present, isAuthorized=true
+   legacy withdraw BEFORE revocation: 0x1   shares 26961357077213220 -> 26960458365312964
+   inventory step detects the known grant: true
+   single batched ceremony: 0x1   isAuthorized now false
+   legacy withdraw AFTER revocation: REVERT
+   revert text: Error: execution reverted: unauthorized  Context: - server returned an error response: error code 3: execution reverted: unauthorized, data: \"0x08c379a000000000000000000000000000000000000000000000000
+   competent native workflow outcome: PASS
+   -> evidence/P00/baseline/I6-competent-control.json
+
+==============================================================
+canonical state after both controls: remaining 20000000000  ceiling 50000000000
+==============================================================

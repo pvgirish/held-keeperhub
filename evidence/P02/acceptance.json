@@ -1,0 +1,74 @@
+{
+  "phase": "P02",
+  "title": "Typed controller and native Roles enforcement on the pinned fork",
+  "implementation_status": "locally verified",
+  "independent_review_status": "pending",
+  "accepted": false,
+  "accepted_note": "Claude authored and ran this. Self-testing is not independent acceptance.",
+  "gate": {
+    "command": "make check-phase-02",
+    "stage_1_adversarial_local": "4 passed; 0 failed",
+    "stage_2_real_pinned_fork": "21 passed; 0 failed",
+    "total": 25
+  },
+  "evidence_kind": {
+    "local_fork": "REAL pinned Base-mainnet Safe 1.4.1, Zodiac Roles v2.1, Morpho Blue and native USDC on an anvil fork at block 51353212. Nothing mocked.",
+    "owner_authority": "modelled with vm.prank(safe); the real 2-of-3 ceremony is P00 evidence",
+    "authenticated_hosted": "NONE - L10",
+    "public_chain": "NONE - nothing deployed publicly",
+    "adversarial_mocks": "LABELLED hostile fixtures (MockRoles/MockMorpho/MockToken variants) used ONLY for reentrancy, false-return and cleanup-failure branches. NOT the production profile and never described as native USDC / real Roles / real Morpho behaviour."
+  },
+  "toolchain": {
+    "solc": "0.8.28",
+    "via_ir": true,
+    "openzeppelin": "v5.1.0@69c8def5f222ff96f2b5beff05dfba996368aa79",
+    "forge_std": "v1.16.2@bf647bd6046f2f7da30d0c2bf435e5c76a780c1b",
+    "foundry": "forge Version: 1.8.1"
+  },
+  "requirements": {
+    "1_paused_by_default_no_generic_executor": "HeldController: active=false at construction; two typed entries only",
+    "2_epoch_bound_eip712_plus_executor_route": "test_RetiredRunnerCannotExecuteEvenWithSameExecutor, test_OnlyConfiguredExecutorMayCall, test_MalleableSignatureIsRejected",
+    "3_consumption_counters_cooldowns_lanes": "test_SupplySucceedsAndConsumesExactly, test_ReplayOfConsumedOperationIsRejected, test_CeilingAndFloorAreEnforced",
+    "4_atomic_call_sequence_checked_nested": "test_NestedFailureRollsBackEverything; execTransactionWithRoleReturnData with success flag AND token return checked",
+    "5_roles_conditions_no_double_counting": "supply + withdraw each bound WithinAllowance to their own non-refilling key; Roles charged exactly once per economic call",
+    "6_activation_consistency_guards": "test_ActivationRefusesStaleAllowanceAndAcceptsConsistentOne, test_StaleExpectedStateIsRejected, test_CeilingBelowConsumptionIsRejected",
+    "7_effects_read_not_inferred": "exact debit/receipt, share direction, zero borrow, unchanged collateral, zero managed allowance",
+    "8_new_lineage_no_imported_history": "counters start at 0; the native fixture's 30,000 is not imported"
+  },
+  "known_gaps": [
+    "Owner authority for non-batch tests is modelled with vm.prank; the atomic activation batch DOES use a real two-signature Safe ceremony.",
+    "Nothing is deployed publicly. Local fork only.",
+    "The adversarial suite runs WITHOUT the fork: forge falls back to VM::deployCode for that oversized test contract and a call to it reverts under --fork-url. Harness interaction, not a controller defect - the same controller deploys and activates under the fork in stage 2.",
+    "No fuzz/invariant campaign over the policy arithmetic; the suite is example-based."
+  ],
+  "next_phase": "P03 - composed native->KeeperHub->controller route. Its mandatory public execution depends on L10 (unresolved); local preparation is unblocked.",
+  "completeness": "P02 required clauses now covered; independent acceptance still pending",
+  "closed_gaps": {
+    "reentrancy": "test_ReentrancyIsRefused - a token reenters executeSupply during the approval leg; the controller refuses with Reentrancy() and the fixture surfaces that through a unique error",
+    "cooldowns": "test_CooldownBlocksThenAllows - dn=3600, refused at 3599s, permitted at 3600s, and a REFUSED op does not advance lastNormalAt or consumption",
+    "timestamps_across_handover": "test_TimestampsAndConsumptionSurviveRunnerAndPolicyChange",
+    "restoration_separation": "test_RestorationLaneIsIndependentOfExhaustedNormalCapacity - the restoration lane is now its OWN Zodiac role with its OWN non-refilling allowance key, because one role permits one condition tree per (target, selector). Worked case: floor 1,000, cash 200, normal count exhausted -> an 800 restoration still succeeds, charges the restoration key only, and leaves the normal key and count untouched.",
+    "nested_false_return": "test_TokenReturningFalseIsRejected -> TokenReturnedFalse",
+    "cleanup_failure_after_economic_action": "test_CleanupFailureAfterEconomicActionRollsBackEverything - the token refuses the cleanup approval ONLY after observing supplyCount>0, so the revert identity itself proves the economic action was reached before cleanup failed; everything then rolls back",
+    "atomic_owner_batch": "test_OwnerBatchActivationIsAtomicAndRollsBackAllowance - a REAL Safe execTransaction with two owner signatures delegatecalling MultiSendCallOnly: [setAllowance, activate]. A stale expected state reverts the whole batch AND rolls back the allowance update.",
+    "failure_stage_labelled": "the quota test is renamed test_RolesRefusalBeforeMorphoRollsBackEverything and asserts the Morpho position is identical - Roles refused PERMISSION; Morpho was never entered"
+  },
+  "build_provenance": {
+    "solc": "0.8.28",
+    "via_ir": true,
+    "optimizer": true,
+    "optimizer_runs": 200,
+    "evm_version": "solc 0.8.28 default (cancun)",
+    "openzeppelin": "v5.1.0@69c8def5f222ff96f2b5beff05dfba996368aa79",
+    "forge_std": "v1.16.2@bf647bd6046f2f7da30d0c2bf435e5c76a780c1b",
+    "foundry": "forge Version: 1.8.1",
+    "reinstall": "forge install OpenZeppelin/openzeppelin-contracts@v5.1.0 && forge install foundry-rs/forge-std@v1.16.2  (lib/ is excluded from the archive)",
+    "git_state": {
+      "note": "forge install required `git init` in held/; the tree had no git metadata before P02",
+      "commits": "0",
+      "tracked_files": "3",
+      "uncommitted_or_untracked_entries": "18",
+      "honest_status": "NOTHING IS COMMITTED. Git metadata exists but the working tree is the source of truth; the archive, not git, is the snapshot."
+    }
+  }
+}

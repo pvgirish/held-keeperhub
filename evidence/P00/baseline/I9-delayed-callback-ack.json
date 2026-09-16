@@ -1,0 +1,22 @@
+{
+  "id": "I9-delayed-callback-ack",
+  "condition": "Delayed callback acknowledgement.",
+  "native_method": "On-chain half only: settle an operation, then re-read its effects repeatedly to test whether a late or duplicated acknowledgement could change economic state.",
+  "ceremonies": 1, "individual_signatures": 2, "submitted_transactions": 2, "manual_steps": 6,
+  "supply_status": "0x1",
+  "repeated_reads_remaining": ["47000000000", "47000000000", "47000000000"],
+  "repeated_reads_shares": ["29657492777978646", "29657492777978646", "29657492777978646"],
+  "onchain_reads_idempotent": "yes",
+  "blocked_step": "Actual Almanak/KeeperHub callback delivery and acknowledgement semantics — whether a delayed ack is retried, duplicated or dropped — requires an authenticated KeeperHub organisation caller/payer route. That is blocker L10 and no org API key is available. NOT simulated and NOT inferred.",
+  "what_is_established": "The on-chain half is idempotent: a settled operation re-reads identically, so a late acknowledgement cannot double-consume quota or double-count shares. The economic state does not depend on callback timing.",
+  "what_is_not_established": "Whether the native off-chain result pipeline loses, duplicates or stalls the result when the callback is delayed, and what operator work that costs.",
+  "finding": "Half of this case is genuinely unavailable at P00. Recording the on-chain invariant is honest; recording a hosted callback measurement would not be.",
+  "outcome": "PARTIAL — on-chain idempotence demonstrated; the hosted callback half is blocked by L10",
+  "recovery_effort": 0
+,
+  "experiment_result": "PARTIAL",
+  "workflow_outcome": "ACHIEVED within the measured on-chain scope - the settled operation re-reads identically, so a late acknowledgement cannot double-consume quota or double-count shares",
+  "evidence_completeness": "PARTIAL - the hosted callback/acknowledgement half is NOT measured (L10). This is an evidence-completeness gap, not a separate workflow outcome.",
+  "evidence_class": "local-fork contract behaviour against real Base-mainnet singletons (Safe 1.4.1, Zodiac Roles v2.1, MultiSendCallOnly 1.4.1, Morpho Blue, native USDC), driven by anvil/cast",
+  "unmeasured": "The hosted callback/acknowledgement half: whether a delayed ack is retried, duplicated or dropped by the real Almanak/KeeperHub result pipeline. Requires an authenticated KeeperHub organisation route (L10). On-chain idempotence is NOT a substitute for business-operation replay protection across that boundary."
+}

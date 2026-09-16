@@ -1,0 +1,106 @@
+
+==============================================================
+I1-clean — ordinary change, no interruption
+==============================================================
+   precondition OK: ceiling 50000000000, remaining 20000000000 (=30000000000 used), A is the operator, safe USDC 20000000000
+   batch status 0x1 -> ceiling 80000000000, remaining 50000000000, A member=false, B member=true
+   B can supply 1,000: 0x1
+   A attempts 1,000 after retirement: REVERT
+   -> evidence/P00/baseline/I1-clean.json  [experiment=PASS | workflow=ACHIEVED]
+   [reverted to 0x2 — canonical state intact for the next case]
+
+==============================================================
+I2-ambiguous-submission — a prior supply broadcast but unconfirmed at fence time
+==============================================================
+   precondition OK: ceiling 50000000000, remaining 20000000000 (=30000000000 used), A is the operator, safe USDC 20000000000
+   automine off — both transactions now sit in the mempool together
+   A's supply  0x4a6242c9018686029fdbc549289b83e77b76d06724be19f2feee15f787036cb2
+   owner fence 0xe8c271c831e3eba97f1a89fc65181e05714502a957b104be53632d3253b9eb8a
+   mined: A's supply (index,status)=0 0x1   owner fence (index,status)=1 0x1
+   remaining after the block: 50000000000
+   observed order: supply-landed-before-fence — true consumed = 35000000000, correct remaining = 45000000000
+   MISMATCH: the owner's batch wrote 50000000000 from a pre-fence assumption. A second ceremony is required.
+   reconciled remaining: 45000000000 (want 45000000000)  extra ceremonies: 1
+   -> evidence/P00/baseline/I2-ambiguous-submission.json  [experiment=PASS | workflow=NOT]
+   [reverted to 0x3 — canonical state intact for the next case]
+
+==============================================================
+I3-stale-used-snapshot — a stale Used snapshot at preparation time
+==============================================================
+   precondition OK: ceiling 50000000000, remaining 20000000000 (=30000000000 used), A is the operator, safe USDC 20000000000
+   operator snapshots remaining = 20000000000 and computes the new value as 80,000 - 30,000 = 50,000
+   meanwhile A legitimately supplies 5,000: 0x1   remaining now 15000000000
+   pre-submission re-read detects drift? yes (20000000000 -> 15000000000)
+   stale value would write 50000000000; corrected value is 45000000000
+   batch 0x1 -> remaining 45000000000
+   -> evidence/P00/baseline/I3-stale-used-snapshot.json  [experiment=PASS | workflow=ACHIEVED]
+   [reverted to 0x4 — canonical state intact for the next case]
+
+==============================================================
+I4-policy-changed-midway — policy changed between preparation and activation
+==============================================================
+   precondition OK: ceiling 50000000000, remaining 20000000000 (=30000000000 used), A is the operator, safe USDC 20000000000
+   prepared and signed the change batch at nonce 8
+   owner then independently tightens remaining to 15,000: 0x1 (consumes nonce 8)
+   stale preparation submitted: REVERT   remaining still 15000000000
+   re-prepared at nonce 9 against the new policy: 0x1
+   -> evidence/P00/baseline/I4-policy-changed-midway.json  [experiment=PASS | workflow=ACHIEVED]
+   [reverted to 0x5 — canonical state intact for the next case]
+
+==============================================================
+I5-missing-archive-data — archive data missing for part of the history
+==============================================================
+   precondition OK: ceiling 50000000000, remaining 20000000000 (=30000000000 used), A is the operator, safe USDC 20000000000
+   full local range: (events, assets) = 3 30000000000
+   truncated range (archive missing below 51353226): (events, assets) = 2 20000000000
+   consumption from STATE alone (ceiling - remaining): 30000000000 — needs no history at all
+   -> evidence/P00/baseline/I5-missing-archive-data.json  [experiment=PASS | workflow=ACHIEVED]
+   [reverted to 0x6 — canonical state intact for the next case]
+
+==============================================================
+I6-legacy-grant-migration — a known legacy Morpho grant — labelled migration fixture
+==============================================================
+   precondition OK: ceiling 50000000000, remaining 20000000000 (=30000000000 used), A is the operator, safe USDC 20000000000
+   legacy agent authorised on Morpho: 0x1  isAuthorized=true
+   after the A->B swap: A member=false  legacy still authorised=true
+   explicit revocation: 0x1  isAuthorized=false
+   -> evidence/P00/baseline/I6-legacy-grant-migration.json  [experiment=PASS | workflow=NOT]
+   [reverted to 0x7 — canonical state intact for the next case]
+
+==============================================================
+I7-failed-cleanup — a cleanup transaction fails
+==============================================================
+   precondition OK: ceiling 50000000000, remaining 20000000000 (=30000000000 used), A is the operator, safe USDC 20000000000
+   A first leaves a standing approval behind — this is the thing cleanup has to remove
+   residual approval before cleanup: 5000000000
+   operator fences A FIRST, then tries to run the approval cleanup through A's route
+   fence: 0x1   A member=false
+   cleanup through the retired route: REVERT   residual ERC20 approval: 5000000000
+   retry via owner authority through the Safe: 0x1   residual approval now: 0
+   -> evidence/P00/baseline/I7-failed-cleanup.json  [experiment=PASS | workflow=ACHIEVED]
+   [reverted to 0x8 — canonical state intact for the next case]
+
+==============================================================
+I8-new-key-activation — new-key activation with the old key still holding credentials
+==============================================================
+   precondition OK: ceiling 50000000000, remaining 20000000000 (=30000000000 used), A is the operator, safe USDC 20000000000
+   A still holds its key and 999994404591150875 wei of gas; supply attempt: REVERT (member=false)
+   B supply attempt: 0x1 (member=true)
+   -> evidence/P00/baseline/I8-new-key-activation.json  [experiment=PASS | workflow=ACHIEVED]
+   [reverted to 0x9 — canonical state intact for the next case]
+
+==============================================================
+I9-delayed-callback-ack — delayed callback acknowledgement
+==============================================================
+   precondition OK: ceiling 50000000000, remaining 20000000000 (=30000000000 used), A is the operator, safe USDC 20000000000
+   supply 0x1; three independent re-reads of the same settled operation:
+     remaining 47000000000 / 47000000000 / 47000000000
+     shares    29657492777978646 / 29657492777978646 / 29657492777978646
+   -> evidence/P00/baseline/I9-delayed-callback-ack.json  [experiment=PARTIAL | workflow=ACHIEVED]
+   [reverted to 0xa — canonical state intact for the next case]
+
+==============================================================
+cases run: 9   completed and reverted cleanly: 9
+final canonical check:
+   remaining 20000000000  ceiling 50000000000  A member true  B member false
+evidence in evidence/P00/baseline

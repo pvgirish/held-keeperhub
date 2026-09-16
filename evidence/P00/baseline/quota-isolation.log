@@ -1,0 +1,28 @@
+== 3c-0 canonical state as handed over by 3b ==
+   quota remaining: 20000000000   ceiling: 50000000000
+   safe USDC:       20000000000
+   supply shares:   26961357077213220
+
+== 3c-1 ISOLATED over-quota test: 25,000 attempt against a 20,000 quota ==
+   snapshot 0x0 taken; everything below is reverted afterwards
+   top-up readback: safe USDC = 100000000000   (want 100000000000)
+   approving 25000000000 to Morpho through the role
+   approve status: 0x1   ERC20 allowance readback: 25000000000
+   PRECONDITIONS: balance 100000000000 >= 25000000000, approval 25000000000 >= 25000000000, quota 20000000000 < 25000000000
+   -> the ONLY constraint that can bind is the Roles quota
+   revert: Error: execution reverted: ConditionViolation(17, 0x68656c642d737570706c792d6361700000000000000000000000000000000000)  Context: - server returned an error response: error code 3: execution reverted: custom error 0xd0a9bf58: held-supply-cap, data: "0xd0a9bf58000000000000000000000000000000000000000000000000000000000000001168656c642d737570706c792d6361700000000000000000000000000000000000" 
+   after the refusal -> quota 20000000000  safe USDC 100000000000  shares 26961357077213220
+   economic state moved? no   verdict: REJECTED_BY_QUOTA
+   reverted to 0x0
+
+== 3c-2 CONTROL: a 20,000 supply exactly at quota, in its own snapshot ==
+   status 0x1   quota after: 0   (expect 0)
+   reverted to 0x1 - the consumed quota does NOT leak into the scenarios
+
+== 3c-3 canonical state restored by construction ==
+   quota remaining: 20000000000   ceiling: 50000000000
+   safe USDC:       20000000000
+   supply shares:   26961357077213220
+   restored exactly? yes
+
+wrote evidence/P00/baseline/quota-isolation.json

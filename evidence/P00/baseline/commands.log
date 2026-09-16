@@ -1,0 +1,18 @@
+[03:20:31] CASE I1-clean begin
+[03:20:34] CASE I1-clean end, reverted 0x2
+[03:20:34] CASE I2-ambiguous-submission begin
+[03:20:35] CASE I2-ambiguous-submission end, reverted 0x3
+[03:20:35] CASE I3-stale-used-snapshot begin
+[03:20:36] CASE I3-stale-used-snapshot end, reverted 0x4
+[03:20:36] CASE I4-policy-changed-midway begin
+[03:20:38] CASE I4-policy-changed-midway end, reverted 0x5
+[03:20:38] CASE I5-missing-archive-data begin
+[03:20:39] CASE I5-missing-archive-data end, reverted 0x6
+[03:20:39] CASE I6-legacy-grant-migration begin
+[03:20:41] CASE I6-legacy-grant-migration end, reverted 0x7
+[03:20:41] CASE I7-failed-cleanup begin
+[03:20:42] CASE I7-failed-cleanup end, reverted 0x8
+[03:20:42] CASE I8-new-key-activation begin
+[03:20:44] CASE I8-new-key-activation end, reverted 0x9
+[03:20:44] CASE I9-delayed-callback-ack begin
+[03:20:47] CASE I9-delayed-callback-ack end, reverted 0xa

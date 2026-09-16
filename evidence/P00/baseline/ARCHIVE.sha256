@@ -1,0 +1,5 @@
+The archive's SHA-256 cannot live inside the archive — writing it would change the
+file it describes. The authoritative checksum is published alongside the archive at
+  outputs/held_P00_native_baseline_corrected.tar.gz.sha256
+and is quoted in the handoff message. Verify with:
+  shasum -a 256 held_P00_native_baseline_corrected.tar.gz

@@ -1,0 +1,192 @@
+{
+  "probe": "p00-native-workflow",
+  "revision": 3,
+  "revision_note": "Revision 1's 'native reconfiguration' claim is WITHDRAWN. A StrategyConfig digest delta does not establish that any native component consumed the change.",
+  "sdk_revision_expected": "6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938",
+  "sdk_module_path": "/Users/girish/src/sdk/almanak",
+  "A_native_configuration": {
+    "evidence_class": "real native config modules, source-grounded + real loader executed",
+    "ceiling_change_50k_to_80k": {
+      "native_almanak_config_steps_required": 0,
+      "why": "StrategyConfig declares NO supply/ceiling/limit/allowance field (checked all 20 fields; matches: []). The cumulative supply ceiling is Zodiac Roles state on-chain, not Almanak configuration. Raising it requires no native Almanak configuration change.",
+      "credit": "NATIVE IS CREDITED WITH A NO-OP here. Inventing an Almanak 'cumulative supply ceiling' setting to mirror the Roles allowance would manufacture native work that the real workflow does not require.",
+      "extra_policy_caveat": "StrategyConfig model_config extra='allow'. Arbitrary extra fields are accepted, so a config digest change proves nothing about consumption. This is why revision 1's digest test was withdrawn."
+    },
+    "operator_swap_A_to_B": {
+      "native_config_surface": "ALMANAK_PLATFORM_WALLETS env -> safe_signer_service_config_from_env()",
+      "consumed_at": "process boot. load_config() is documented as 'Construct the typed configuration once at the relevant boot surface... Process entrypoints / wrappers call it once after loading the relevant dotenv source, then downstream code should consume injected slices'.",
+      "live_reload_api_found_on_this_path": false,
+      "scope_note": "Absence on the inspected boot path. NOT a claim that no reload mechanism exists anywhere in the SDK or in any deployment.",
+      "consequence_for_the_baseline": "IN THE CONFIGURATION TESTED HERE, replacing the operator costs an environment/wallet-mapping change plus a process restart, because the mapping is constructed at boot. SCOPE LIMIT: this is the procedure exercised in this configuration. The inspected source establishes construction and caching behaviour; it does NOT prove that no other reload mechanism exists in any deployment, and no such universal claim is made.",
+      "real_lookup_executed": "SafeWalletMapping().get_config(safe) -> SafeWalletConfig",
+      "loader_consumed_the_change": true,
+      "effective_signing_eoa_boot_a": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "effective_signing_eoa_boot_b": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+      "effective_eoa_actually_changed": true,
+      "zodiac_roles_address_unchanged": true,
+      "what_this_asserts": "The EFFECTIVE SIGNING EOA resolved by the native lookup changed from A to B - not merely that a raw environment string differs. The Roles module address is unchanged, as expected: the operator swaps, the authority path does not.",
+      "load_config_signature": "load_config(*, gateway_overrides=None, dotenv_path=None)",
+      "load_config_not_called_here": "load_config() reads the whole environment and would pick up ambient host state; the signer slice is exercised directly instead. Recorded rather than implied."
+    }
+  },
+  "B_native_only_recovery_workflow": {
+    "evidence_class": "NATIVE ONLY - the runner's own ExecutionProgress restart record. No Held code participates.",
+    "components": [
+      "almanak.framework.runner.runner_models.ExecutionProgress",
+      "almanak.framework.runner.runner_models.StepSubmissionEvidence",
+      "almanak.framework.execution.reconciliation (classification predicates)"
+    ],
+    "documented_contract": {
+      "failed_at_step_index": "step never broadcast; must be re-executed",
+      "accounting_pending_step_index": "broadcast CONFIRMED on-chain; do NOT re-broadcast on resume",
+      "reconciliation_required_step_index": "hashes retained but no trustworthy receipt set; terminal operator-reconciliation marker; must NEVER be automatically re-executed"
+    },
+    "ambiguous_case": {
+      "scenario": "I2-style: broadcast crossed the boundary, then the gateway timed out",
+      "native_submitted_hashes": [
+        "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+      ],
+      "native_requires_reconciliation": true,
+      "native_proves_revert": false,
+      "marker_set_by_contract": "reconciliation_required_step_index=0",
+      "restart": {
+        "persisted_to": "/var/folders/n1/2q4qsp0s17n9l_s2z7n5r2dw0000gn/T/held-native-recovery-k622hblk/execution_progress.json",
+        "in_memory_objects_dropped": true,
+        "reopened_execution_id": "held-fixture-exec-1",
+        "submitted_identity_survived": true,
+        "surviving_hashes": [
+          "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+        ],
+        "reconciliation_marker_survived": true,
+        "native_error": "BROADCAST_RECONCILIATION_REQUIRED: transaction submission returned known hash(es) ['0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2']; refusing automatic replay "
+      },
+      "native_decision_on_the_reopened_record": {
+        "callable": "almanak.framework.cli.execution_recovery.assess_replay_barrier(progress, statuses)",
+        "why_this_matters": "Revision 2 stopped at 'the marker survived', which is only a persistence round trip. THIS is the native callable that consumes the reopened record and decides. The verdict below is returned by native code; Held asserts nothing about it.",
+        "releasable": false,
+        "native_reason": "at least one submitted transaction is confirmed, pending, unknown, or unobserved",
+        "step_index": 0,
+        "dispatch_path_invoked": false,
+        "evidence_label": "Native recovery-release decision evaluated against a REOPENED RECORD, using labelled fixture evidence. NOT an operating-system restart demonstration and NOT an end-to-end runner test.",
+        "control_not_attempted_case": {
+          "releasable": true,
+          "native_reason": "gateway proved submission was not attempted",
+          "reason_is_the_sdk_message_for_this_input": "The string 'gateway proved submission was not attempted' is the SDK's message for NOT_ATTEMPTED provenance in the supplied record. It does NOT mean this test obtained fresh proof from a live gateway.",
+          "why": "The same callable must be able to return YES, or a NO proves nothing. With gateway-proved NOT_ATTEMPTED evidence it releases."
+        }
+      },
+      "finding": "The native runner retains the submitted transaction identity across a restart, reopens holding a TERMINAL reconciliation marker, and the native decision callable then REFUSES release for the uncertain operation while releasing a provably-not-attempted one. Established without any Held component.",
+      "honest_scope_of_the_restart": "Serialisation, object drop and reload within one process. This is a durable state round trip plus the real native decision on the reopened record. It is NOT an operating-system process restart, and is not claimed as one."
+    },
+    "contrast_cases": {
+      "proven_revert": {
+        "native_proves_revert": true,
+        "native_requires_reconciliation": false,
+        "marker": "failed_at_step_index -> step never took effect; re-execution permitted"
+      },
+      "accounting_pending": {
+        "marker": "accounting_pending_step_index=0",
+        "value": 0,
+        "meaning": "broadcast confirmed, accounting incomplete; resume repairs state, never re-broadcasts"
+      }
+    },
+    "intent_scope_of_automatic_recovery": {
+      "gate_checked_live": false,
+      "finding": "single_chain_recovery is NOT a general automatic recovery mechanism. _original_intent() gates on isinstance(intent, SwapIntent | LPOpenIntent); a Morpho SupplyIntent is therefore INELIGIBLE for automatic recovery by design.",
+      "supply_intent_is_swap_or_lp_open": false,
+      "consequence_for_our_supply_case": "The native outcome is _operator_reconciliation(...) -> IterationStatus.EXECUTION_PENDING: uncertainty preserved, automatic rebroadcast blocked, operator recovery required.",
+      "what_is_NOT_claimed": "That native automatically completes a pending SUPPLY's accounting and callback. It does not, by design. That absence is NOT a defect and is NOT reported as one. 'Native preserves uncertainty and blocks automatic rebroadcast' is the correct and arguably desirable baseline behaviour; it is recorded as found."
+    },
+    "not_established_here": [
+      "A full live runner cycle: needs a constructed strategy and a gateway client. That is an integration/configuration dependency, NOT the KeeperHub org key.",
+      "Deterministic fault injection is used and labelled: the failed-result objects are constructed fixtures. The PREDICATES, RECORD TYPES, DECISION CALLABLE and CONTRACT are native."
+    ]
+  },
+  "B3_native_receipt_consumption": {
+    "withdrawn_claim": "Revision 2 said 'state_machine.set_receipt ... needs a gateway client -- L10'. WRONG, and withdrawn. set_receipt is a local assignment at this revision; the authenticated KeeperHub dependency is a separate concern.",
+    "callable": "almanak.framework.intents.state_machine.IntentStateMachine.set_receipt / .step",
+    "executed_locally": true,
+    "price_mode": "testing-only",
+    "first_step_needs_execution": true,
+    "state_before_receipt": "IntentState.VALIDATING_SUPPLY",
+    "receipt_ingested": true,
+    "state_after_receipt": "IntentState.COMPLETED",
+    "state_advanced": true,
+    "is_complete": true,
+    "success": true,
+    "error": "",
+    "receipt_type": "almanak.framework.execution.interfaces.TransactionReceipt (real native type)",
+    "receipt_success_property": true,
+    "receipt_is_a_labelled_fixture": true,
+    "not_from_hosted_keeperhub": true,
+    "evidence_label": "Local result CONSUMPTION for the supplied receipt. It does NOT independently verify that an economic transaction succeeded -- fork receipts, transaction identity and economic readbacks remain their own separate evidence."
+  },
+  "C_held_adapter_compatibility": {
+    "evidence_class": "HELD ADAPTER TEST -- NOT native baseline evidence. It shows Held's journal adopts the native predicates' verdicts rather than inventing its own. The native-only recovery evidence is section B, which uses no Held code.",
+    "mismatches": 0,
+    "cases": [
+      {
+        "case": "success",
+        "held_state": "CONFIRMED",
+        "agrees": true,
+        "journal_enforced": true,
+        "enforcement": "CONFIRMED terminal"
+      },
+      {
+        "case": "broadcast-then-timeout",
+        "held_state": "UNKNOWN",
+        "agrees": true,
+        "journal_enforced": true,
+        "enforcement": "UNKNOWN blocks"
+      },
+      {
+        "case": "proven-revert",
+        "held_state": "FAILED",
+        "agrees": true,
+        "journal_enforced": true,
+        "enforcement": "FAILED reauthorizes same id+payload under a newer epoch"
+      },
+      {
+        "case": "never-submitted",
+        "held_state": "FAILED",
+        "agrees": true,
+        "journal_enforced": true,
+        "enforcement": "FAILED reauthorizes same id+payload under a newer epoch"
+      },
+      {
+        "case": "contradicted-provenance",
+        "held_state": "UNKNOWN",
+        "agrees": true,
+        "journal_enforced": true,
+        "enforcement": "UNKNOWN blocks"
+      },
+      {
+        "case": "partial-receipts",
+        "held_state": "UNKNOWN",
+        "agrees": true,
+        "journal_enforced": true,
+        "enforcement": "UNKNOWN blocks"
+      }
+    ]
+  },
+  "blocked_under_L10": {
+    "requirement": "Authenticated KeeperHub organisation caller/payer preflight.",
+    "exact_missing_evidence": "An organisation-scoped KeeperHub API key permitting GET /api/chains as an authenticated caller, and a direct-execution preflight naming the payer.",
+    "blocks": [
+      "Authenticated hosted execution and the hosted half of result delivery: whether a delayed ack is retried, duplicated or dropped by the real hosted pipeline."
+    ],
+    "does_NOT_block": [
+      "state_machine.set_receipt and the resulting local state transition (section B3) -- an earlier claim that it did is WITHDRAWN.",
+      "assess_replay_barrier, the native decision on a reopened record (section B).",
+      "A full live runner cycle is gated by strategy/gateway CONSTRUCTION, which is an integration dependency, not this credential."
+    ],
+    "does_not_block": "Sections A, B and C above, all of which ran offline.",
+    "not_simulated": true
+  },
+  "limits": [
+    "Offline in-process execution of the pinned SDK. No chain, no network, no keys.",
+    "Failed-result objects are CONSTRUCTED fixtures (deterministic fault injection, labelled). The predicates, record types and documented contract are native.",
+    "Section B exercises the native restart RECORD and its contract, not a live runner cycle, which needs a gateway client.",
+    "Not independently reviewed."
+  ]
+}

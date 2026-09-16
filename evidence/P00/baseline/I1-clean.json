@@ -1,0 +1,19 @@
+{
+  "id": "I1-clean",
+  "condition": "Ordinary change, no interruption.",
+  "native_method": "One Safe MultiSendCallOnly delegatecall carrying setAllowance + assignRoles(A,false) + assignRoles(B,true).",
+  "ceremonies": 1, "individual_signatures": 2, "submitted_transactions": 1, "manual_steps": 5,
+  "steps": ["read allowance and membership","build the 3-call batch","owner 1 signs","owner 2 signs","submit and read back"],
+  "batch_status": "0x1",
+  "ceiling_after": "80000000000", "remaining_after": "50000000000",
+  "a_member_after": "false", "b_member_after": "true",
+  "b_supply_after": "0x1", "a_supply_after": "REVERT",
+  "outcome": "PASS — ceiling raised to 80,000 with the 30,000 history preserved, A retired, B operating",
+  "recovery_effort": 0
+,
+  "experiment_result": "PASS",
+  "workflow_outcome": "ACHIEVED - ceiling raised to 80,000 with the 30,000 consumption preserved, A retired, B operating",
+  "evidence_completeness": "COMPLETE within the measured contract scope",
+  "evidence_class": "local-fork contract behaviour against real Base-mainnet singletons (Safe 1.4.1, Zodiac Roles v2.1, MultiSendCallOnly 1.4.1, Morpho Blue, native USDC), driven by anvil/cast",
+  "unmeasured": "Almanak reconfiguration, native recovery machinery and native result consumption are NOT exercised by this case; the authenticated KeeperHub caller/payer boundary is blocked by L10"
+}

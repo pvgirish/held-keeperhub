@@ -1,0 +1,97 @@
+{
+  "project": "held",
+  "phase_recorded": "P00",
+  "recorded_utc": "2026-09-15T17:08:42Z",
+  "deadline_excluded": true,
+  "pinned_sources": {
+    "almanak_sdk": {
+      "repo": "https://github.com/almanak-co/sdk",
+      "rev": "6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938",
+      "local_clone": "~/src/sdk (executor scratch, NOT in the connected folder)",
+      "license_checked": false
+    },
+    "morpho_blue": {
+      "repo": "https://github.com/morpho-org/morpho-blue",
+      "rev": "8e26ca6a8dbc5089edcd67fb576248810fd2870a",
+      "cloned": false
+    },
+    "keeperhub_docs": {
+      "chains": "https://docs.keeperhub.com/api/chains",
+      "direct_execution": "https://docs.keeperhub.com/api/direct-execution",
+      "safe": "https://docs.keeperhub.com/wallet-management/safe",
+      "morpho_plugin": "https://docs.keeperhub.com/plugins/morpho",
+      "live_catalog": "https://app.keeperhub.com/api/chains"
+    },
+    "zodiac_roles": {
+      "docs": "https://docs.roles.gnosisguild.org/general/allowances",
+      "rev_pinned": false
+    },
+    "safe": {
+      "rev_pinned": false
+    }
+  },
+  "toolchain_observed": {
+    "_note": "CURRENT state. The 17:0x entries below are historical first observations, kept as history.",
+    "device_of_record_2026-09-16": {
+      "_note": "The device the P00 native baseline was actually produced on. It is NOT the device_vm or cloud_container described below, and differs from both in two ways that are recorded rather than reconciled.",
+      "base_rpc": "https://mainnet.base.org reachable; the pinned fork block 51353212 loads in under 5 seconds. The blanket 'ALL Base RPC hosts 403 at gateway' note below does not hold here.",
+      "platform": "Darwin arm64",
+      "foundry": {
+        "version": "1.8.1",
+        "commit": "982849d3140c01fd3b72905759581a132df7aa98",
+        "path": "~/.foundry/bin/anvil -> ~/.foundry/versions/foundry-rs/foundry/v1.8.1/anvil",
+        "installed": "2026-09-05, before this project began",
+        "provenance_note": "NOT A PIN VIOLATION — an earlier claim that it was is withdrawn. Foundry appears in this manifest only under `toolchain_observed`, whose _note states these are observations kept as history. `pinned_sources` holds almanak_sdk, morpho_blue, keeperhub_docs, zodiac_roles and safe, and contains no foundry entry; probes/checks/check_manifests.py enforces the SDK revision and route-evidence layers and never reads a foundry version. device_vm_current's 1.8.3 / cae51ad4 record is a truthful observation of a different machine and is preserved unchanged. Its sha256 is a Linux release artifact and must not be applied to this Darwin arm64 binary."
+      },
+      "python": {
+        "system": "3.9.6",
+        "venv312": "3.12.12 via uv (manifest records 3.12.13 for device_vm; minor drift, recorded not reconciled)"
+      },
+      "sdk": "re-cloned to ~/src/sdk at 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938, rev verified, installed editable into ~/venv312",
+      "gates": "check-phase-00 PASS with HELD_PRICE_MODE=testing-only (gate-tests 21/21, manifests, probe, baseline)"
+    },
+    "device_vm_current": {
+      "python_system": "3.10.12 (too old for the SDK)",
+      "python_used": "3.12.13 via uv at ~/venv312",
+      "node": "v22.23.2",
+      "git": "2.34.1",
+      "jq": true,
+      "foundry": {
+        "installed": true,
+        "version": "1.8.3",
+        "commit": "cae51ad458f6abb64852b7709eb784352429825d",
+        "sha256_verified": "93fc23be26c8a902ca58fe54aa6ca28c880b58af95d052674933161df7928e6d",
+        "source": "GitHub release (foundry.paradigm.xyz is 403)",
+        "smoke_test": "anvil standalone: chain id 31337, block 0"
+      },
+      "sdk_installed": "editable from ~/src/sdk @ 6e83e00edcae into ~/venv312",
+      "network": "github OK, pypi OK; app.keeperhub.com and ALL Base RPC hosts 403 at gateway"
+    },
+    "cloud_container_current": {
+      "python": "3.11.15 (also too old for the SDK)",
+      "node": "v22.22.2",
+      "git": "2.43.0",
+      "jq": true,
+      "foundry": false,
+      "network": "keeperhub + morpho docs reachable; ALL Base RPC hosts 403 at gateway"
+    },
+    "historical_first_observation_2026-09-15T17:05Z": {
+      "note": "Before any setup. Both environments had no foundry and no SDK.",
+      "device_vm": {
+        "python": "3.10.12",
+        "foundry": false
+      },
+      "cloud_container": {
+        "python": "3.11.15",
+        "foundry": false
+      }
+    }
+  },
+  "profile_decision": {
+    "supported_chain_name": "base",
+    "network_for_local_verification": "anvil (fork of Base mainnet)",
+    "network_for_public_evidence": "base mainnet, small value, UNAUTHORISED as of P00",
+    "base_sepolia": "REJECTED for the supported profile - see route-evidence.json L6"
+  },
+  "updated_utc": "2026-09-15T17:37:19Z"
+}

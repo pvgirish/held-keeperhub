@@ -1,0 +1,21 @@
+{
+  "control": "I2-competent",
+  "relates_to": "I2-ambiguous-submission",
+  "question": "Does the COMPETENT native workflow lose consumption under an ambiguous in-flight submission, or does it only the naive single-batch procedure?",
+  "procedure": "V4 §6 order, executed with native tools only: fence first as its own ceremony, let the block settle, READ the allowance actually consumed, derive the new remaining from that observation, then activate B in a second batched ceremony.",
+  "forced_ordering": "in-flight supply at 5 gwei vs fence at 1 gwei, so the supply is mined first — the same hazardous interleaving as I2, disclosed as deliberate.",
+  "in_flight_supply_index_status": "0 0x1",
+  "fence_index_status": "1 0x1",
+  "observed_remaining_after_fence": "15000000000",
+  "derived_used": "35000000000",
+  "correct_new_remaining": "45000000000",
+  "final_remaining": "45000000000",
+  "final_ceiling": "80000000000",
+  "a_member_final": "false",
+  "b_member_final": "true",
+  "ceremonies": 2, "individual_signatures": 4, "submitted_transactions": 2,
+  "experiment_result": "PASS",
+  "workflow_outcome": "PASS — the competent native workflow reaches the correct remaining capacity on the first attempt, with no wrong state ever committed",
+  "finding": "The I2 defect is a property of the NAIVE single-batch procedure, not of the native tooling. Fencing first and deriving the new ceiling from the reconciled on-chain figure closes it completely. The cost is that the change cannot be one atomic ceremony: it necessarily becomes two (fence, then activate), because the correct value is unknowable until the fence has settled. Native pays 2 ceremonies / 4 signatures / 2 transactions and is correct; the naive path pays 2 / 4 / 3 and passes through a silently wrong state first.",
+  "consequence_for_the_advantage_claim": "Held cannot claim a ceremony saving here. V4 §6 prescribes the same two-stage fence-then-activate order, so Held pays the same two ceremonies. The I2 hazard does not by itself justify a controller."
+}

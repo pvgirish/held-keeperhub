@@ -1,0 +1,19 @@
+{
+  "id": "I8-new-key-activation",
+  "condition": "New-key activation with the old key still holding credentials.",
+  "native_method": "Complete the handover, then have A — which still holds its private key and gas — attempt the same supply it was previously authorised for.",
+  "ceremonies": 1, "individual_signatures": 2, "submitted_transactions": 1, "manual_steps": 6,
+  "old_key_gas_balance_wei": "999994404591150875",
+  "old_key_membership_probe_revert": "Error: execution reverted: NoMembership  Context: - server returned an error response: error code 3: execution reverted: custom error 0xfd8e9f28, data: \"0xfd8e9f28\" ",
+  "old_key_supply_attempt": "REVERT", "new_key_supply_attempt": "0x1",
+  "a_member_final": "false", "b_member_final": "true",
+  "finding": "Retiring role membership is sufficient on-chain. A keeps its key, its gas and its ability to broadcast, but has no authorised path: the module rejects it. Residual authority is credential-level only, and the native mechanism already removes the on-chain half in the same batch as the ceiling change.",
+  "outcome": "PASS — old key fully retired on-chain while still holding its credentials",
+  "recovery_effort": 0
+,
+  "experiment_result": "PASS",
+  "workflow_outcome": "ACHIEVED - the old key is retired on-chain while still holding its credentials",
+  "evidence_completeness": "COMPLETE within the measured contract scope",
+  "evidence_class": "local-fork contract behaviour against real Base-mainnet singletons (Safe 1.4.1, Zodiac Roles v2.1, MultiSendCallOnly 1.4.1, Morpho Blue, native USDC), driven by anvil/cast",
+  "unmeasured": "Almanak reconfiguration, native recovery machinery and native result consumption are NOT exercised by this case; the authenticated KeeperHub caller/payer boundary is blocked by L10"
+}

@@ -1,0 +1,18 @@
+{
+  "id": "I3-stale-used-snapshot",
+  "condition": "A stale Used snapshot at preparation time.",
+  "native_method": "Snapshot the allowance, let a legitimate 5,000 supply confirm, then re-read immediately before signing and recompute the absolute remaining value.",
+  "ceremonies": 1, "individual_signatures": 2, "submitted_transactions": 2, "manual_steps": 7,
+  "steps": ["snapshot remaining","(runner supplies 5,000)","re-read remaining","compare and detect drift","recompute","sign x2","submit and read back"],
+  "snapshot_remaining": "20000000000", "live_remaining": "15000000000", "drift_detected": "yes",
+  "stale_value_would_write": "50000000000", "corrected_value": "45000000000", "remaining_final": "45000000000",
+  "finding": "The hazard is real but natively detectable: one extra read before signing is sufficient, because remaining capacity is authoritative on-chain state rather than a derived off-chain figure. An operator who skips that read silently regrants 5,000 of spent capacity.",
+  "outcome": "PASS — drift detected before signing; no wrong state was ever committed",
+  "recovery_effort": 1
+,
+  "experiment_result": "PASS",
+  "workflow_outcome": "ACHIEVED - drift detected by a re-read before signing, so no wrong state was ever committed",
+  "evidence_completeness": "COMPLETE within the measured contract scope",
+  "evidence_class": "local-fork contract behaviour against real Base-mainnet singletons (Safe 1.4.1, Zodiac Roles v2.1, MultiSendCallOnly 1.4.1, Morpho Blue, native USDC), driven by anvil/cast",
+  "unmeasured": "Almanak reconfiguration, native recovery machinery and native result consumption are NOT exercised by this case; the authenticated KeeperHub caller/payer boundary is blocked by L10"
+}

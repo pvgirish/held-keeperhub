@@ -1,0 +1,139 @@
+{
+  "steps": [
+    {
+      "step": "registry.base.singleton",
+      "status": "OK",
+      "detail": {
+        "morpho": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+        "bundler": "0x23055618898e202386e6c13955a58D3C68200BFB"
+      }
+    },
+    {
+      "step": "registry.base.usdc",
+      "status": "OK",
+      "detail": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    },
+    {
+      "step": "registry.base.market_count",
+      "status": "OK",
+      "detail": 2
+    },
+    {
+      "step": "registry.base.market_names",
+      "status": "OK",
+      "detail": [
+        "0x13c42741a359ac4a8aa8287d2be109dcf28344484f91185f9a79bd5a805a55ae",
+        "0xdba352d93a64b17c71104cbddc6aef85cd432322a1446b5b65163cbbc615cd0c"
+      ]
+    },
+    {
+      "step": "registry.vanity_address",
+      "status": "INFO",
+      "detail": {
+        "vanity": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+        "note": "registry warns this has ZERO code on several chains; per-chain singletons used instead"
+      }
+    },
+    {
+      "step": "registry.network_awareness",
+      "status": "REJECTED-Sepolia",
+      "detail": "MORPHO_BLUE / MORPHO_BLUE_TOKENS / MORPHO_MARKETS are keyed by chain NAME only; no Network dimension, so chain=base+network=sepolia would return MAINNET params."
+    },
+    {
+      "step": "connector.supported_chains",
+      "status": "OK",
+      "detail": [
+        "arbitrum",
+        "base",
+        "ethereum",
+        "monad",
+        "polygon",
+        "robinhood"
+      ]
+    },
+    {
+      "step": "connector.flashloan_subset",
+      "status": "OK",
+      "detail": [
+        "base",
+        "ethereum"
+      ]
+    },
+    {
+      "step": "intent.supply.construct",
+      "status": "OK",
+      "detail": {
+        "protocol": "morpho_blue",
+        "chain": "base",
+        "token": "USDC",
+        "amount": "100",
+        "market_id": "0x13c42741a359ac4a8aa8287d2be109dcf28344484f91185f9a79bd5a805a55ae"
+      }
+    },
+    {
+      "step": "intent.validator.market_id_required",
+      "status": "OK (correctly rejected)",
+      "detail": "ValidationError"
+    },
+    {
+      "step": "compiler.protocols",
+      "status": "OK",
+      "detail": [
+        "morpho",
+        "morpho_blue"
+      ]
+    },
+    {
+      "step": "compiler.chains",
+      "status": "OK",
+      "detail": [
+        "arbitrum",
+        "base",
+        "ethereum",
+        "monad",
+        "polygon",
+        "robinhood"
+      ]
+    },
+    {
+      "step": "compile.stage.construct",
+      "status": "OK",
+      "detail": {
+        "entry": "IntentCompiler(...)",
+        "rpc_url_present": false,
+        "price_mode": "testing-only",
+        "note": "uses the SDK's own _ConnectorCompilerServices; Held implements no services layer"
+      }
+    },
+    {
+      "step": "compile.supply.calldata",
+      "status": "OK",
+      "detail": {
+        "safe": "0x1234567890123456789012345678901234567890",
+        "calls": [
+          {
+            "to": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+            "data": "0x095ea7b3000000000000000000000000bbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb00000000000000000000000000000000000000000000000000000000068e7780",
+            "value": 0
+          },
+          {
+            "to": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+            "data": "0xa99aad89000000000000000000000000833589fcd6edb6e08f4c7c32d4f71b54bda02913000000000000000000000000c1cba3fcea344f92d9239c08c0568f6f2f0ee452000000000000000000000000d7a1aba119a236fea5bbc5cac6836465cbe9289a00000000000000000000000046415998764c29ab2a25cbea6254146d50d226870000000000000000000000000000000000000000000000000bef55718ad600000000000000000000000000000000000000000000000000000000000005f5e1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000123456789012345678901234567890123456789000000000000000000000000000000000000000000000000000000000000001200000000000000000000000000000000000000000000000000000000000000000",
+            "value": 0
+          }
+        ],
+        "compiler_status": "SUCCESS",
+        "use_as_collateral": false,
+        "stage": {
+          "constructed": true,
+          "compile_entered": true,
+          "returned": true
+        },
+        "rpc_url_present": false,
+        "errors": []
+      }
+    }
+  ],
+  "pinned_rev": "6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938",
+  "sdk_path": "/sessions/rcw-01j4omcfhtyetbinzuiajrwg/src/sdk"
+}

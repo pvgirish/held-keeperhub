@@ -1,0 +1,21 @@
+{
+  "id": "I7-failed-cleanup",
+  "condition": "A cleanup transaction fails.",
+  "native_method": "Fence A first, then attempt the ERC20 approval cleanup through A's now-revoked role route; observe the failure and recover through owner authority.",
+  "ceremonies": 2, "individual_signatures": 4, "submitted_transactions": 3, "manual_steps": 8,
+  "fence_status": "0x1",
+  "residual_approval_before_cleanup": "5000000000",
+  "cleanup_through_retired_route": "REVERT",
+  "residual_approval_after_failed_cleanup": "5000000000",
+  "retry_via_owner_status": "0x1",
+  "residual_approval_final": "0",
+  "finding": "Cleanup ordering is load-bearing. Fencing the operator before running its cleanup strands the residual approval: the route that was supposed to zero it has just been revoked. The failure is loud (the transaction reverts) so it cannot pass unnoticed, but recovery costs a full owner ceremony. Cleanup must precede the fence, or be batched into it.",
+  "outcome": "PASS — cleanup failed loudly and was recovered through owner authority",
+  "recovery_effort": 1
+,
+  "experiment_result": "PASS",
+  "workflow_outcome": "ACHIEVED AFTER RECOVERY - the mis-ordered cleanup failed loudly and owner authority completed it at the cost of one extra ceremony",
+  "evidence_completeness": "COMPLETE within the measured contract scope",
+  "evidence_class": "local-fork contract behaviour against real Base-mainnet singletons (Safe 1.4.1, Zodiac Roles v2.1, MultiSendCallOnly 1.4.1, Morpho Blue, native USDC), driven by anvil/cast",
+  "unmeasured": "Almanak reconfiguration, native recovery machinery and native result consumption are NOT exercised by this case; the authenticated KeeperHub caller/payer boundary is blocked by L10"
+}

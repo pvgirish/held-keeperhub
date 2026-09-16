@@ -1,0 +1,23 @@
+ok    POSITIVE: correct bytes, correct market, exact raw units, correct Safe
+ok    NEG data is 0xdeadbeef with plausible decoded alongside
+ok    NEG amount tampered in bytes, decoded field left correct
+ok    NEG declared Safe omitted entirely
+ok    NEG onBehalf is an arbitrary beneficiary
+ok    NEG 100 raw units instead of 100000000
+ok    NEG 1 raw unit instead of 100000000
+ok    NEG compile status FAIL
+ok    NEG supplyCollateral selector instead of supply
+ok    NEG wrong market params in bytes
+ok    NEG shares set instead of assets
+ok    POSITIVE: real two-call bundle (bounded approve + supply)
+ok    NEG valid supply followed by an UNRELATED transfer
+ok    NEG duplicate supply calls in one bundle
+ok    NEG call carries ETH value
+ok    NEG UNLIMITED approval
+ok    NEG approval to the wrong spender
+ok    NEG approval below the supplied amount
+ok    NEG trailing bytes appended to supply calldata
+ok    NEG supply carries callback data
+ok    NEG no call targets Morpho
+---
+all 21 gate tests held
