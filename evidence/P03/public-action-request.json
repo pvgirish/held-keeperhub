@@ -1,0 +1,106 @@
+{
+ "schema": "held.bounded-public-action-request.v1",
+ "supersedes": "evidence/P03/execution-manifest.json, which is preserved as a TEMPLATE. The review found it listed deployment before its Safe/Role constructor dependencies, left caller/payer, addresses, amounts and cost ceilings unresolved, inherited the client's idempotency mismatch, and omitted the approval-cleanup call from its inner-call list.",
+ "recorded_utc": "2026-09-16",
+ "status": "NOT EXECUTED. Nothing here is deployed, funded, signed for a public chain or submitted. This document requests authorization; it does not carry it.",
+
+ "what_is_being_asked_for": {
+  "summary": "Two separable authorizations. They can be granted independently and in this order; the first is strictly cheaper and settles the open unknown that blocks everything else.",
+  "request_A_credential_only": {
+   "title": "A KeeperHub organisation API key with mcp:read scope, for a SIMULATE-ONLY call.",
+   "spends": "Nothing. No gas, no funds, no broadcast.",
+   "deploys": "Nothing.",
+   "what_it_settles": [
+    "L10 itself: whether the authenticated organisation caller/payer accepts Held's outer call at all. This has never been tested and no local fixture can close it.",
+    "Whether KeeperHub's server-side encoder reproduces Held's intended calldata from functionName/functionArgs. Held verifies its own encoding locally and byte-for-byte, but the server encodes, and that half is unverified.",
+    "The authenticated response schema (executionId / transactionHash field names), currently read defensively."
+   ],
+   "how_the_secret_should_be_supplied": "NOT in chat. Place it in the environment as HELD_KEEPERHUB_API_KEY; the client resolves it by reference and never persists, logs or reprs it. A credential reference that is itself secret-shaped is refused.",
+   "exact_call": {
+    "method": "POST",
+    "url": "https://app.keeperhub.com/api/execute/contract-call",
+    "headers": "Authorization: Bearer <from $HELD_KEEPERHUB_API_KEY>; Idempotency-Key: <keccak(domain||operationId||attemptId)>; Content-Type: application/json",
+    "body_simulate": true,
+    "target": "Held would simulate against a controller address that does not yet exist publicly, so this request is only meaningful once request B's step 1 has happened OR against a deliberately-invalid target purely to observe authentication and scope behaviour.",
+    "caveat": "A successful simulation is NOT proof of the actual broadcast caller/payer for every routing mode. It settles authentication, scope and encoding; it does not settle who pays or which sender broadcasts."
+   },
+   "recommended": "Grant this first. It is free, reversible, and it is the only thing that converts L10 from BLOCKED-UNKNOWN into a fact."
+  },
+
+  "request_B_public_deployment_and_execution": {
+   "title": "Deploy a controller to Base mainnet, fund a Safe, and execute one supply.",
+   "status": "NOT REQUESTED YET. Listed so the cost and ordering are visible, not because it should be granted now.",
+   "blocked_on": "Request A. Deploying and funding before knowing whether the authenticated route accepts Held's call would spend real money to discover something a free simulation answers.",
+   "also_blocked_on": "P04's bounded authority inventory, which does not exist. V4 §6 requires a complete supported authority profile at a stated finalized block before activation, and that service has not been built.",
+   "estimated_cost": "Base mainnet gas for one controller deployment, one Safe deployment, one Roles module deployment, three to four owner ceremony transactions, and one supply execution. Plus the USDC funded into the Safe, which remains customer-owned throughout and is recoverable by the Safe owners.",
+   "cost_ceiling_required_before_asking": "A finite gas ceiling and a finite funded amount must be fixed and stated here before this is requested. They are deliberately NOT guessed now."
+  }
+ },
+
+ "corrected_ordering": {
+  "note": "The template listed deployment first. The controller constructor takes the Safe, the Roles module and the role/allowance keys, so those must exist first. This is the dependency-correct order.",
+  "steps": [
+   {"n": 1, "action": "Deploy or identify the customer Safe (2-of-3), on Base mainnet.", "produces": "SAFE address", "spends": "gas"},
+   {"n": 2, "action": "Deploy the Zodiac Roles module and enable it on the Safe.", "depends_on": "SAFE", "produces": "ROLES address", "spends": "gas"},
+   {"n": 3, "action": "Choose the role keys and non-refilling allowance keys.", "depends_on": "ROLES", "produces": "normalRole, restorationRole, supplyAmount, normalWithdrawAmount, restorationAmount, normalCount, restorationCount"},
+   {"n": 4, "action": "Deploy HeldController.", "depends_on": "SAFE, ROLES, the key set, Morpho/token/marketId/lineage", "produces": "CONTROLLER address", "note": "Paused at construction; cannot execute anything until step 7.", "spends": "gas"},
+   {"n": 5, "action": "Owner ceremony: scope the role targets and conditions, bind the non-refilling allowances, assign the controller as the sole role member.", "depends_on": "CONTROLLER", "spends": "gas", "constraint": "Allowances must be non-refilling; the controller refuses a refilling allowance at activation and during operation."},
+   {"n": 6, "action": "Fund the Safe with the agreed USDC amount.", "spends": "the funded amount", "note": "Remains customer-owned. Held never takes custody."},
+   {"n": 7, "action": "Owner activation with an explicit ExpectedState and the reviewed authority inventory.", "depends_on": "steps 5 and 6", "spends": "gas", "blocked_on": "the P04 authority inventory service, which does not exist"},
+   {"n": 8, "action": "Authenticated SIMULATE preflight against the real controller.", "depends_on": "request A credential + step 4", "spends": "nothing"},
+   {"n": 9, "action": "Broadcast the one supply.", "depends_on": "step 8 succeeding and mcp:write scope", "spends": "gas; moves the supplied USDC into Morpho on the Safe's behalf"}
+  ],
+  "address_dependencies": "SAFE, ROLES and CONTROLLER are outputs of steps 1, 2 and 4 and cannot be stated in advance. They are named as dependencies rather than left blank. The controller's EIP-712 domain separator commits to its own address, so no envelope can be signed before step 4 completes."
+ },
+
+ "the_execution_itself": {
+  "route": "POST https://app.keeperhub.com/api/execute/contract-call — the generic direct-execution route. The Morpho plugin is not used (route-evidence L4).",
+  "contractAddress": "CONTROLLER (step 4 output)",
+  "chainId": 8453,
+  "functionName": "executeSupply",
+  "functionArgs": "[envelope tuple, marketParams tuple, amount, runner signature], JSON string",
+  "abi": "the executeSupply fragment, JSON string",
+  "value": "\"0\" — documented in ETHER units; the entry points are non-payable and the client refuses a non-zero value",
+  "simulate": "true for step 8, false for step 9",
+  "idempotency": {
+   "mechanism": "the Idempotency-Key HEADER, per the documented contract",
+   "value": "keccak(\"held.keeperhub.execution-key.v1\" || operationId || attemptId)",
+   "window": "24 hours; past it the server no longer dedupes, and Held refuses to resend without reading consumed[operationId] first",
+   "corrected": "The template's idempotency statement inherited the old client's body-field mismatch. That client defect is fixed and this reflects the documented header."
+  },
+  "encoding_verification": "Held re-encodes its own arguments and requires byte equality with the intended calldata before sending. Those exact bytes have been executed against the real controller on a Base-mainnet fork (see composed_local_run in acceptance.json). Whether KeeperHub's server-side encoder produces the same bytes is what request A settles.",
+  "poll": "GET /api/execute/{executionId}/status; X-Poll-Interval-Hint of 0 means terminal",
+  "amount": "TO BE FIXED before request B is made. The local composed run used the real compiler's 100.000000 USDC. The public amount must be agreed, not inherited from a fixture.",
+  "inner_calls_through_roles": [
+   "USDC.approve(Morpho, amount) — bounded approval",
+   "Morpho.supply(marketParams, amount, 0, safe, 0x) — fixed-asset, empty callback, onBehalf = the customer Safe",
+   "USDC.approve(Morpho, 0) — approval cleanup, in the SAME outer transaction. The template omitted this from its inner-call list while describing cleanup elsewhere; it is three calls, not two."
+  ],
+  "what_the_controller_verifies_before_returning": [
+   "Exact Safe debit equals the amount.",
+   "Exact share accounting: Morpho's reported (assets, shares) must equal the observed position change. No tolerance, no ratio, no direction substitute.",
+   "Borrow shares still zero; collateral unchanged.",
+   "Managed allowance zero on entry and on exit.",
+   "The native Roles amount quota and the shared normal count each charged exactly once.",
+   "consumed[operationId] = payloadHash, written in the same transaction as the economic effect."
+  ]
+ },
+
+ "rollback_and_stop_conditions": {
+  "before_step_9": "Every step is reversible by the Safe owners: the controller is paused until step 7, the role can be revoked, and funds can be withdrawn by the owners at any time.",
+  "after_step_9": "The supply is an on-chain position owned by the Safe. It is withdrawable by the Safe owners; it is not recoverable as 'undone'.",
+  "stop_if": [
+   "The authenticated preflight returns 401 or 403 — record the result and stop. That is a real L10 answer and does not justify retrying with a different route.",
+   "KeeperHub's server-side encoding differs from Held's intended calldata — stop and fix the encoder question before any broadcast.",
+   "The authority inventory reports any INCOMPLETE section — activation is blocked by V4 §6.",
+   "Any step's readback disagrees with what was intended."
+  ]
+ },
+
+ "what_this_request_does_NOT_claim": [
+  "That a successful simulation proves the broadcast caller/payer for every routing mode. It does not.",
+  "That creating or supplying an API key authorizes public deployment or spending. Request A is credential-only and spends nothing; request B is separate and is not being made yet.",
+  "That the local composed run is public evidence. It is a Base-mainnet FORK at block 51353212.",
+  "That P04's required authority inventory exists. It does not, and V4 §6 makes it a precondition for activation."
+ ]
+}

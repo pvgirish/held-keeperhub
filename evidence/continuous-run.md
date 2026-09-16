@@ -310,3 +310,43 @@ Steps 01–03b are idempotent and rebuild the whole fixture on a fresh fork in a
 They must run in **one** invocation: each shell call gets its own network namespace with
 `--die-with-parent`, so a background anvil cannot survive between calls. `with_fork.sh` refuses
 to hand over a fork whose chain id, block or Morpho code does not match `fixtures/fork.env`.
+
+## 2026-09-16 — abc0fdd review reconciled; P03 C1-C4 repaired; composed local run connected
+
+**Routing note.** A stale TalentGum `UserPromptSubmit` hook claimed this session; the user
+confirmed it is Held/KeeperHub. Cause identified and reported, not worked around: a stale
+session-state file plus an `OTHER_PROJECT_MARKERS` list that does not know "held" or
+"keeperhub", so follow-up persistence kept re-asserting. Nothing was disabled.
+
+**Authoritative plan restored.** `docs/plan/` now holds V4+A1, the phase map, the
+continuous-execution directive and all P00-P08 prompts, verified 13/13 against the
+packet's SHA256SUMS. `make check-plan-digests` re-verifies on every P00 run. This closes
+the hole that produced the P05 derivation mistake.
+
+**P03 C1-C4 repaired**, each with regressions:
+- C1 documented wire contract (Idempotency-Key header, /status poll, 409 code split,
+  202, strict-boolean simulate). Three further defects found while verifying: 403 covers
+  spending-cap, the backoff was shortening a server Retry-After, and a 200 simulation was
+  read as ACCEPTED.
+- C2 atomic dispatch claim; verified by SQLite close/reopen AND a real SIGKILL mid-send.
+- C3 the request is constructed from the signature, not handed in alongside it.
+- C4 reconciliation uses the journal's durable binding and scoped, finalized evidence.
+
+**Composed local run connected.** Real compiler -> admitted -> signed -> typed request ->
+executed verbatim by the real controller on the fork -> consumed[] read back -> journal
+CONFIRMED from that reading -> recovery refuses to resend. The on-chain consumed payload
+is byte-identical to the action hash Python computed from the compiler output.
+
+**Reclassified.** P03 PARTIAL (L10 open). P04 and P05 PARTIAL PREPARATION: their tests and
+prototype are preserved and pass, but the runtime authority/handover service, owner
+transaction builder, restartable handover machine, V4 section 8 views and real service
+state do not exist, and both depend on a P03 route that does not.
+
+**Two review defects fixed rather than only noted.** P04's handover test reused the SAME
+operation id and payload; the console no longer says "nothing was sent" when a claimed
+attempt is outstanding.
+
+**Next / blocked.** `evidence/P03/public-action-request.json` is the bounded request.
+Request A is credential-only, spends nothing, and is what converts L10 from
+BLOCKED-UNKNOWN into a fact. Request B (public deployment/spending) is deliberately NOT
+made yet: it is blocked on request A and on P04's missing authority inventory.

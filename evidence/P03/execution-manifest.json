@@ -2,7 +2,7 @@
  "schema": "held.public-execution-manifest.v1",
  "phase": "P03",
  "recorded_utc": "2026-09-16",
- "status": "NOT EXECUTED. Nothing in this manifest has been deployed, funded, signed for mainnet or submitted.",
+ "status": "TEMPLATE ONLY \u2014 SUPERSEDED for the purpose of requesting authorization by evidence/P03/public-action-request.json. Preserved because its structure is useful, but the review found real defects in it: deployment was listed before its Safe/Role constructor dependencies; caller/payer, addresses, amounts and cost ceilings were unresolved; the idempotency statement inherited the old client's body-field mismatch; and the approval-cleanup call was missing from the inner-call list even though cleanup is described elsewhere. NOT EXECUTED.",
  "purpose": "The concrete, reviewable description of the ONE public execution Held would perform if L10 opened. It is written before the fact, so that the execution can be checked against a prior commitment rather than described afterwards.",
  "blocking_gate": {
   "id": "L10-authenticated-caller-payer",
@@ -82,8 +82,9 @@
    "scopes": "mcp:read permits the dry run; mcp:write is required to broadcast."
   },
   "inner_calls_through_roles": [
-   "USDC.approve(Morpho, amount)  -- bounded, then reset to 0 in the same transaction",
-   "Morpho.supply(marketParams, amount, 0, safe, 0x)  -- fixed-asset, empty callback, onBehalf = the customer Safe"
+   "USDC.approve(Morpho, amount) -- bounded approval",
+   "Morpho.supply(marketParams, amount, 0, safe, 0x) -- fixed-asset, empty callback, onBehalf = the customer Safe",
+   "USDC.approve(Morpho, 0) -- approval cleanup, in the SAME outer transaction. Omitted from the original list; it is three calls, not two."
   ],
   "what_the_controller_checks_before_it_returns": [
    "Exact Safe debit equals the amount.",
