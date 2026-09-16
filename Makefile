@@ -57,3 +57,4 @@ check-phase-03-local:
 	@$(PY) tests/integration/test_p03_interception.py
 	@$(PY) tests/integration/test_p03_native_bundle.py
 	@$(PY) tests/integration/test_p03_signing.py
+	@$(PY) tests/integration/test_p03_keeperhub.py

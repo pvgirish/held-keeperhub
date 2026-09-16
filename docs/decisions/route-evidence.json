@@ -1,115 +1,126 @@
 {
-  "phase": "P00",
-  "recorded_utc": "2026-09-15T17:08:19Z",
-  "executor": "Claude (sole executor by Girish's instruction 2026-09-15; overrides the pack's GLM dispatch)",
-  "pinned": {
-    "almanak_sdk": "6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938",
-    "morpho_blue": "8e26ca6a8dbc5089edcd67fb576248810fd2870a"
+ "phase": "P00",
+ "recorded_utc": "2026-09-15T17:08:19Z",
+ "executor": "Claude (sole executor by Girish's instruction 2026-09-15; overrides the pack's GLM dispatch)",
+ "pinned": {
+  "almanak_sdk": "6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938",
+  "morpho_blue": "8e26ca6a8dbc5089edcd67fb576248810fd2870a"
+ },
+ "layers": [
+  {
+   "id": "L1-morpho-registry-base-sepolia",
+   "question": "Does Morpho's official registry list a Base Sepolia deployment?",
+   "status": "VERIFIED",
+   "finding": "Registry lists 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb for Base Sepolia.",
+   "boundary": "Registry presence only. NOT a bytecode readback. See L2.",
+   "source": "https://docs.morpho.org/developers/contracts/addresses/"
   },
-  "layers": [
-    {
-      "id": "L1-morpho-registry-base-sepolia",
-      "question": "Does Morpho's official registry list a Base Sepolia deployment?",
-      "status": "VERIFIED",
-      "finding": "Registry lists 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb for Base Sepolia.",
-      "boundary": "Registry presence only. NOT a bytecode readback. See L2.",
-      "source": "https://docs.morpho.org/developers/contracts/addresses/"
-    },
-    {
-      "id": "L2-vanity-address-has-code",
-      "question": "Does the vanity singleton actually have code on the target chain?",
-      "status": "VERIFIED",
-      "finding": "RESOLVED for BASE MAINNET: eth_getCode at 0xBBBB...FFCb on chain 8453 at pinned block 51353212 returns 31249 chars of real bytecode, and the wstETH/USDC market returns live state (totalSupplyAssets 2216674761849 raw USDC units). The registry's zero-code warning does NOT apply to Base mainnet.",
-      "boundary": "Verified on Base MAINNET only. Says nothing about Base Sepolia, which stays REJECTED on L6.",
-      "source": "almanak/connectors/morpho_blue/addresses.py @ 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938"
-    },
-    {
-      "id": "L3-keeperhub-chain-catalog",
-      "question": "Does KeeperHub enable Base Sepolia?",
-      "status": "VERIFIED",
-      "finding": "Live GET /api/chains returned chain 84532 isEnabled:true, isTestnet:true. Base 8453 also enabled.",
-      "boundary": "Public catalog. NOT authenticated org/caller/payer proof.",
-      "source": "https://app.keeperhub.com/api/chains"
-    },
-    {
-      "id": "L4-keeperhub-morpho-plugin-scope",
-      "question": "Does the Morpho plugin's mainnet-only list constrain Held?",
-      "status": "REJECTED",
-      "finding": "Plugin lists Ethereum(1) and Base(8453). V4 does not use the plugin; it uses the generic /api/execute/contract-call route.",
-      "boundary": "The generic route still needs chain, ABI, signer, scope and cap checks of its own.",
-      "source": "https://docs.keeperhub.com/plugins/morpho"
-    },
-    {
-      "id": "L5-sdk-chain-inventory",
-      "question": "Does the pinned SDK know Base Sepolia?",
-      "status": "VERIFIED",
-      "finding": "The literal 84532 appears NOWHERE in the pinned repo. But chain IDs are not how the SDK selects a chain: it uses chain NAME ('base') crossed with a Network enum (MAINNET|TESTNET|SEPOLIA|ANVIL). TESTNET routes to SEPOLIA; ANVIL is is_local. rpc_provider builds Alchemy URLs as {chain_key}-sepolia..., so base+sepolia RESOLVES at the RPC layer.",
-      "boundary": "RPC resolution is not protocol support. See L6 - that is the decisive layer.",
-      "source": "almanak/core/rpc_network.py, almanak/gateway/utils/rpc_provider.py:448 @ 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938"
-    },
-    {
-      "id": "L6-morpho-address-registry-keying",
-      "question": "Would chain=base + network=sepolia give correct Morpho addresses?",
-      "status": "REJECTED",
-      "finding": "DECISIVE. MORPHO_BLUE, MORPHO_BLUE_TOKENS and MORPHO_MARKETS are all dict[chain_name][...] with NO Network awareness anywhere in addresses.py. So chain=base + network=sepolia would talk to a Base Sepolia RPC while returning BASE MAINNET singleton, token and market params. Those markets do not exist on Base Sepolia; compiled calldata would target wrong or codeless addresses.",
-      "boundary": "This rejects the SUPPORTED PROFILE on Base Sepolia. It does not reject a custom registry extension - but V4 forbids silently repointing the 'base' config at another chain, so any extension is a separate versioned decision.",
-      "source": "almanak/connectors/morpho_blue/addresses.py @ 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938"
-    },
-    {
-      "id": "L7-morpho-connector-chain-support",
-      "question": "Is Morpho a registered connector for Base?",
-      "status": "VERIFIED",
-      "finding": "connector.py:290 supported_chains=SupportedChainsSpec(chains=(ETHEREUM, BASE, ARBITRUM, POLYGON, MONAD, ROBINHOOD)). sdk.py:52 SUPPORTED_CHAINS includes 'base'. Flash-loan subset is narrower: {'ethereum','base'}.",
-      "boundary": "Registration is not a compiled probe. See G2 in report.md.",
-      "source": "almanak/connectors/morpho_blue/connector.py, sdk.py @ 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938"
-    },
-    {
-      "id": "L8-anvil-fork-vehicle",
-      "question": "Can the native baseline run on a realistic local fork?",
-      "status": "SUPPORTED",
-      "finding": "The SDK has a first-class Network.ANVIL with is_local=True and per-chain local fork URLs (config/runtime.py:710,761). chain=base + Network.ANVIL forking Base MAINNET gives correct mainnet addresses AND local control. This is the correct vehicle for P00 item 6 and P02.",
-      "boundary": "Not yet exercised - foundry/anvil is NOT installed in either available environment. See G3.",
-      "source": "almanak/core/rpc_network.py, almanak/config/runtime.py @ 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938"
-    },
-    {
-      "id": "L9-strategy-runner-anchor",
-      "question": "Is the cited reconciliation anchor real?",
-      "status": "VERIFIED",
-      "finding": "strategy_runner.py is 13533 lines at the pinned rev. L9228 is the cast(ExecutionOrchestrator, ...) single-chain path; the failed_submission_requires_reconciliation / submitted_transaction_hashes import block follows immediately.",
-      "boundary": "Reproduced independently from a fresh clone at the pinned SHA.",
-      "source": "almanak/framework/runner/strategy_runner.py:9224-9236 @ 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938"
-    },
-    {
-      "id": "L10-authenticated-caller-payer",
-      "question": "Does the actual org caller/payer route accept the outer controller call?",
-      "status": "BLOCKED-UNKNOWN",
-      "finding": "Not attempted. Requires a KeeperHub org API key and an authenticated preflight.",
-      "boundary": "Catalog presence (L3) does not prove this. Remains open into P03.",
-      "source": null
-    },
-    {
-      "id": "L11-rpc-egress",
-      "question": "Can this environment reach a Base mainnet RPC?",
-      "status": "VERIFIED",
-      "finding": "UNBLOCKED 2026-09-15T18:15Z. mainnet.base.org now answers: eth_chainId 0x2105 (8453), eth_blockNumber, eth_getBlockByNumber, and ARCHIVE reads (eth_getCode + eth_getStorageAt) at pinned block 51353212. Reachable from BOTH the device VM and the cloud container. The earlier 403-at-CONNECT denial is historical.",
-      "boundary": "Public endpoint, rate-limited. Archive reads verified at one pinned block, not guaranteed at all depths.",
-      "source": "https://mainnet.base.org"
-    },
-    {
-      "id": "L12-fork-vehicle",
-      "question": "Can a pinned Base-mainnet fork actually run here?",
-      "status": "VERIFIED",
-      "finding": "YES. anvil 1.8.3 forks Base at block 51353212 and serves chain 8453 with real Morpho code and live market state. CONSTRAINT: on this device each shell call runs in its own network namespace with --die-with-parent, so a background anvil CANNOT survive between calls. The fork must start, be used and be torn down inside ONE invocation. fixtures/with_fork.sh does this and REFUSES to hand over a fork whose chain id, block or Morpho code does not match fixtures/fork.env.",
-      "boundary": "Self-tested. Not yet used for a full baseline scenario.",
-      "source": "held/fixtures/with_fork.sh"
-    }
-  ],
-  "route_conclusion": {
-    "supported_profile_on_base_sepolia": "REJECTED - on L6, a demonstrated source-level incompatibility, not missing evidence.",
-    "local_verification_vehicle": "chain=base + Network.ANVIL forking Base mainnet (L8).",
-    "public_criterion_2_evidence": "Base MAINNET, small value. Requires explicit Girish authorisation. NOT taken in P00.",
-    "note": "This supersedes Claude's earlier 'the Morpho plugin is mainnet-only' reasoning, which was wrong (L4). The real constraint is the SDK's per-chain-name address registry.",
-    "rpc_status": "UNBLOCKED - see L11. G3 is now RUNNABLE."
+  {
+   "id": "L2-vanity-address-has-code",
+   "question": "Does the vanity singleton actually have code on the target chain?",
+   "status": "VERIFIED",
+   "finding": "RESOLVED for BASE MAINNET: eth_getCode at 0xBBBB...FFCb on chain 8453 at pinned block 51353212 returns 31249 chars of real bytecode, and the wstETH/USDC market returns live state (totalSupplyAssets 2216674761849 raw USDC units). The registry's zero-code warning does NOT apply to Base mainnet.",
+   "boundary": "Verified on Base MAINNET only. Says nothing about Base Sepolia, which stays REJECTED on L6.",
+   "source": "almanak/connectors/morpho_blue/addresses.py @ 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938"
   },
-  "updated_utc": "2026-09-15T18:18:45Z"
+  {
+   "id": "L3-keeperhub-chain-catalog",
+   "question": "Does KeeperHub enable Base Sepolia?",
+   "status": "VERIFIED",
+   "finding": "Live GET /api/chains returned chain 84532 isEnabled:true, isTestnet:true. Base 8453 also enabled.",
+   "boundary": "Public catalog. NOT authenticated org/caller/payer proof.",
+   "source": "https://app.keeperhub.com/api/chains",
+   "p03_reverification": {
+    "when_utc": "2026-09-16",
+    "finding": "Re-read live. GET https://app.keeperhub.com/api/chains answers 200; chain 8453 Base isEnabled true, 84532 Base Sepolia isEnabled true. Matches the P00 reading, and confirms the base URL and path the P03 client builds.",
+    "new_boundary": "The endpoint answers WITHOUT any credential. It is therefore not usable as an authentication preflight. An earlier draft of the P03 client used it as one, which would have reported 'preflight passed' for an invalid key and for no key at all; that was replaced with a SIMULATE-mode call on the authenticated contract-call route.",
+    "new_unknown": "The catalog exposes an internal string id per chain (Base = '9wr4m6zv2dwflb1trbzsx') alongside the numeric chainId. Which of the two POST /api/execute/contract-call expects is NOT established, because that route requires the org credential. Held sends chainId; the alternative is recorded in adapter/held_adapter/execution/keeperhub.py rather than guessed silently."
+   }
+  },
+  {
+   "id": "L4-keeperhub-morpho-plugin-scope",
+   "question": "Does the Morpho plugin's mainnet-only list constrain Held?",
+   "status": "REJECTED",
+   "finding": "Plugin lists Ethereum(1) and Base(8453). V4 does not use the plugin; it uses the generic /api/execute/contract-call route.",
+   "boundary": "The generic route still needs chain, ABI, signer, scope and cap checks of its own.",
+   "source": "https://docs.keeperhub.com/plugins/morpho"
+  },
+  {
+   "id": "L5-sdk-chain-inventory",
+   "question": "Does the pinned SDK know Base Sepolia?",
+   "status": "VERIFIED",
+   "finding": "The literal 84532 appears NOWHERE in the pinned repo. But chain IDs are not how the SDK selects a chain: it uses chain NAME ('base') crossed with a Network enum (MAINNET|TESTNET|SEPOLIA|ANVIL). TESTNET routes to SEPOLIA; ANVIL is is_local. rpc_provider builds Alchemy URLs as {chain_key}-sepolia..., so base+sepolia RESOLVES at the RPC layer.",
+   "boundary": "RPC resolution is not protocol support. See L6 - that is the decisive layer.",
+   "source": "almanak/core/rpc_network.py, almanak/gateway/utils/rpc_provider.py:448 @ 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938"
+  },
+  {
+   "id": "L6-morpho-address-registry-keying",
+   "question": "Would chain=base + network=sepolia give correct Morpho addresses?",
+   "status": "REJECTED",
+   "finding": "DECISIVE. MORPHO_BLUE, MORPHO_BLUE_TOKENS and MORPHO_MARKETS are all dict[chain_name][...] with NO Network awareness anywhere in addresses.py. So chain=base + network=sepolia would talk to a Base Sepolia RPC while returning BASE MAINNET singleton, token and market params. Those markets do not exist on Base Sepolia; compiled calldata would target wrong or codeless addresses.",
+   "boundary": "This rejects the SUPPORTED PROFILE on Base Sepolia. It does not reject a custom registry extension - but V4 forbids silently repointing the 'base' config at another chain, so any extension is a separate versioned decision.",
+   "source": "almanak/connectors/morpho_blue/addresses.py @ 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938"
+  },
+  {
+   "id": "L7-morpho-connector-chain-support",
+   "question": "Is Morpho a registered connector for Base?",
+   "status": "VERIFIED",
+   "finding": "connector.py:290 supported_chains=SupportedChainsSpec(chains=(ETHEREUM, BASE, ARBITRUM, POLYGON, MONAD, ROBINHOOD)). sdk.py:52 SUPPORTED_CHAINS includes 'base'. Flash-loan subset is narrower: {'ethereum','base'}.",
+   "boundary": "Registration is not a compiled probe. See G2 in report.md.",
+   "source": "almanak/connectors/morpho_blue/connector.py, sdk.py @ 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938"
+  },
+  {
+   "id": "L8-anvil-fork-vehicle",
+   "question": "Can the native baseline run on a realistic local fork?",
+   "status": "SUPPORTED",
+   "finding": "The SDK has a first-class Network.ANVIL with is_local=True and per-chain local fork URLs (config/runtime.py:710,761). chain=base + Network.ANVIL forking Base MAINNET gives correct mainnet addresses AND local control. This is the correct vehicle for P00 item 6 and P02.",
+   "boundary": "Not yet exercised - foundry/anvil is NOT installed in either available environment. See G3.",
+   "source": "almanak/core/rpc_network.py, almanak/config/runtime.py @ 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938"
+  },
+  {
+   "id": "L9-strategy-runner-anchor",
+   "question": "Is the cited reconciliation anchor real?",
+   "status": "VERIFIED",
+   "finding": "strategy_runner.py is 13533 lines at the pinned rev. L9228 is the cast(ExecutionOrchestrator, ...) single-chain path; the failed_submission_requires_reconciliation / submitted_transaction_hashes import block follows immediately.",
+   "boundary": "Reproduced independently from a fresh clone at the pinned SHA.",
+   "source": "almanak/framework/runner/strategy_runner.py:9224-9236 @ 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938"
+  },
+  {
+   "id": "L10-authenticated-caller-payer",
+   "question": "Does the actual org caller/payer route accept the outer controller call?",
+   "status": "BLOCKED-UNKNOWN",
+   "finding": "Not attempted. Requires a KeeperHub org API key and an authenticated preflight.",
+   "boundary": "Catalog presence (L3) does not prove this. Remains open into P03.",
+   "source": null,
+   "p03_status": {
+    "still": "BLOCKED-UNKNOWN. Unchanged. No org API key; nothing local closes this.",
+    "what_p03_built": "The client that would exercise it: adapter/held_adapter/execution/keeperhub.py. preflight() is a SIMULATE-mode call on the authenticated route, so a 2xx there would be the first genuine evidence about L10 this project has.",
+    "anti_simulation": "Only HttpsTransport can produce hosted=True, and it requires an https:// origin with a real credential. OfflineTransport stamps hosted=False, and SendResult.assert_hosted_evidence() refuses a non-hosted result, so a local fixture cannot be filed as an L10 pass. 28 local tests cover request construction, execution keys, backoff and response classification; none of them establish L10, and three exist specifically to prove they cannot."
+   }
+  },
+  {
+   "id": "L11-rpc-egress",
+   "question": "Can this environment reach a Base mainnet RPC?",
+   "status": "VERIFIED",
+   "finding": "UNBLOCKED 2026-09-15T18:15Z. mainnet.base.org now answers: eth_chainId 0x2105 (8453), eth_blockNumber, eth_getBlockByNumber, and ARCHIVE reads (eth_getCode + eth_getStorageAt) at pinned block 51353212. Reachable from BOTH the device VM and the cloud container. The earlier 403-at-CONNECT denial is historical.",
+   "boundary": "Public endpoint, rate-limited. Archive reads verified at one pinned block, not guaranteed at all depths.",
+   "source": "https://mainnet.base.org"
+  },
+  {
+   "id": "L12-fork-vehicle",
+   "question": "Can a pinned Base-mainnet fork actually run here?",
+   "status": "VERIFIED",
+   "finding": "YES. anvil 1.8.3 forks Base at block 51353212 and serves chain 8453 with real Morpho code and live market state. CONSTRAINT: on this device each shell call runs in its own network namespace with --die-with-parent, so a background anvil CANNOT survive between calls. The fork must start, be used and be torn down inside ONE invocation. fixtures/with_fork.sh does this and REFUSES to hand over a fork whose chain id, block or Morpho code does not match fixtures/fork.env.",
+   "boundary": "Self-tested. Not yet used for a full baseline scenario.",
+   "source": "held/fixtures/with_fork.sh"
+  }
+ ],
+ "route_conclusion": {
+  "supported_profile_on_base_sepolia": "REJECTED - on L6, a demonstrated source-level incompatibility, not missing evidence.",
+  "local_verification_vehicle": "chain=base + Network.ANVIL forking Base mainnet (L8).",
+  "public_criterion_2_evidence": "Base MAINNET, small value. Requires explicit Girish authorisation. NOT taken in P00.",
+  "note": "This supersedes Claude's earlier 'the Morpho plugin is mainnet-only' reasoning, which was wrong (L4). The real constraint is the SDK's per-chain-name address registry.",
+  "rpc_status": "UNBLOCKED - see L11. G3 is now RUNNABLE."
+ },
+ "updated_utc": "2026-09-15T18:18:45Z"
 }
