@@ -107,14 +107,16 @@ def _():
     assert op.action.on_behalf == SAFE.lower()
 
 
-@test("payload hash matches the controller's abi.encode layout exactly")
+@test("payload hash matches the controller's abi.encode layout (self-consistency only)")
 def _():
     op = admit_bundle(native_supply_bundle(), PROFILE, "decision-1", 0)
     expected = keccak(abi_encode(
         ["bytes32", "uint8", "bytes32", "address", "uint256", "address"],
         [ACTION_TYPEHASH, 1, PROFILE.market_id(), USDC.lower(), 100_000_000, SAFE.lower()]))
     assert op.payload_hash == expected
-    # And the typehash itself is the string the contract declares.
+    # NOTE: this recomputes the hash with the SAME Python ABI library, so it establishes
+    # self-consistency, NOT agreement with a deployed controller. The cross-language
+    # check against a live controller.actionHash() is still outstanding.
     assert ACTION_TYPEHASH == keccak(
         b"Action(uint8 family,bytes32 marketId,address asset,uint256 amount,address onBehalf)")
 
@@ -208,12 +210,25 @@ def _():
     assert "re-encode" in msg, msg
 
 
-@test("refuses any call carrying ETH value")
+@test("refuses any call carrying ETH value, and never coerces a malformed one")
 def _():
     b = native_supply_bundle()
     b["calls"][1]["value"] = 1
-    msg = expect_rejected(admit_bundle, b, PROFILE, "d", 0)
-    assert "value" in msg, msg
+    assert "value" in expect_rejected(admit_bundle, b, PROFILE, "d", 0)
+
+    # A fractional value must be REFUSED, not truncated to zero. `int(value or 0)`
+    # would have silently admitted 0.5 as 0.
+    for bad in (0.5, 1.5, True, "abc", -1, [0]):
+        b2 = native_supply_bundle()
+        b2["calls"][1]["value"] = bad
+        msg = expect_rejected(admit_bundle, b2, PROFILE, "d", 0)
+        assert "value" in msg, f"{bad!r} -> {msg}"
+
+    # Supported integer spellings of zero are admitted.
+    for good in (0, "0", "0x0", None):
+        b3 = native_supply_bundle()
+        b3["calls"][1]["value"] = good
+        admit_bundle(b3, PROFILE, "d", 0)
 
 
 @test("refuses a bundle whose Safe is not the profile Safe")

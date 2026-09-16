@@ -14,10 +14,22 @@ Two rules shape everything here:
     is fine" and "this supply is fine" will happily admit a bundle containing a third
     call that drains the Safe. The call list is matched as a shape.
 
-The native approval carries headroom — the pinned compiler emitted `approve(Morpho,
-110000000)` for a 100000000-unit supply. That is native behaviour and is NOT rewritten
-here; it is bounded and recorded. Held's own zero-allowance entry/exit requirement is
-enforced by the controller at execution time (P02), not by editing native output.
+## Approval accounting, stated precisely
+
+The pinned compiler emitted `approve(Morpho, 110000000)` for a 100000000-unit supply.
+This module RECORDS that observed approval as input evidence and bounds it. It does not
+follow that the 110000000 approval is executed unchanged: the P02 controller executes
+its own declared `approve(amount)` then `approve(0)` cleanup, so for this example the
+approval actually executed is 100000000.
+
+What V4 §5 requires unchanged is the native ECONOMIC call, which is preserved byte for
+byte. The approval is the declared, bounded part of the controller's
+approval/action/cleanup sequence, and is derived from the admitted amount rather than
+replayed from the bundle. The on-chain payload hash binds the economic fields, NOT the
+whole original call list.
+
+The 20% headroom ceiling below is an ADAPTER RULE chosen here. It is not inferred from
+the single observed 10% approval and is not a native guarantee.
 """
 from __future__ import annotations
 
@@ -39,8 +51,12 @@ SELECTOR_SUPPLY = bytes.fromhex("a99aad89")
 SELECTOR_WITHDRAW = bytes.fromhex("5c2bea49")
 
 # Must equal HeldController.ACTION_TYPEHASH byte for byte, or the envelope the runner
-# signs will not bind the action the controller reconstructs. Verified against the
-# deployed contract in tests/integration.
+# signs will not bind the action the controller reconstructs.
+#
+# NOT YET verified against a deployed controller. tests/integration recomputes this with
+# the same Python ABI library, which only proves self-consistency. An earlier comment
+# claimed deployed-contract verification; that claim is withdrawn until a fork test
+# queries the live controller's actionHash().
 ACTION_TYPEHASH = keccak(
     b"Action(uint8 family,bytes32 marketId,address asset,uint256 amount,address onBehalf)"
 )
@@ -152,9 +168,39 @@ def _call_fields(call: Mapping[str, Any] | Any) -> tuple[str, bytes, int]:
         data = bytes.fromhex(data[2:] if data.startswith("0x") else data)
     if not isinstance(data, (bytes, bytearray)):
         raise BundleRejected("call data is neither hex string nor bytes")
-    if int(value or 0) != 0:
-        raise BundleRejected(f"call carries non-zero value {value}: no ETH movement is supported")
-    return normalize_address(to, "call.to"), bytes(data), int(value or 0)
+    return normalize_address(to, "call.to"), bytes(data), _admit_value(value)
+
+
+def _admit_value(value: Any) -> int:
+    """Admit a transaction value, or refuse it. Never coerce.
+
+    An earlier version used `int(value or 0)`, which silently turned 0.5 into 0 and a
+    bool into 0/1. Transaction value really is integer-denominated, so a fractional or
+    boolean value is malformed input, not a small one -- and truncating malformed input
+    to something admissible is exactly how a refusal contract gets bypassed. Only
+    explicitly supported integer forms are decoded.
+    """
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        raise BundleRejected(f"call value is a bool ({value!r}); expected an integer")
+    if isinstance(value, float):
+        raise BundleRejected(f"call value is fractional ({value!r}); value is integer-denominated")
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            parsed = int(text, 16) if text.lower().startswith("0x") else int(text, 10)
+        except ValueError:
+            raise BundleRejected(f"call value is not a decimal or 0x integer: {value!r}") from None
+    elif isinstance(value, int):
+        parsed = value
+    else:
+        raise BundleRejected(f"call value has unsupported type {type(value).__name__}")
+    if parsed < 0:
+        raise BundleRejected(f"call value is negative: {parsed}")
+    if parsed != 0:
+        raise BundleRejected(f"call carries non-zero value {parsed}: no ETH movement is supported")
+    return 0
 
 
 def _strict_decode(types: Sequence[str], payload: bytes, what: str) -> tuple:

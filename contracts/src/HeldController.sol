@@ -57,6 +57,18 @@ contract HeldController {
         address runner;
     }
 
+    /// @notice The native Roles keys this lineage is bound to. Grouped so every budget
+    ///         dimension is supplied explicitly and none can be forgotten at deployment.
+    struct Keys {
+        bytes32 normalRole;
+        bytes32 restorationRole;
+        bytes32 supplyAmount;
+        bytes32 normalWithdrawAmount;
+        bytes32 restorationAmount;
+        bytes32 normalCount;
+        bytes32 restorationCount;
+    }
+
     /// @notice What the owner believes the controller's consumption to be when they
     ///         sign an activation. A stale preparation must not execute.
     struct ExpectedState {
@@ -94,8 +106,16 @@ contract HeldController {
     ///      normal/restoration roles; each remains controller-only.
     bytes32 public immutable normalRoleKey;
     bytes32 public immutable restorationRoleKey;
+    /// @dev EVERY native budget dimension, not just the two amount lanes. V4 §5 requires
+    ///      each Roles remaining allowance to equal its ceiling minus consumption, and
+    ///      lists the shared normal count and the separate restoration count alongside the
+    ///      amount quotas. Checking only supply and restoration amounts left the
+    ///      normal-withdraw amount and both counts unsynchronised.
     bytes32 public immutable supplyAllowanceKey;
+    bytes32 public immutable normalWithdrawAllowanceKey;
     bytes32 public immutable restorationAllowanceKey;
+    bytes32 public immutable normalCountKey;
+    bytes32 public immutable restorationCountKey;
 
     // ------------------------------------------------------------------ state --
     bool public active; // paused by default
@@ -174,10 +194,7 @@ contract HeldController {
         address _token,
         bytes32 _marketId,
         bytes32 _lineage,
-        bytes32 _normalRoleKey,
-        bytes32 _restorationRoleKey,
-        bytes32 _supplyAllowanceKey,
-        bytes32 _restorationAllowanceKey
+        Keys memory k
     ) {
         owner = _owner;
         safe = _owner; // the owner Safe is the operated account
@@ -186,10 +203,13 @@ contract HeldController {
         token = _token;
         marketId = _marketId;
         lineage = _lineage;
-        normalRoleKey = _normalRoleKey;
-        restorationRoleKey = _restorationRoleKey;
-        supplyAllowanceKey = _supplyAllowanceKey;
-        restorationAllowanceKey = _restorationAllowanceKey;
+        normalRoleKey = k.normalRole;
+        restorationRoleKey = k.restorationRole;
+        supplyAllowanceKey = k.supplyAmount;
+        normalWithdrawAllowanceKey = k.normalWithdrawAmount;
+        restorationAllowanceKey = k.restorationAmount;
+        normalCountKey = k.normalCount;
+        restorationCountKey = k.restorationCount;
         // active stays false: deployment is not authorisation.
     }
 
@@ -225,18 +245,15 @@ contract HeldController {
         if (p.Ls < usedSupply || p.Ln < usedNormalWithdraw || p.Lr < usedRestoration) {
             revert CeilingBelowConsumption();
         }
+        // A count ceiling below the consumed count is the same error in the count domain.
+        if (p.Nn < normalCount || p.Nr < restorationCount) revert CeilingBelowConsumption();
 
-        uint256 expectedRemaining = uint256(p.Ls) - uint256(usedSupply);
-        (,,, uint128 rolesRemaining,) = IRoles(roles).allowances(supplyAllowanceKey);
-        if (uint256(rolesRemaining) != expectedRemaining) {
-            revert AllowanceDesynchronised(rolesRemaining, expectedRemaining);
-        }
-        // The restoration lane carries its OWN capacity and is checked independently.
-        uint256 expectedRestoration = uint256(p.Lr) - uint256(usedRestoration);
-        (,,, uint128 restorationRemaining,) = IRoles(roles).allowances(restorationAllowanceKey);
-        if (uint256(restorationRemaining) != expectedRestoration) {
-            revert AllowanceDesynchronised(restorationRemaining, expectedRestoration);
-        }
+        // EVERY dimension, amounts AND counts. A mismatch on any one blocks activation.
+        _requireSynced(supplyAllowanceKey, uint256(p.Ls) - uint256(usedSupply));
+        _requireSynced(normalWithdrawAllowanceKey, uint256(p.Ln) - uint256(usedNormalWithdraw));
+        _requireSynced(restorationAllowanceKey, uint256(p.Lr) - uint256(usedRestoration));
+        _requireSynced(normalCountKey, uint256(p.Nn) - uint256(normalCount));
+        _requireSynced(restorationCountKey, uint256(p.Nr) - uint256(restorationCount));
 
         epoch = newEpoch;
         policyVersion = newPolicyVersion;
@@ -356,6 +373,13 @@ contract HeldController {
     }
 
     // ---------------------------------------------------------------- internals --
+
+    /// @dev One Roles allowance must equal its ceiling minus the corresponding
+    ///      consumption. Used for every amount lane and every count lane alike.
+    function _requireSynced(bytes32 key, uint256 expected) internal view {
+        (,,, uint128 remaining,) = IRoles(roles).allowances(key);
+        if (uint256(remaining) != expected) revert AllowanceDesynchronised(remaining, expected);
+    }
 
     function _authorize(
         Envelope calldata env,

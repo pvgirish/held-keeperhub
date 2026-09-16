@@ -40,6 +40,8 @@ contract HeldControllerForkTest is Test {
     bytes32 constant WITHDRAW_KEY = keccak256("held-withdraw-cap");
     bytes32 constant RESTORE_ROLE = keccak256("held-restoration-v1");
     bytes32 constant RESTORE_KEY = keccak256("held-restoration-cap");
+    bytes32 constant NORMAL_COUNT_KEY = keccak256("held-normal-count");
+    bytes32 constant RESTORE_COUNT_KEY = keccak256("held-restoration-count");
     uint128 constant LN = 50_000e6;
     uint128 constant LR = 10_000e6;
     uint128 constant LS = 50_000e6;
@@ -55,7 +57,16 @@ contract HeldControllerForkTest is Test {
         marketId = keccak256(abi.encode(_mp()));
 
         controller = new HeldController(
-            safe, roles, MORPHO, USDC, marketId, LINEAGE, roleKey, RESTORE_ROLE, allowKey, RESTORE_KEY
+            safe, roles, MORPHO, USDC, marketId, LINEAGE,
+            HeldController.Keys({
+                normalRole: roleKey,
+                restorationRole: RESTORE_ROLE,
+                supplyAmount: allowKey,
+                normalWithdrawAmount: WITHDRAW_KEY,
+                restorationAmount: RESTORE_KEY,
+                normalCount: NORMAL_COUNT_KEY,
+                restorationCount: RESTORE_COUNT_KEY
+            })
         );
 
         // Owner installs the new lineage: the controller becomes the role member and
@@ -67,19 +78,28 @@ contract HeldControllerForkTest is Test {
         _assign(runnerA, roleKey, false);
         // A NEW lineage gets a clearly labelled NEW budget. The native fixture's
         // historical 30,000 is deliberately NOT imported (V4 §6).
+        // P02 OVERLAY: re-scope supply with TIGHT argument conditions. The P00 fixture
+        // bound only the `assets` allowance and left the market tuple, shares and
+        // onBehalf permissive. Roles must be an INDEPENDENT defence: controller-side
+        // checks do not substitute for it.
+        _scopeSupplyTight();
         _setAllowance(LS, LS);
         // Withdraw needs its own scoped function and its own non-refilling quota, or
         // Roles rejects it outright (FunctionNotAllowed) -- scopeTarget sets
         // Clearance.Function, so EVERY function must be scoped explicitly. Defence in
         // depth: the amount is bound to a separate allowance key, exactly as supply is.
-        _scopeWithdraw(roleKey, WITHDRAW_KEY);
+        _scopeWithdraw(roleKey, WITHDRAW_KEY, NORMAL_COUNT_KEY);
         IRolesAdmin(roles).setAllowance(WITHDRAW_KEY, LN, LN, 0, 0, 0);
         // The RESTORATION lane is a separate role with its OWN non-refilling key, because
         // Zodiac allows one condition tree per (role, target, selector). V4 §3 permits
         // separate normal/restoration roles; both remain controller-only.
         IRolesTargets(roles).scopeTarget(RESTORE_ROLE, MORPHO);
-        _scopeWithdraw(RESTORE_ROLE, RESTORE_KEY);
+        _scopeWithdraw(RESTORE_ROLE, RESTORE_KEY, RESTORE_COUNT_KEY);
         IRolesAdmin(roles).setAllowance(RESTORE_KEY, LR, LR, 0, 0, 0);
+        // Native COUNT allowances, one per lane. V4 §5: the shared normal count covers
+        // SUPPLY and NORMAL WITHDRAW; restoration has its own.
+        IRolesAdmin(roles).setAllowance(NORMAL_COUNT_KEY, 10, 10, 0, 0, 0);
+        IRolesAdmin(roles).setAllowance(RESTORE_COUNT_KEY, 5, 5, 0, 0, 0);
         vm.stopPrank();
 
         _fundSafe(50_000e6);
@@ -112,18 +132,84 @@ contract HeldControllerForkTest is Test {
     ///      root Calldata/Matches, param0 the MarketParams tuple with Pass on its five
     ///      fields, param1 `assets` bound WithinAllowance to the withdraw key, Pass on
     ///      the rest. Same shape as the supply tree built by fixture step 3b.
-    function _scopeWithdraw(bytes32 role, bytes32 allowanceKey) internal {
+    /// @dev TIGHT withdraw tree. Every fixed argument is pinned with EqualTo; only the
+    ///      amount is a quota. Previously shares, onBehalf, receiver and the market tuple
+    ///      fields were all `Pass`, which meant Roles was not independently restricting
+    ///      anything except the amount.
+    function _scopeWithdraw(bytes32 role, bytes32 allowanceKey, bytes32 countKey) internal {
         ConditionFlat[] memory c = new ConditionFlat[](11);
         c[0] = ConditionFlat(0, 5, 5, "");                                   // root Calldata/Matches
-        c[1] = ConditionFlat(0, 3, 0, "");                                   // param0 tuple
-        c[2] = ConditionFlat(0, 1, 28, abi.encode(allowanceKey));            // param1 assets
-        c[3] = ConditionFlat(0, 1, 0, "");                                   // param2 shares
-        c[4] = ConditionFlat(0, 1, 0, "");                                   // param3 onBehalf
-        c[5] = ConditionFlat(0, 1, 0, "");                                   // param4 receiver
-        for (uint8 i = 6; i < 11; i++) {
-            c[i] = ConditionFlat(1, 1, 0, "");                               // tuple fields
+        c[1] = ConditionFlat(0, 3, 5, "");                                   // param0 tuple, Matches
+        c[2] = ConditionFlat(0, 1, 28, abi.encode(allowanceKey));            // param1 assets WithinAllowance
+        c[3] = ConditionFlat(0, 1, 16, abi.encode(uint256(0)));              // param2 shares == 0
+        c[4] = ConditionFlat(0, 1, 16, abi.encode(safe));                    // param3 onBehalf == Safe
+        c[5] = ConditionFlat(0, 1, 16, abi.encode(safe));                    // param4 receiver == Safe
+        c[6] = ConditionFlat(1, 1, 16, abi.encode(USDC));
+        c[7] = ConditionFlat(1, 1, 16, abi.encode(COLL));
+        c[8] = ConditionFlat(1, 1, 16, abi.encode(ORACLE));
+        c[9] = ConditionFlat(1, 1, 16, abi.encode(IRM));
+        c[10] = ConditionFlat(1, 1, 16, abi.encode(LLTV));
+        IRolesAdmin(roles).scopeFunction(role, MORPHO, IMorpho.withdraw.selector, _withCallCount(c, countKey), 0);
+    }
+
+    /// @dev TIGHT supply tree, the P02 overlay over the P00 fixture's permissive one.
+    function _scopeSupplyTight() internal {
+        ConditionFlat[] memory c = new ConditionFlat[](11);
+        c[0] = ConditionFlat(0, 5, 5, "");                                   // root Calldata/Matches
+        c[1] = ConditionFlat(0, 3, 5, "");                                   // param0 tuple, Matches
+        c[2] = ConditionFlat(0, 1, 28, abi.encode(allowKey));                // param1 assets WithinAllowance
+        c[3] = ConditionFlat(0, 1, 16, abi.encode(uint256(0)));              // param2 shares == 0
+        c[4] = ConditionFlat(0, 1, 16, abi.encode(safe));                    // param3 onBehalf == Safe
+        c[5] = ConditionFlat(0, 2, 0, "");                                   // param4 data (dynamic)
+        c[6] = ConditionFlat(1, 1, 16, abi.encode(USDC));
+        c[7] = ConditionFlat(1, 1, 16, abi.encode(COLL));
+        c[8] = ConditionFlat(1, 1, 16, abi.encode(ORACLE));
+        c[9] = ConditionFlat(1, 1, 16, abi.encode(IRM));
+        c[10] = ConditionFlat(1, 1, 16, abi.encode(LLTV));
+        IRolesAdmin(roles).scopeFunction(roleKey, MORPHO, IMorpho.supply.selector, _withCallCount(c, NORMAL_COUNT_KEY), 0);
+    }
+
+    /// @dev Insert a CallWithinAllowance node so the native COUNT allowance is actually
+    ///      CONSUMED by the economic call, not merely checked at activation.
+    ///
+    ///      Operator 30 / paramType None(0), confirmed from Zodiac Types.sol at the
+    ///      pinned source. The node must be INSERTED among the root's children, not
+    ///      appended: the condition array is required to be breadth-first, and appending
+    ///      a parent==0 node after the parent==1 tuple children reverts NotBFS().
+    function _withCallCount(ConditionFlat[] memory base, bytes32 countKey)
+        internal pure returns (ConditionFlat[] memory out)
+    {
+        uint256 insertAt = base.length;
+        for (uint256 i = 1; i < base.length; i++) {
+            if (base[i].parent != 0) { insertAt = i; break; }
         }
-        IRolesAdmin(roles).scopeFunction(role, MORPHO, IMorpho.withdraw.selector, c, 0);
+        out = new ConditionFlat[](base.length + 1);
+        for (uint256 i = 0; i < insertAt; i++) out[i] = base[i];
+        out[insertAt] = ConditionFlat(0, 0, 30, abi.encode(countKey));
+        for (uint256 i = insertAt; i < base.length; i++) {
+            out[i + 1] = base[i];
+            // children referencing the tuple keep pointing at it; the tuple is at index 1
+            // and nothing was inserted before it, so parent indices are unchanged.
+        }
+    }
+
+    /// @dev Sync every dimension EXCEPT the supply amount, so a test can vary that one
+    ///      alone and observe the guard. Must be called under an active prank.
+    function _syncNonSupply(HeldController.Policy memory p) internal {
+        IRolesAdmin(roles).setAllowance(WITHDRAW_KEY, p.Ln - controller.usedNormalWithdraw(), p.Ln, 0, 0, 0);
+        IRolesAdmin(roles).setAllowance(RESTORE_KEY, p.Lr - controller.usedRestoration(), p.Lr, 0, 0, 0);
+        IRolesAdmin(roles).setAllowance(NORMAL_COUNT_KEY, p.Nn - controller.normalCount(), p.Nn, 0, 0, 0);
+        IRolesAdmin(roles).setAllowance(RESTORE_COUNT_KEY, p.Nr - controller.restorationCount(), p.Nr, 0, 0, 0);
+    }
+
+    /// @dev Bring every native allowance into agreement with a policy and the
+    ///      controller's current consumption, as an owner would before activating.
+    function _syncRoles(HeldController.Policy memory p) internal {
+        IRolesAdmin(roles).setAllowance(allowKey, p.Ls - controller.usedSupply(), p.Ls, 0, 0, 0);
+        IRolesAdmin(roles).setAllowance(WITHDRAW_KEY, p.Ln - controller.usedNormalWithdraw(), p.Ln, 0, 0, 0);
+        IRolesAdmin(roles).setAllowance(RESTORE_KEY, p.Lr - controller.usedRestoration(), p.Lr, 0, 0, 0);
+        IRolesAdmin(roles).setAllowance(NORMAL_COUNT_KEY, p.Nn - controller.normalCount(), p.Nn, 0, 0, 0);
+        IRolesAdmin(roles).setAllowance(RESTORE_COUNT_KEY, p.Nr - controller.restorationCount(), p.Nr, 0, 0, 0);
     }
 
     function _fundSafe(uint256 amount) internal {
@@ -153,6 +239,14 @@ contract HeldControllerForkTest is Test {
     }
 
     function _activateWith(uint64 ep, address who, HeldController.Policy memory p) internal {
+        // Hoisted deliberately: vm.prank applies to the NEXT call, and _expected()
+        // makes external view calls that would consume it before activate() runs.
+        // startPrank, not prank: _syncRoles makes FIVE owner calls and vm.prank only
+        // covers the first, which left four arriving from the test contract and
+        // reverting OwnableUnauthorizedAccount.
+        vm.startPrank(safe);
+        _syncRoles(p);
+        vm.stopPrank();
         HeldController.ExpectedState memory exp = _expected();
         vm.prank(safe);
         controller.activate(ep, 1, who, EXECUTOR, p, exp);
@@ -167,12 +261,7 @@ contract HeldControllerForkTest is Test {
     }
 
     function _activate(uint64 ep, address who) internal {
-        // Hoisted deliberately: vm.prank applies to the NEXT call, and _expected()
-        // makes external view calls that would consume it before activate() runs.
-        HeldController.ExpectedState memory exp = _expected();
-        HeldController.Policy memory p = _policy();
-        vm.prank(safe);
-        controller.activate(ep, 1, who, EXECUTOR, p, exp);
+        _activateWith(ep, who, _policy());
     }
 
     function _envelope(bytes32 opId, uint8 family, uint256 amount, uint64 ep, address who)
@@ -410,6 +499,11 @@ contract HeldControllerForkTest is Test {
 
         HeldController.Policy memory p = _policy();
         p.Ls = 80_000e6;
+        // Every OTHER dimension is made consistent, so the supply amount is the only
+        // variable and the guard's verdict is unambiguous.
+        vm.startPrank(safe);
+        _syncNonSupply(p);
+        vm.stopPrank();
 
         // The naive value: 80,000 - 30,000, i.e. computed from a stale Used figure.
         vm.prank(safe);
@@ -671,6 +765,9 @@ contract HeldControllerForkTest is Test {
 
         HeldController.Policy memory p = _policy();
         p.Ls = 80_000e6;
+        vm.startPrank(safe);
+        _syncNonSupply(p);
+        vm.stopPrank();
         HeldController.ExpectedState memory exp = _expected();
 
         // STALE: the expected state claims no consumption. The batch must revert whole.
@@ -698,6 +795,80 @@ contract HeldControllerForkTest is Test {
         assertTrue(okGood, "consistent activation batch succeeds");
         assertTrue(controller.active());
         assertEq(controller.remainingSupply(), 60_000e6);
+    }
+
+    /// @dev The native COUNT allowance must be CONSUMED by the economic call, not merely
+    ///      checked at activation. Without a CallWithinAllowance node it would sit at its
+    ///      ceiling forever while the controller's own count advanced.
+    function test_NativeCountAllowanceIsConsumedByTheEconomicCall() public {
+        _activate(1, runnerB);
+        (,,, uint128 countBefore,) = IRoles(roles).allowances(NORMAL_COUNT_KEY);
+        (,,, uint128 restoreCountBefore,) = IRoles(roles).allowances(RESTORE_COUNT_KEY);
+
+        _supply(keccak256("op-count"), 5_000e6, 1, PK_RUNNER_B, runnerB);
+
+        (,,, uint128 countAfter,) = IRoles(roles).allowances(NORMAL_COUNT_KEY);
+        (,,, uint128 restoreCountAfter,) = IRoles(roles).allowances(RESTORE_COUNT_KEY);
+        assertEq(countBefore - countAfter, 1, "normal count allowance charged exactly once");
+        assertEq(restoreCountAfter, restoreCountBefore, "restoration count must not move");
+        assertEq(uint256(countAfter), uint256(_policy().Nn) - controller.normalCount(),
+            "native count and controller count agree");
+    }
+
+    /// @dev THE independent-defence test. It bypasses the controller entirely: a role
+    ///      MEMBER calls Roles directly with bad arguments. If Roles admits these, the
+    ///      native layer is not restricting anything and the controller is the only
+    ///      defence -- which is exactly what V4 §5 says it must not be.
+    ///
+    ///      The caller is an EOA temporarily assigned to the role rather than the
+    ///      controller: conditions are per-role, so this exercises the same tree, and
+    ///      pranking a contract address produced zero-gas frames under --fork-url.
+    ///
+    ///      Each refusal asserts the SPECIFIC Roles condition error (0xd0a9bf58
+    ///      ConditionViolation), so "Roles refused" is distinguished from "Morpho
+    ///      reverted later".
+    function test_RolesIndependentlyRefusesBadArgumentsFromARoleMember() public {
+        _activate(1, runnerB);
+        _supply(keccak256("op-indep-setup"), 10_000e6, 1, PK_RUNNER_B, runnerB);
+
+        vm.prank(safe);
+        _assign(runnerA, roleKey, true); // an EOA member, purely to probe the conditions
+        address stranger = address(0xDEAD);
+
+        _expectRolesRefusal(
+            abi.encodeCall(IMorpho.withdraw, (_mp(), 1_000e6, 0, safe, stranger)),
+            "withdraw to a foreign recipient");
+        _expectRolesRefusal(
+            abi.encodeCall(IMorpho.withdraw, (_mp(), 1_000e6, 0, stranger, safe)),
+            "withdraw onBehalf of a stranger");
+        _expectRolesRefusal(
+            abi.encodeCall(IMorpho.withdraw, (_mp(), 0, 5, safe, safe)),
+            "shares-denominated withdraw");
+        MarketParams memory other = _mp();
+        other.lltv = 770000000000000000;
+        _expectRolesRefusal(
+            abi.encodeCall(IMorpho.withdraw, (other, 1_000e6, 0, safe, safe)),
+            "foreign market");
+
+        // CONTROL: the well-formed call is admitted, so the refusals above are real
+        // decisions and not a blanket rejection.
+        vm.prank(runnerA);
+        (bool ok,) = roles.call(abi.encodeWithSignature(
+            "execTransactionWithRoleReturnData(address,uint256,bytes,uint8,bytes32,bool)",
+            MORPHO, uint256(0), abi.encodeCall(IMorpho.withdraw, (_mp(), 1_000e6, 0, safe, safe)),
+            uint8(0), roleKey, true));
+        assertTrue(ok, "Roles refused a well-formed withdraw: the negatives prove nothing");
+    }
+
+    /// @dev Assert Roles refuses with its own ConditionViolation, not some later failure.
+    function _expectRolesRefusal(bytes memory inner, string memory what) internal {
+        vm.prank(runnerA);
+        (bool ok, bytes memory ret) = roles.call(abi.encodeWithSignature(
+            "execTransactionWithRoleReturnData(address,uint256,bytes,uint8,bytes32,bool)",
+            MORPHO, uint256(0), inner, uint8(0), roleKey, true));
+        assertFalse(ok, string.concat("Roles ADMITTED: ", what));
+        assertEq(bytes4(ret), bytes4(0xd0a9bf58),
+            string.concat("refused, but not by a Roles condition: ", what));
     }
 
     function test_ForeignMarketIsRejected() public {

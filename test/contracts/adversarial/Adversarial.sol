@@ -16,24 +16,37 @@ import {MarketParams} from "../../../contracts/src/Interfaces.sol";
 /// @dev Stands in for the Roles modifier + Safe: performs the call the controller asks
 ///      for, so the controller's own nested-status handling is what is under test.
 contract MockRoles {
-    uint128 public supplyBalance;
-    uint128 public restorationBalance;
-
-    function setAllowances(uint128 supply_, uint128 restoration_) external {
-        supplyBalance = supply_;
-        restorationBalance = restoration_;
-    }
-
+    /// @dev Per-key balances. The controller checks FIVE dimensions (supply,
+    ///      normal-withdraw and restoration amounts, plus normal and restoration counts),
+    ///      and amounts and counts cannot share one value.
+    mapping(bytes32 => uint128) public balances;
     bytes32 public supplyKey;
     bytes32 public restorationKey;
+
+    function setKeyBalance(bytes32 key, uint128 value) external {
+        balances[key] = value;
+    }
+
+    function setAllowances(uint128 supply_, uint128 restoration_) external {
+        balances[supplyKey] = supply_;
+        balances[restorationKey] = restoration_;
+    }
 
     function setKeys(bytes32 s, bytes32 r) external {
         supplyKey = s;
         restorationKey = r;
     }
 
+    function supplyBalance() external view returns (uint128) {
+        return balances[supplyKey];
+    }
+
+    /// @dev The controller now checks FIVE keys (supply, normal-withdraw and restoration
+    ///      amounts, plus normal and restoration counts). Any key other than the two
+    ///      configured amount keys answers from `otherBalance`, which the harness sets to
+    ///      whatever the policy requires.
     function allowances(bytes32 key) external view returns (uint128, uint128, uint64, uint128, uint64) {
-        uint128 bal = key == restorationKey ? restorationBalance : supplyBalance;
+        uint128 bal = balances[key];
         return (0, bal, 0, bal, 0);
     }
 

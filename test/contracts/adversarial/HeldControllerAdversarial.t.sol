@@ -23,6 +23,9 @@ contract HeldControllerAdversarialTest is Test {
     bytes32 constant RESTORE_ROLE = keccak256("r");
     bytes32 constant SUPPLY_KEY = keccak256("sk");
     bytes32 constant RESTORE_KEY = keccak256("rk");
+    bytes32 constant NW_KEY = keccak256("nw");
+    bytes32 constant NC_KEY = keccak256("nc");
+    bytes32 constant RC_KEY = keccak256("rc");
 
     uint128 constant LS = 50_000e6;
     uint128 constant LR = 10_000e6;
@@ -48,7 +51,15 @@ contract HeldControllerAdversarialTest is Test {
         });
         c = new HeldController(
             SAFE, address(roles), address(morpho), address(token),
-            keccak256(abi.encode(mp)), LINEAGE, NORMAL_ROLE, RESTORE_ROLE, SUPPLY_KEY, RESTORE_KEY
+            keccak256(abi.encode(mp)), LINEAGE, HeldController.Keys({
+                normalRole: NORMAL_ROLE,
+                restorationRole: RESTORE_ROLE,
+                supplyAmount: SUPPLY_KEY,
+                normalWithdrawAmount: NW_KEY,
+                restorationAmount: RESTORE_KEY,
+                normalCount: NC_KEY,
+                restorationCount: RC_KEY
+            })
         );
 
         HeldController.Policy memory p;
@@ -57,6 +68,9 @@ contract HeldControllerAdversarialTest is Test {
         p.ms = 1_000e6; p.mn = 1_000e6;
         p.F = 1_000e6; p.H = 0;
         p.Nn = 10; p.Nr = 5; p.dn = 0; p.dr = 0;
+        roles.setKeyBalance(NW_KEY, p.Ln);
+        roles.setKeyBalance(NC_KEY, uint128(p.Nn));
+        roles.setKeyBalance(RC_KEY, uint128(p.Nr));
         HeldController.ExpectedState memory e;
         runner = vm.addr(PK_RUNNER);
         vm.prank(SAFE);

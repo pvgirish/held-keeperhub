@@ -26,6 +26,9 @@ contract HeldControllerPropertiesTest is Test {
     bytes32 constant RESTORE_ROLE = keccak256("r");
     bytes32 constant SUPPLY_KEY = keccak256("sk");
     bytes32 constant RESTORE_KEY = keccak256("rk");
+    bytes32 constant NW_KEY = keccak256("nw");
+    bytes32 constant NC_KEY = keccak256("nc");
+    bytes32 constant RC_KEY = keccak256("rc");
 
     // The policy under test. Fixed so the reference predicate is readable.
     uint128 constant LS = 100_000e6;
@@ -81,9 +84,20 @@ contract HeldControllerPropertiesTest is Test {
         });
         controller = new HeldController(
             SAFE, address(roles), address(morpho), address(token),
-            keccak256(abi.encode(mp)), LINEAGE, NORMAL_ROLE, RESTORE_ROLE, SUPPLY_KEY, RESTORE_KEY
+            keccak256(abi.encode(mp)), LINEAGE, HeldController.Keys({
+                normalRole: NORMAL_ROLE,
+                restorationRole: RESTORE_ROLE,
+                supplyAmount: SUPPLY_KEY,
+                normalWithdrawAmount: NW_KEY,
+                restorationAmount: RESTORE_KEY,
+                normalCount: NC_KEY,
+                restorationCount: RC_KEY
+            })
         );
 
+        roles.setKeyBalance(NW_KEY, p.Ln);
+        roles.setKeyBalance(NC_KEY, uint128(p.Nn));
+        roles.setKeyBalance(RC_KEY, uint128(p.Nr));
         HeldController.ExpectedState memory e;
         vm.prank(SAFE);
         controller.activate(1, 1, runner, EXECUTOR, p, e);
@@ -267,36 +281,58 @@ contract HeldControllerPropertiesTest is Test {
         assertEq(controller.usedSupply(), 0);
     }
 
-    /// @notice The withdraw lane is DERIVED from the Safe balance, never chosen. Below the
-    ///         floor it must be restoration; at or above it, normal.
+    /// @notice The withdraw lane is DERIVED from the Safe balance, never chosen.
+    ///
+    /// REPAIRED. The earlier version asked for 500e6 against a normal minimum of
+    /// 1_000e6, so a normal withdrawal could never succeed, and its lane assertions sat
+    /// inside `if (ok)`. A mutant that rejected every withdrawal would have passed it.
+    /// This version requires a LEGITIMATE SUCCESS in whichever lane the balance selects,
+    /// and asserts the exact effects, so blanket rejection fails it.
     function testFuzz_WithdrawLaneIsDerivedFromBalance(uint256 balance) public {
         balance = bound(balance, 0, 50_000e6);
         _fresh(300_000e6);
 
-        // Build a position first, then force the Safe balance to the fuzzed value.
         HeldController.Envelope memory sup = _env(keccak256("lane-setup"), 20_000e6);
         bytes memory sigS = _sig(sup);
         vm.prank(EXECUTOR);
         controller.executeSupply(sup, mp, 20_000e6, sigS);
 
         token.init(SAFE, address(morpho), balance);
-        uint256 amount = 500e6;
+        bool restoration = balance < F;
 
-        HeldController.Envelope memory env = _env(keccak256("lane"), amount);
-        env.actionFamily = 2;
-        env.payloadHash = controller.actionHash(2, keccak256(abi.encode(mp)), address(token), amount, SAFE);
+        // Choose an amount that is LEGITIMATE for the lane the balance selects:
+        //   restoration: 0 < amount <= min(Mr, F - balance)
+        //   normal:      mn <= amount <= Mn
+        uint256 amount;
+        if (restoration) {
+            uint256 room = uint256(F) - balance;
+            if (room == 0) return;            // balance == F exactly: not the restoration lane
+            amount = room < 5_000e6 ? room : 5_000e6;
+        } else {
+            amount = 1_000e6;                  // == mn, and well inside Mn
+        }
+
+        HeldController.Envelope memory env = _envFamily(keccak256("lane"), 2, amount);
         bytes memory sig = _sig(env);
         vm.prank(EXECUTOR);
         (bool ok,) = address(controller).call(
             abi.encodeCall(HeldController.executeWithdraw, (env, mp, amount, sig))
         );
 
-        if (ok) {
-            bool wasRestoration = balance < F;
-            assertEq(controller.usedRestoration() > 0, wasRestoration, "wrong lane charged");
-            assertEq(controller.usedNormalWithdraw() > 0, !wasRestoration, "wrong lane charged");
+        // A legitimate withdrawal MUST succeed. This is what a reject-all mutant fails.
+        assertTrue(ok, "a legitimate withdrawal was refused");
+        assertEq(token.balanceOf(SAFE), balance + amount, "exact receipt to the Safe");
+
+        if (restoration) {
+            assertEq(controller.usedRestoration(), amount, "restoration budget charged");
+            assertEq(controller.restorationCount(), 1);
+            assertEq(controller.usedNormalWithdraw(), 0, "normal budget must not move");
+        } else {
+            assertEq(controller.usedNormalWithdraw(), amount, "normal budget charged");
+            assertEq(controller.usedRestoration(), 0, "restoration budget must not move");
+            assertEq(controller.restorationCount(), 0);
         }
-        // Whichever lane ran, neither budget may exceed its ceiling.
+        assertEq(controller.usedSupply(), 20_000e6, "a withdrawal never refills supply");
         assertLe(controller.usedRestoration(), 10_000e6);
         assertLe(controller.usedNormalWithdraw(), 50_000e6);
     }
@@ -373,7 +409,13 @@ contract HeldControllerPropertiesTest is Test {
 
         HeldController.Policy memory p = _defaultPolicy();
         p.Ls = uint128(bound(newCeilingDelta, before.usedSupply, 500_000e6));
+        // Sync EVERY dimension, amounts AND counts. Leaving the count key at its ceiling
+        // while normalCount is already 1 is exactly what the activation guard refuses --
+        // this property caught that omission on its first run.
         roles.setAllowances(uint128(uint256(p.Ls) - before.usedSupply), uint128(p.Lr - before.usedRestoration));
+        roles.setKeyBalance(NW_KEY, p.Ln - before.usedNormalWithdraw);
+        roles.setKeyBalance(NC_KEY, uint128(p.Nn - before.normalCount));
+        roles.setKeyBalance(RC_KEY, uint128(p.Nr - before.restorationCount));
         HeldController.ExpectedState memory e;
         e.usedSupply = before.usedSupply;
         e.usedNormalWithdraw = before.usedNormalWithdraw;
