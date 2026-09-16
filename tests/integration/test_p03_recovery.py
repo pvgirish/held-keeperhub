@@ -47,7 +47,7 @@ from held_core.identity import ActionFamily, AuthorizationEnvelope, OperationSco
 from held_core.journal import Journal, OperationState, StateTransitionError  # noqa: E402
 
 from p03_fixtures import (  # noqa: E402
-    API_ENV, CONTROLLER, MARKET_PARAMS, OP_HEX, PAYLOAD_HEX, RUNNER, RUNNER_KEY,
+    API_ENV, CONTROLLER, EMPTY, MARKET_PARAMS, OP_HEX, PAYLOAD_HEX, RUNNER, RUNNER_KEY,
     Admitted, Chain, accepted, envelope, rig,
 )
 
@@ -128,13 +128,11 @@ def _():
         assert op.state is OperationState.UNKNOWN or op.state is OperationState.DISPATCHED, op.state
 
         outstanding = j2.unresolved_attempt(OP_HEX)
-        if outstanding is not None:
-            msg = expect(ResumeRequired, sub2.submit, Admitted(), envelope())
-            assert "unresolved attempt" in msg and "executed twice" in msg, msg
-        else:
-            # The attempt resolved to UNKNOWN, so the operation is blocked instead.
-            msg = expect(SubmissionError, sub2.submit, Admitted(), envelope())
-            assert "UNKNOWN" in msg or "not permitted" in msg, msg
+        assert outstanding is not None, (
+            "the crashed attempt is invisible to recovery, so nothing points at the "
+            "original idempotency key")
+        msg = expect(ResumeRequired, sub2.submit, Admitted(), envelope())
+        assert "unresolved attempt" in msg and "executed twice" in msg, msg
         assert len(t2.calls) == 0, "a second network request was sent after the crash"
 
 
@@ -180,27 +178,55 @@ sub.submit(Admitted(), envelope())
         assert len(t.calls) == 0, "a duplicate submission was sent after SIGKILL"
 
 
+@test("an UNKNOWN send leaves a LIVE attempt, not an invisible one")
+def _():
+    # This was a real bug in my own work: unresolved_attempt() matched only PENDING, so
+    # an ambiguous send -- the single most important case -- recorded UNKNOWN and vanished
+    # from recovery. It also let two tests below return before asserting anything.
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "held.sqlite")
+        j, t, sub = rig([TimeoutError("t")] * 4, path=path)
+        s = sub.submit(Admitted(), envelope())
+        assert s.send.outcome is SendOutcome.UNKNOWN
+        row = j.attempts_for(OP_HEX)[0]
+        assert row["state"] == "UNKNOWN"
+        live = j.unresolved_attempt(OP_HEX)
+        assert live is not None, "an UNKNOWN attempt must remain visible to recovery"
+        assert live["attempt_id"] == row["attempt_id"]
+
+
 @test("resume resends the IDENTICAL body under the IDENTICAL key")
 def _():
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "held.sqlite")
-        j1, t1, sub1 = rig([TimeoutError("t")], path=path)
-        try:
-            sub1.submit(Admitted(), envelope())
-        except Exception:
-            pass
-        first_body = j1.attempts_for(OP_HEX)[0]["request_body"]
-        first_key = j1.attempts_for(OP_HEX)[0]["idempotency_key"]
+        j1, t1, sub1 = rig([TimeoutError("t")] * 4, path=path)
+        sub1.submit(Admitted(), envelope())
+        first = j1.attempts_for(OP_HEX)[0]
+        first_body, first_key = first["request_body"], first["idempotency_key"]
         j1.close()
 
         j2, t2, sub2 = rig([accepted()], path=path)
-        if j2.unresolved_attempt(OP_HEX) is None:
-            return  # resolved to UNKNOWN; covered by the blocked-resend test
+        live = j2.unresolved_attempt(OP_HEX)
+        assert live is not None, "nothing to resume — the claim was lost across restart"
         s = sub2.resume(OP_HEX)
         assert s.resumed is True
+        assert len(t2.calls) == 1, "resume must send exactly one request"
         sent = t2.calls[0]
         assert sent["headers"]["Idempotency-Key"] == first_key, "resume minted a new key"
         assert json.dumps(sent["body"], sort_keys=True) == first_body, "the body changed on resume"
+
+
+@test("an ACCEPTED or IN_PROGRESS attempt is polled, never resent")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "held.sqlite")
+        j, t, sub = rig([accepted("exec-1")], path=path)
+        sub.submit(Admitted(), envelope())
+        assert j.unresolved_attempt(OP_HEX)["state"] == "ACCEPTED"
+        before = len(t.calls)
+        msg = expect(SubmissionError, sub.resume, OP_HEX)
+        assert "the executor has it" in msg and "do not resend" in msg, msg
+        assert len(t.calls) == before, "resume re-sent an attempt the executor already had"
 
 
 @test("two concurrent submitters cannot both claim the same operation")
@@ -242,29 +268,75 @@ def _():
         assert s2.journal_state is OperationState.DISPATCHED
 
 
-@test("beyond the idempotency window a resend requires chain evidence first")
+def _expired_rig(d):
+    """A crash-preserved live attempt, observed far past the idempotency window."""
+    path = os.path.join(d, "held.sqlite")
+    j1, t1, sub1 = rig([TimeoutError("t")] * 4, path=path)
+    sub1.submit(Admitted(), envelope())
+    j1.close()
+    j2, t2, sub2 = rig([accepted()], path=path, now=lambda: 1e12)
+    assert j2.unresolved_attempt(OP_HEX) is not None, "no live attempt to exercise"
+    return j2, t2, sub2
+
+
+@test("beyond the window, a resend requires chain evidence first")
 def _():
     with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, "held.sqlite")
-        j1, t1, sub1 = rig([TimeoutError("t")], path=path)
-        try:
-            sub1.submit(Admitted(), envelope())
-        except Exception:
-            pass
-        j1.close()
-
-        j2, t2, sub2 = rig([accepted()], path=path, now=lambda: 1e12)  # far future
-        if j2.unresolved_attempt(OP_HEX) is None:
-            return
-        msg = expect(NotReconcilable, sub2.resume, OP_HEX, None)
+        j, t, sub = _expired_rig(d)
+        msg = expect(NotReconcilable, sub.resume, OP_HEX, None)
         assert "idempotency window" in msg and "consumed[operationId]" in msg, msg
-        assert len(t2.calls) == 0, "resent past the window without checking the chain"
+        assert len(t.calls) == 0, "resent past the window without checking the chain"
 
-        # With chain evidence showing it DID execute, it resolves instead of resending.
-        msg2 = expect(SubmissionError, sub2.resume, OP_HEX, Chain(PAYLOAD_HEX))
-        assert "already executed" in msg2, msg2
-        assert len(t2.calls) == 0
-        assert j2.get(OP_HEX).state is OperationState.CONFIRMED
+
+@test("beyond the window, chain evidence showing execution resolves instead of resending")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        j, t, sub = _expired_rig(d)
+        msg = expect(SubmissionError, sub.resume, OP_HEX, Chain(PAYLOAD_HEX))
+        assert "already executed" in msg, msg
+        assert len(t.calls) == 0
+        assert j.get(OP_HEX).state is OperationState.CONFIRMED
+
+
+@test("REGRESSION: beyond the window, a ZERO marker alone must NOT resend")
+def _():
+    # The defect: "not consumed at block N" was treated as "did not execute", and the
+    # method fell through to broadcast. Outside the dedupe window that is a SECOND
+    # submission of the same economic action, not a protected retry -- the original
+    # transaction may still be pending.
+    with tempfile.TemporaryDirectory() as d:
+        j, t, sub = _expired_rig(d)
+        msg = expect(NotReconcilable, sub.resume, OP_HEX, Chain(EMPTY, controller_epoch=1))
+        assert "has NOT been retired" in msg, msg
+        assert "SECOND submission" in msg, msg
+        assert len(t.calls) == 0, "a zero marker alone caused a resend"
+        assert j.get(OP_HEX).state is OperationState.UNKNOWN, "must remain blocked"
+        assert j.unresolved_attempt(OP_HEX) is not None, "the claim must survive"
+
+
+@test("beyond the window, a RETIRED authorization is definite non-execution")
+def _():
+    # The epoch has advanced past the one the envelope was signed under, so that
+    # signature can never execute. Only now is non-execution definite -- and the answer
+    # is still not "resend the old request", which would revert on the epoch check.
+    with tempfile.TemporaryDirectory() as d:
+        j, t, sub = _expired_rig(d)
+        msg = expect(SubmissionError, sub.resume, OP_HEX, Chain(EMPTY, controller_epoch=2))
+        assert "definitely did not execute" in msg, msg
+        assert "Reauthorize the SAME id and payload" in msg, msg
+        assert len(t.calls) == 0, "a retired attempt was resent"
+        assert j.get(OP_HEX).state is OperationState.FAILED
+        assert j.unresolved_attempt(OP_HEX) is None, "a retired attempt must stop blocking"
+        assert j.attempts_for(OP_HEX)[0]["state"] == "RETIRED"
+
+
+@test("a reader that cannot report the controller epoch cannot retire anything")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        j, t, sub = _expired_rig(d)
+        msg = expect(NotReconcilable, sub.resume, OP_HEX, Chain(EMPTY))  # epoch None
+        assert "did not report the controller epoch" in msg, msg
+        assert len(t.calls) == 0
 
 
 @test("an idempotency_conflict blocks the operation instead of looking in-flight")

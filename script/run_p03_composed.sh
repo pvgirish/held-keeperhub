@@ -23,7 +23,14 @@ cd "$HERE"
 PY="${PY:-$HOME/venv312/bin/python}"
 rc=0
 
-rm -f fixtures/generated/composed-call.json fixtures/generated/composed-result.json
+# A composed run starts from nothing. The journal in particular must be fresh: reusing
+# it would make pass 2 collide with its own live claim from the previous run, which is
+# correct behaviour being triggered by stale state rather than a real defect.
+rm -f fixtures/generated/composed-call.json \
+      fixtures/generated/composed-result.json \
+      fixtures/generated/composed-journal.sqlite \
+      fixtures/generated/composed-journal.sqlite-wal \
+      fixtures/generated/composed-journal.sqlite-shm
 
 ./fixtures/with_fork.sh bash -c '
   set -uo pipefail
@@ -41,7 +48,7 @@ rm -f fixtures/generated/composed-call.json fixtures/generated/composed-result.j
   [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
 
   echo "=== pass 2: build Held'"'"'s request from the admitted action ==="
-  '"$PY"' tests/integration/test_p03_composed.py 2>&1 | grep -E "^ok|^FAIL|wrote|^all" || true
+  '"$PY"' tests/integration/test_p03_composed.py 2>&1 | grep -E "^ok |^FAIL |compiler produced|wrote composed|^all " || true
   [ -f fixtures/generated/composed-call.json ] || { echo "no composed call was built"; exit 1; }
 
   echo "=== pass 3: execute those bytes against the REAL controller ==="

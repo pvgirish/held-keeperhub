@@ -57,7 +57,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol, Sequence
 
 from held_core.canonical import hex32
-from held_core.journal import Journal, OperationState
+from held_core.journal import Journal, OperationState, StateTransitionError
 
 from .controller_abi import build_execute_call, function_abi
 from .keeperhub import (
@@ -101,10 +101,19 @@ class ChainEvidence:
     block_number: int
     block_hash: str
     finalized: bool
+    # The controller's CURRENT epoch. A zero marker says an operation was not consumed at
+    # one observation point; it does not say the original transaction can never land. The
+    # only thing that settles that is retirement of the authorization it was signed under,
+    # and the controller's epoch is what shows it.
+    controller_epoch: int | None = None
 
     @property
     def empty(self) -> bool:
         return int(self.marker, 16) == 0
+
+    def retires(self, envelope_epoch: int) -> bool:
+        """True when this reading proves an envelope of that epoch can never execute."""
+        return self.controller_epoch is not None and self.controller_epoch > envelope_epoch
 
 
 class ChainReader(Protocol):
@@ -296,9 +305,17 @@ class Submitter:
         if op is None:
             raise SubmissionError(f"unknown operation {operation_id}")
 
+        # An ACCEPTED or IN_PROGRESS attempt is already with the executor. Resending it
+        # is not recovery, it is a second submission; poll and reconcile instead.
+        if attempt["state"] in ("ACCEPTED", "IN_PROGRESS"):
+            raise SubmissionError(
+                f"attempt {attempt['attempt_id']} is {attempt['state']}: the executor has "
+                "it. Poll its execution and reconcile against the chain; do not resend.")
+
         age = self._now() - float(attempt["created_at"])
         if age > IDEMPOTENCY_WINDOW_SECONDS:
-            # V4 §4: past the cache window, query chain consumption; never blindly resend.
+            # Past the documented window the provider no longer dedupes, so a resend is a
+            # genuinely NEW submission and the idempotency key protects nothing.
             if chain is None:
                 raise NotReconcilable(
                     f"attempt {attempt['attempt_id']} is {int(age)}s old, beyond the "
@@ -306,12 +323,47 @@ class Submitter:
                     "no longer dedupe it. Read consumed[operationId] before any resend.")
             evidence = chain.consumed(self.controller, operation_id)
             self._check_scope(evidence)
+
             if not evidence.empty:
                 # It executed. Resolve it rather than resending.
                 self.reconcile(operation_id, op.payload_hash, chain)
                 raise SubmissionError(
                     f"operation {operation_id} already executed on chain; resolved "
                     "instead of resending.")
+
+            # Zero marker. This is where the previous version fell through and resent,
+            # which was wrong: "not consumed at block N" is not "cannot be consumed at
+            # block N+1". The original transaction may still be pending, and outside the
+            # dedupe window a resend would be a genuinely separate submission of the same
+            # economic action.
+            #
+            # The only evidence that settles it is RETIREMENT of the authorization: once
+            # the controller's epoch has advanced past the envelope's, that signature can
+            # never execute, so non-execution is definite.
+            if evidence.retires(int(attempt["epoch"])):
+                self.journal.settle_attempt(attempt["attempt_id"], "RETIRED")
+                self.journal.transition(operation_id, OperationState.FAILED,
+                                        epoch=int(attempt["epoch"]))
+                raise SubmissionError(
+                    f"operation {operation_id} definitely did not execute: it was "
+                    f"authorized under epoch {attempt['epoch']} and the controller is now "
+                    f"at epoch {evidence.controller_epoch}, so that signature can never "
+                    "execute. The attempt is retired and the operation is FAILED. "
+                    "Reauthorize the SAME id and payload under the current epoch; do not "
+                    "resend the old request, which would revert on the epoch check.")
+
+            raise NotReconcilable(
+                f"operation {operation_id} is not consumed at finalized block "
+                f"{evidence.block_number}, but its authorization (epoch "
+                f"{attempt['epoch']}) has NOT been retired"
+                + (f" -- the controller is still at epoch {evidence.controller_epoch}"
+                   if evidence.controller_epoch is not None
+                   else " and the reader did not report the controller epoch")
+                + ". A zero marker at one observation point is not proof the original "
+                "transaction cannot still land, and past the idempotency window a resend "
+                "would be a SECOND submission rather than a deduplicated retry. Fence and "
+                "advance the epoch to retire the authorization, then reauthorize the same "
+                "id and payload. Remaining blocked.")
 
         body = json.loads(attempt["request_body"])
         request = _request_from_payload(body, attempt["calldata"])
@@ -327,11 +379,20 @@ class Submitter:
             keeperhub_execution_id=result.execution_id,
             tx_hash=result.tx_hash,
             state=result.outcome.value)
-        state = _OUTCOME_TO_STATE[result.outcome]
+        target = _OUTCOME_TO_STATE[result.outcome]
         current = self.journal.get(operation_id).state
-        if state is not current:
-            self.journal.transition(operation_id, state, epoch=epoch)
-        return Submission(operation_id, attempt, key, result, state, resumed=resumed)
+        if target is not current:
+            try:
+                self.journal.transition(operation_id, target, epoch=epoch)
+                current = target
+            except StateTransitionError:
+                # The journal forbids it, and it is right to. The case that reaches here
+                # is a resumed send succeeding while the operation is UNKNOWN: an unknown
+                # outcome has no automatic exit, because "the resend was accepted" is not
+                # evidence about what the ORIGINAL send did. The attempt row records what
+                # happened; the operation stays put until reconcile() reads the chain.
+                pass
+        return Submission(operation_id, attempt, key, result, current, resumed=resumed)
 
     # ------------------------------------------------------------ reconciliation --
     def _check_scope(self, evidence: ChainEvidence) -> None:

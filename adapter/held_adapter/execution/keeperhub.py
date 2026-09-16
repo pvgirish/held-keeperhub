@@ -84,6 +84,10 @@ IDEMPOTENCY_WINDOW_SECONDS = 24 * 3600
 CODE_IDEMPOTENCY_CONFLICT = "idempotency_conflict"
 CODE_IDEMPOTENCY_IN_PROGRESS = "idempotency_in_progress"
 
+# The documented successful-simulation status. A simulation response is
+# `{"success": true, "status": "simulated", "wouldRevert": false}`.
+STATUS_SIMULATED = "simulated"
+
 # Domain tag so an execution key can never collide with an operation id or payload hash.
 EXECUTION_KEY_DOMAIN = b"held.keeperhub.execution-key.v1"
 
@@ -476,7 +480,8 @@ class KeeperHubClient:
                 "of the signed-over request identity, not something to flip in transit."
             )
         request.verify_encoding()
-        return self._send("POST", CONTRACT_CALL_PATH, request.to_payload(), idempotency_key)
+        return self._send("POST", CONTRACT_CALL_PATH, request.to_payload(), idempotency_key,
+                          simulate_requested=True)
 
     def broadcast(self, request: ContractCallRequest, idempotency_key: str) -> SendResult:
         """Submit for real. Requires `mcp:write` and an idempotency key."""
@@ -497,7 +502,8 @@ class KeeperHubClient:
 
     # ------------------------------------------------------------------ sending --
     def _send(self, method: str, path: str, payload: Mapping[str, Any] | None,
-              idempotency_key: str | None, *, authenticated: bool = True) -> SendResult:
+              idempotency_key: str | None, *, authenticated: bool = True,
+              simulate_requested: bool = False) -> SendResult:
         url = f"{self.base_url}{path}"
         body = json.dumps(payload).encode() if payload is not None else None
         headers = self._headers(idempotency_key) if authenticated else self._public_headers()
@@ -518,7 +524,7 @@ class KeeperHubClient:
                     continue
                 return last
 
-            result = self._classify(resp, attempt)
+            result = self._classify(resp, attempt, simulate_requested)
 
             # An in-progress conflict is retryable by POLLING, not by resending; the
             # caller does that. Only rate limits and ambiguous server errors are resent,
@@ -534,7 +540,8 @@ class KeeperHubClient:
 
         return last or SendResult(SendOutcome.UNKNOWN, self.transport.hosted)
 
-    def _classify(self, resp: HttpResponse, attempts_made: int) -> SendResult:
+    def _classify(self, resp: HttpResponse, attempts_made: int,
+                  simulate_requested: bool = False) -> SendResult:
         data = resp.json()
         hosted = self.transport.hosted
         execution_id = data.get("executionId") or data.get("id")
@@ -556,10 +563,48 @@ class KeeperHubClient:
                 raw=data, attempts_made=attempts_made, **kw)
 
         if 200 <= resp.status_code < 300:
-            # A simulation that returns 200 is NOT an execution. Distinguishing this
-            # keeps a dry run from ever being recorded as economic success.
-            if data.get("simulated") is True or data.get("simulation") is not None:
-                return make(SendOutcome.SIMULATED)
+            # A simulation is NOT an execution, and the classification must not depend on
+            # guessing the response shape.
+            #
+            # The previous version looked for `simulated: true` / `simulation` -- fields I
+            # invented, and then tested against my own invention. The DOCUMENTED successful
+            # simulation is `{"success": true, "status": "simulated", "wouldRevert": false}`,
+            # which that check missed entirely and classified as ACCEPTED: a dry run
+            # recorded as an economic execution.
+            #
+            # The primary signal is now the REQUEST mode, which Held always knows, with the
+            # documented status as confirmation. A response that disagrees with the mode we
+            # asked for is a contradiction, not something to resolve silently.
+            status_text = str(data.get("status") or "").lower()
+            looks_simulated = (
+                status_text == STATUS_SIMULATED
+                or data.get("simulated") is True
+                or data.get("simulation") is not None
+            )
+            if simulate_requested or looks_simulated:
+                if simulate_requested and not looks_simulated and status_text:
+                    return make(
+                        SendOutcome.UNKNOWN,
+                        error=(
+                            f"asked to simulate but the response reports status "
+                            f"{status_text!r}. Refusing to record this as either a "
+                            "simulation or an execution."))
+                if looks_simulated and not simulate_requested:
+                    return make(
+                        SendOutcome.UNKNOWN,
+                        error=("a broadcast returned a SIMULATED response; the request "
+                               "mode and the response disagree, so the on-chain outcome "
+                               "is unknown."))
+                result = make(SendOutcome.SIMULATED)
+                if data.get("wouldRevert") is True:
+                    # A simulation that predicts a revert is a successful simulation
+                    # reporting a failing call. It must never look like a green light.
+                    return make(SendOutcome.REJECTED,
+                                error=("simulation reports wouldRevert=true: the call "
+                                       "would fail on chain. "
+                                       f"{data.get('revertReason') or data.get('message') or ''}"
+                                       ).strip())
+                return result
             return make(SendOutcome.ACCEPTED)
 
         if resp.status_code == 409:

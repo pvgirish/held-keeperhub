@@ -12,10 +12,10 @@
   "interception": "17 passed",
   "native_bundle": "9 passed (against the REAL pinned compiler)",
   "signing": "18 passed",
-  "keeperhub_wire_contract": "23 passed",
+  "keeperhub_wire_contract": "27 passed",
   "submission_binding_and_reconciliation": "18 passed",
-  "crash_restart_recovery": "8 passed",
-  "total_local": 101,
+  "crash_restart_recovery": "14 passed",
+  "total_local": 103,
   "composed": "make check-phase-03-composed \u2014 PASS (local only)"
  },
  "what_is_established": {
@@ -89,7 +89,7 @@
  "still_not_established": {
   "L10": "BLOCKED-UNKNOWN. No KeeperHub organisation API key. The authenticated route has never been called; it is neither stubbed nor simulated.",
   "server_side_encoding": "Whether KeeperHub's encoder reproduces the intended calldata from functionArgs. One authenticated dry run would settle it.",
-  "native_result_ack": "The real native consumer/acknowledgement boundary is not yet connected to the submission path. A local journal transition is NOT native acknowledgement.",
+  "native_result_ack": "The COMMIT BOUNDARY is now exercised end to end with a local consumer harness: delivery and acknowledgement in one transaction, idempotent duplicate, refused conflict. What is still absent is the actual Almanak consumer on the other side of it.",
   "composed_trace": "A LOCAL composed trace now exists (see composed_local_run). What is still missing is the same trace THROUGH KeeperHub, which is L10-blocked.",
   "public_chain": "Nothing deployed, funded or executed on any public chain."
  },
@@ -109,7 +109,8 @@
     "A single flipped byte inside the encoded arguments is refused and moves nothing.",
     "Replaying the identical request bytes is refused by the consumed-id guard and does not change consumption.",
     "After the real execution, resume() past the idempotency window reads the chain, finds it executed, resolves to CONFIRMED and sends ZERO duplicate requests."
-   ]
+   ],
+   "finality_labelling": "CORRECTED. The fork reader now separates OBSERVED fields (marker, chain id, controller -- read from the executing fork test) from SYNTHETIC ones (block hash, finality, block number). An anvil fork has no meaningful finality, so this run must NOT be described as carrying finalized-chain provenance. The earlier version supplied 0xabab... and finalized=True as though observed."
   },
   "address_binding": "Passes 1 and 3 deploy the controller to the same address because each forge run starts from the same pinned fork block with the same deployer nonce. This is not assumed: the EIP-712 domain separator commits to the controller address, so a mismatch would fail signature verification rather than pass silently.",
   "fixture_note": "The fixture's default per-action minimum is 1,000 USDC while the real compiler produced 100 USDC. The composed run activates with ms lowered to the compiler's amount -- a customer-approved-limits choice. The REQUEST is never adjusted to fit the fixture.",
@@ -118,6 +119,41 @@
    "That KeeperHub's server-side encoder reproduces these bytes from functionName/functionArgs.",
    "Any public-chain execution. This is a local fork at block 51353212.",
    "The real native result/ack consumer boundary: the journal transition here is Held's own durable state, not native acknowledgement."
-  ]
+  ],
+  "lifecycle_completed": {
+   "was": "The composed Python test read pre-generated vectors, constructed a stand-in admitted object, and afterwards built a FRESH temporary journal with placeholder request metadata. That exercised reconcile() but skipped the durable pre-I/O claim, and the 'admitted' operation id was a fork fixture (keccak(\"xlang-sign\")), not one the adapter had minted.",
+   "now": [
+    "The REAL pinned compiler runs in this test and its output is admitted through admit_native_bundle. Observed: 2 native calls, action hash 0x51bb5c65...",
+    "Held builds its OWN envelope for that admitted operation; only the CONTROLLER ADDRESS comes from the fork, because the EIP-712 domain separator commits to it and Python cannot know it before deployment.",
+    "The REAL Submitter performs the claim. A capture transport observes, at the moment the request would leave, that the operation is already durable and the exact request is persisted -- then refuses to deliver, because KeeperHub is not called.",
+    "ONE journal spans the whole run: the claim made before the request and the reconciliation afterwards are the same operation in the same database.",
+    "The native result is delivered and acknowledged in ONE commit, with a duplicate delivery a no-op and a conflicting result refused."
+   ],
+   "native_ack_scope": "The consumer is a LOCAL harness standing in for a native strategy's result sink, labelled as such. What it exercises is the COMMIT BOUNDARY -- the part that can be wrong. It is not the Almanak consumer."
+  }
+ },
+ "second_review_findings_repaired": {
+  "when": "63928be review, 2026-09-16",
+  "reproduced_by_the_reviewer_and_by_me": {
+   "simulation_classifier": {
+    "was": "The classifier looked for `simulated: true` / `simulation` -- fields I INVENTED, and the project's own fixture used that invention, so the test passed while missing the real thing. The DOCUMENTED response {\"success\": true, \"status\": \"simulated\", \"wouldRevert\": false} classified as ACCEPTED: a dry run recorded as an economic execution.",
+    "now": "Classification keys off the REQUEST MODE, which Held always knows, with the documented `status` as confirmation. A response whose mode disagrees with the request is UNKNOWN, not silently resolved. `wouldRevert: true` is REJECTED -- a successful simulation reporting a failing call is not a green light.",
+    "verified": "Reproduced the ACCEPTED result myself before fixing; four classifier cases now assert the documented shapes."
+   },
+   "expired_cache_resend": {
+    "was": "Past the idempotency window, resume() read the chain and -- on a ZERO marker -- FELL THROUGH to broadcast. 'Not consumed at block N' is not 'cannot be consumed at block N+1', and outside the dedupe window that resend is a genuinely SECOND submission of the same economic action.",
+    "now": "A zero marker alone never resends. The only evidence that settles non-execution is RETIREMENT of the authorization: once the controller's epoch has advanced past the envelope's, that signature can never execute. ChainEvidence carries controller_epoch; a retired attempt is settled RETIRED, the operation becomes FAILED, and the operator is told to reauthorize the SAME id and payload -- not to resend the old request, which would revert on the epoch check. Without retirement evidence the operation stays blocked.",
+    "verified": "Reproduced the single stray broadcast myself; the regression test now asserts zero calls and a surviving claim."
+   }
+  },
+  "additional_defect_found_while_fixing": {
+   "what": "Journal.unresolved_attempt() matched only state='PENDING'.",
+   "effect": "An ambiguous send recorded UNKNOWN and the attempt VANISHED from recovery -- the single most important case. Nothing pointed at the original idempotency key, and it is also what let two of my tests return before asserting anything.",
+   "now": "LIVE_ATTEMPT_STATES = PENDING, UNKNOWN, IN_PROGRESS, ACCEPTED; the unique partial index covers all of them; SETTLED_ATTEMPT_STATES are terminal. An ACCEPTED or IN_PROGRESS attempt is polled, never resent. Journal schema 2 -> 3."
+  },
+  "test_hygiene": {
+   "was": "Two recovery tests could `return` before exercising their assertions when an attempt was no longer PENDING.",
+   "now": "The early returns are gone. A shared _expired_rig() asserts a live attempt exists before each expired-window case, and the restart test asserts the claim is visible rather than branching on it."
+  }
  }
 }

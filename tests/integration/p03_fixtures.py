@@ -101,20 +101,24 @@ class Chain:
 
     def __init__(self, marker: str = EMPTY, *, chain_id: int = CHAIN_ID,
                  controller: str = CONTROLLER, finalized: bool = True,
-                 block_number: int = 51353212) -> None:
+                 block_number: int = 51353212, controller_epoch: int | None = None) -> None:
         self.marker = marker
         self.chain_id = chain_id
         self.controller = controller
         self.finalized = finalized
         self.block_number = block_number
+        self.controller_epoch = controller_epoch
         self.reads = 0
 
     def consumed(self, controller: str, operation_id: str) -> ChainEvidence:
         self.reads += 1
+        # SYNTHETIC. block_hash is a fixture value, not an observed hash; `finalized` is
+        # asserted by this stub rather than derived from a node. Tests that need real
+        # provenance must read it from the fork, not from here.
         return ChainEvidence(
             marker=self.marker, chain_id=self.chain_id, controller=self.controller,
             block_number=self.block_number, block_hash="0x" + "ab" * 32,
-            finalized=self.finalized)
+            finalized=self.finalized, controller_epoch=self.controller_epoch)
 
 
 def accepted(execution_id: str = "exec-1", tx_hash: str | None = None) -> HttpResponse:

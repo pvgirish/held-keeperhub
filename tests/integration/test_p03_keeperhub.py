@@ -180,14 +180,56 @@ def _():
     assert c3.broadcast(request(), KEY).outcome is SendOutcome.UNKNOWN
 
 
-@test("C1: a simulation result is SIMULATED, never an execution")
+@test("C1 REGRESSION: the DOCUMENTED simulation response is SIMULATED, not ACCEPTED")
 def _():
-    c, t = client([response({"simulated": True}, 200)])
+    # The defect: the classifier looked for `simulated: true` / `simulation` -- fields I
+    # invented and then tested against my own invention. The documented response is
+    # {"success": true, "status": "simulated", "wouldRevert": false}, which that check
+    # missed entirely, so a dry run was recorded as an economic execution.
+    c, t = client([response(
+        {"success": True, "status": "simulated", "wouldRevert": False}, 200)])
     r = c.dry_run(request(simulate=True))
     assert t.calls[0]["body"]["simulate"] is True
-    assert r.outcome is SendOutcome.SIMULATED, "a dry run must never read as ACCEPTED"
+    assert r.outcome is SendOutcome.SIMULATED, (
+        f"the documented simulation shape classified as {r.outcome.value}")
     assert r.tx_hash is None
-    # simulate is part of the request identity, not a transit flag.
+
+
+@test("C1: a simulation predicting a revert is REJECTED, not a green light")
+def _():
+    c, _ = client([response(
+        {"success": True, "status": "simulated", "wouldRevert": True,
+         "revertReason": "AmountOutOfRange()"}, 200)])
+    r = c.dry_run(request(simulate=True))
+    assert r.outcome is SendOutcome.REJECTED, (
+        "a successful simulation reporting a failing call must not read as SIMULATED-ok")
+    assert "wouldRevert=true" in (r.error or "") and "AmountOutOfRange" in (r.error or "")
+
+
+@test("C1: request mode and response mode must agree")
+def _():
+    # A broadcast that comes back simulated, or a simulation that comes back as something
+    # else, is a contradiction. Neither may be recorded as a settled outcome.
+    c, _ = client([response({"success": True, "status": "simulated"}, 202)])
+    r = c.broadcast(request(), KEY)
+    assert r.outcome is SendOutcome.UNKNOWN and "disagree" in (r.error or "")
+
+    c2, _ = client([response({"success": True, "status": "executed"}, 200)])
+    r2 = c2.dry_run(request(simulate=True))
+    assert r2.outcome is SendOutcome.UNKNOWN
+    assert "asked to simulate" in (r2.error or "")
+
+
+@test("C1: the legacy fixture shape is still recognised, so old records stay readable")
+def _():
+    c, _ = client([response({"simulated": True}, 200)])
+    assert c.dry_run(request(simulate=True)).outcome is SendOutcome.SIMULATED
+
+
+
+@test("C1: simulate is part of the request identity, not a transit flag")
+def _():
+    c, _ = client([response({}, 200)])
     assert "simulate=True" in expect(KeeperHubError, c.dry_run, request(simulate=False))
     assert "simulate=False" in expect(KeeperHubError, c.broadcast, request(simulate=True), KEY)
 

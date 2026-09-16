@@ -50,7 +50,7 @@
       "native_proves_revert": false,
       "marker_set_by_contract": "reconciliation_required_step_index=0",
       "restart": {
-        "persisted_to": "/var/folders/n1/2q4qsp0s17n9l_s2z7n5r2dw0000gn/T/held-native-recovery-76ozoz60/execution_progress.json",
+        "persisted_to": "/var/folders/n1/2q4qsp0s17n9l_s2z7n5r2dw0000gn/T/held-native-recovery-vubdzptk/execution_progress.json",
         "in_memory_objects_dropped": true,
         "reopened_execution_id": "held-fixture-exec-1",
         "submitted_identity_survived": true,

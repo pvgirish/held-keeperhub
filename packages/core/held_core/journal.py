@@ -29,7 +29,7 @@ from .canonical import hex32, normalize_address, normalize_hash
 from .identity import IdentityConflict
 from .units import UnitError, uint, uint64
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class OperationState(str, Enum):
@@ -63,6 +63,14 @@ _ALLOWED: dict[OperationState, frozenset[OperationState]] = {
     OperationState.FAILED: frozenset({OperationState.AUTHORIZED}),
     OperationState.CONFIRMED: frozenset(),  # terminal. Never re-execute.
 }
+
+# An attempt in one of these states may be, or already is, in flight. It blocks a new
+# claim and is what recovery resumes.
+LIVE_ATTEMPT_STATES = ("PENDING", "UNKNOWN", "IN_PROGRESS", "ACCEPTED")
+# Terminal: this attempt can never execute, so it no longer blocks the operation.
+SETTLED_ATTEMPT_STATES = frozenset({"REJECTED", "RETIRED", "CONFIRMED", "DRY_RUN",
+                                    "IDEMPOTENCY_CONFLICT"})
+_LIVE_PLACEHOLDERS = ",".join("?" for _ in LIVE_ATTEMPT_STATES)
 
 _SECRET_PATTERNS = (
     re.compile(r"\b0x[0-9a-fA-F]{64}\b"),                # raw 32-byte key material
@@ -159,10 +167,15 @@ CREATE TABLE IF NOT EXISTS attempts (
     kind                   TEXT NOT NULL DEFAULT 'BROADCAST'
 );
 CREATE INDEX IF NOT EXISTS attempts_by_op ON attempts(operation_id);
--- One live claim per operation. A PENDING broadcast attempt is the claim; the partial
--- index makes a second concurrent claim a database error rather than a race.
-CREATE UNIQUE INDEX IF NOT EXISTS one_pending_broadcast_per_op
-    ON attempts(operation_id) WHERE state = 'PENDING' AND kind = 'BROADCAST';
+-- One live claim per operation. An attempt is the claim until it is SETTLED, and
+-- "settled" is narrower than "has a recorded outcome": an UNKNOWN or ACCEPTED attempt is
+-- still outstanding, because something may be or already is in flight. Matching only
+-- PENDING here was a real bug -- an ambiguous send recorded UNKNOWN, the attempt became
+-- invisible to recovery, and the operation had no resumable claim at all.
+CREATE UNIQUE INDEX IF NOT EXISTS one_live_broadcast_per_op
+    ON attempts(operation_id)
+    WHERE kind = 'BROADCAST'
+      AND state IN ('PENDING', 'UNKNOWN', 'IN_PROGRESS', 'ACCEPTED');
 
 -- At-least-once delivery with an idempotent consumer acknowledgement. `acked_at` is
 -- only ever set in the SAME transaction as the consumer's own state update.
@@ -435,9 +448,9 @@ class Journal:
 
             if kind == "BROADCAST":
                 existing = self._db.execute(
-                    "SELECT attempt_id FROM attempts WHERE operation_id=? AND state='PENDING' "
-                    "AND kind='BROADCAST'",
-                    (oid,),
+                    "SELECT attempt_id FROM attempts WHERE operation_id=? AND kind='BROADCAST' "
+                    f"AND state IN ({_LIVE_PLACEHOLDERS})",
+                    (oid, *LIVE_ATTEMPT_STATES),
                 ).fetchone()
                 if existing is not None:
                     raise StateTransitionError(
@@ -474,18 +487,41 @@ class Journal:
             raise
 
     def unresolved_attempt(self, operation_id: bytes | str) -> dict[str, Any] | None:
-        """The PENDING broadcast attempt blocking this operation, if any.
+        """The live broadcast attempt blocking this operation, if any.
+
+        "Live" is every state that is not SETTLED, not merely PENDING. An attempt whose
+        send returned UNKNOWN is the single most important case recovery has to see: the
+        request may have reached the executor, and if it is invisible here the operation
+        has no resumable claim and nothing points at the original idempotency key.
 
         Recovery reads this to resume the ORIGINAL request under its ORIGINAL key rather
         than minting a new one.
         """
         oid = _as_hash(operation_id, "operation_id")
         row = self._db.execute(
-            "SELECT * FROM attempts WHERE operation_id=? AND state='PENDING' AND kind='BROADCAST' "
-            "ORDER BY created_at LIMIT 1",
-            (oid,),
+            f"SELECT * FROM attempts WHERE operation_id=? AND kind='BROADCAST' "
+            f"AND state IN ({_LIVE_PLACEHOLDERS}) ORDER BY created_at LIMIT 1",
+            (oid, *LIVE_ATTEMPT_STATES),
         ).fetchone()
         return dict(row) if row else None
+
+    def settle_attempt(self, attempt_id: str, state: str, note: str | None = None) -> None:
+        """Mark an attempt terminally settled so it stops blocking the operation.
+
+        Used when evidence establishes that this attempt can never execute -- for example
+        its authorization epoch has been retired. Settling is deliberately explicit: an
+        attempt must not drift out of the live set just because time passed.
+        """
+        if state not in SETTLED_ATTEMPT_STATES:
+            raise UnitError(f"state: expected one of {sorted(SETTLED_ATTEMPT_STATES)}")
+        self._begin()
+        try:
+            self._db.execute(
+                "UPDATE attempts SET state=? WHERE attempt_id=?", (state, attempt_id))
+            self._commit()
+        except Exception:
+            self._rollback()
+            raise
 
     def record_send_result(
         self,
