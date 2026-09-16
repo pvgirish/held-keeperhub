@@ -721,6 +721,15 @@ contract HeldControllerForkTest is HeldForkHarness {
         vm.serializeUint(o, "policyVersion", env.policyVersion);
         vm.serializeAddress(o, "runner", env.runner);
         vm.serializeBytes32(o, "signingHash", digest);
+        // Everything the Python side needs to build the FULL typed controller call,
+        // so the composed run does not have to guess any of it.
+        vm.serializeAddress(o, "executor", EXECUTOR);
+        vm.serializeUint(o, "amount", 100_000_000);
+        vm.serializeAddress(o, "loanToken", USDC);
+        vm.serializeAddress(o, "collateralToken", COLL);
+        vm.serializeAddress(o, "oracle", ORACLE);
+        vm.serializeAddress(o, "irm", IRM);
+        vm.serializeUint(o, "lltv", LLTV);
         string memory out = vm.serializeBytes(o, "signature", sig);
         vm.writeJson(out, "./fixtures/generated/signing-vector.json");
     }

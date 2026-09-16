@@ -4,7 +4,7 @@ SDK ?= $(HOME)/src/sdk
 export PY
 export SDK
 
-.PHONY: check-plan-digests check-phase-00 check-phase-01 check-phase-02 check-phase-03-local check-phase-03 check-phase-04 check-phase-05 check-manifests check-probe \
+.PHONY: check-plan-digests check-phase-00 check-phase-01 check-phase-02 check-phase-03-local check-phase-03 check-phase-03-composed check-phase-04 check-phase-05 check-manifests check-probe \
         check-baseline check-native-workflow gate-tests
 
 check-phase-00:
@@ -77,11 +77,17 @@ check-phase-03-local:
 	@$(PY) tests/integration/test_p03_submit.py
 	@$(PY) tests/integration/test_p03_recovery.py
 
+## The composed LOCAL run: real compiler -> admitted -> signed -> typed request ->
+## executed by the REAL controller on the fork -> journal reconciled from that reading.
+check-phase-03-composed:
+	@./script/run_p03_composed.sh
+
 ## The phase prompt names this gate `check-phase-03`. It is NOT satisfied: the required
 ## composed hosted execution is blocked on L10. This alias runs every local check and
 ## then says so, so that invoking the prompt's own command cannot read as a pass.
 check-phase-03:
 	@$(MAKE) --no-print-directory check-phase-03-local
+	@$(MAKE) --no-print-directory check-phase-03-composed
 	@echo "---"
 	@echo "check-phase-03: INCOMPLETE — local half passes; the required KeeperHub public"
 	@echo "                execution (L10) has not been performed and is not simulated."

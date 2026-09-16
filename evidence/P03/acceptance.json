@@ -15,7 +15,8 @@
   "keeperhub_wire_contract": "23 passed",
   "submission_binding_and_reconciliation": "18 passed",
   "crash_restart_recovery": "8 passed",
-  "total_local": 93
+  "total_local": 101,
+  "composed": "make check-phase-03-composed \u2014 PASS (local only)"
  },
  "what_is_established": {
   "native_connection": "CompilationResult -> action_bundle -> Held record -> admission, with economic calldata copied byte for byte. The producer verdict is strictly fail-closed: exact status set, no prefix match, no default success for a missing verdict, FAILED+is_safety_refusal preserved as a refusal, PARTIAL refused, self-contradictory SUCCESS refused, and a declared intent_type that disagrees with the family decoded from calldata refused.",
@@ -89,7 +90,34 @@
   "L10": "BLOCKED-UNKNOWN. No KeeperHub organisation API key. The authenticated route has never been called; it is neither stubbed nor simulated.",
   "server_side_encoding": "Whether KeeperHub's encoder reproduces the intended calldata from functionArgs. One authenticated dry run would settle it.",
   "native_result_ack": "The real native consumer/acknowledgement boundary is not yet connected to the submission path. A local journal transition is NOT native acknowledgement.",
-  "composed_trace": "No genuine end-to-end native-producer -> admitted -> signed -> submitted -> controller-effect -> native-result trace exists yet.",
+  "composed_trace": "A LOCAL composed trace now exists (see composed_local_run). What is still missing is the same trace THROUGH KeeperHub, which is L10-blocked.",
   "public_chain": "Nothing deployed, funded or executed on any public chain."
+ },
+ "composed_local_run": {
+  "gate": "make check-phase-03-composed",
+  "result": "PASS \u2014 3 fork tests + 5 Python checks",
+  "what_it_connects": "real pinned Almanak IntentCompiler -> CompilationResult (producer verdict checked) -> ActionBundle -> Held record -> admit_bundle -> AuthorizationEnvelope signed by the runner key -> the one permitted typed controller call, ABI-encoded -> executed VERBATIM by the real HeldController against real pinned Morpho on the Base-mainnet fork -> consumed[operationId] read back -> journal reconciled to CONFIRMED from THAT reading -> recovery refuses to resend.",
+  "why_it_is_new": "Everything before it proved pieces. The adapter proved it could admit, sign and encode; the fork proved the controller enforces its limits. Nothing proved the two halves fit together. If the Python encoder and the Solidity ABI disagreed by one byte the controller would revert, so this is the first check in the project that would catch such a disagreement.",
+  "evidence": {
+   "calldata_bytes": 644,
+   "selector": "0xfe6a574c (executeSupply, confirmed against forge inspect)",
+   "operation_id": "0x7821251001ab03d8e81ad09ebddebfc1aca05777d26aa59aed7724604bc0a18e",
+   "consumed_payload_on_chain": "0x51bb5c6557d3ea42937270b2ded34f064af9a3ec0f46df379dd5f7ee2e88dbed",
+   "loop_closure": "That consumed payload is byte-identical to expectedActionHash in fixtures/crosslang-vectors.json, which Python computed from the REAL compiler output. The controller independently recorded the same hash after executing Python's bytes.",
+   "economic_effect": "100.000000 USDC debited from the Safe, Morpho position increased, native Roles quota charged exactly once.",
+   "negatives": [
+    "A single flipped byte inside the encoded arguments is refused and moves nothing.",
+    "Replaying the identical request bytes is refused by the consumed-id guard and does not change consumption.",
+    "After the real execution, resume() past the idempotency window reads the chain, finds it executed, resolves to CONFIRMED and sends ZERO duplicate requests."
+   ]
+  },
+  "address_binding": "Passes 1 and 3 deploy the controller to the same address because each forge run starts from the same pinned fork block with the same deployer nonce. This is not assumed: the EIP-712 domain separator commits to the controller address, so a mismatch would fail signature verification rather than pass silently.",
+  "fixture_note": "The fixture's default per-action minimum is 1,000 USDC while the real compiler produced 100 USDC. The composed run activates with ms lowered to the compiler's amount -- a customer-approved-limits choice. The REQUEST is never adjusted to fit the fixture.",
+  "what_it_does_NOT_establish": [
+   "KeeperHub is not involved. The calldata is delivered directly because the hosted route needs an organisation credential (L10) that does not exist and is not simulated.",
+   "That KeeperHub's server-side encoder reproduces these bytes from functionName/functionArgs.",
+   "Any public-chain execution. This is a local fork at block 51353212.",
+   "The real native result/ack consumer boundary: the journal transition here is Held's own durable state, not native acknowledgement."
+  ]
  }
 }
