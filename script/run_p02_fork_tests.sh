@@ -12,12 +12,18 @@
 #   Stage 2 — REAL PINNED ROUTE, on a Base-mainnet fork, on top of the genuine 2-of-3
 #             Safe + Zodiac Roles fixture built by fixtures/scripts/01..03b.
 #
-# They are run separately on purpose. Beyond keeping the evidence classes distinct,
-# forge falls back to `VM::deployCode` for the adversarial test contract (it embeds six
-# mock bytecodes and exceeds the inline-deploy size), and under `--fork-url` a call to
-# that deployed address reverts with zero gas. That is a harness interaction, NOT a
-# controller defect: the same controller deploys and activates successfully under the
-# fork in stage 2.
+# They are run separately on purpose: P02 asks for unit/property tests AND realistic fork
+# tests, not for every adversarial fixture to run under --fork-url.
+#
+# There is also an unresolved combined-configuration failure. ESTABLISHED: the adversarial
+# suite passes standalone; the real-route suite passes on the fork; the combined
+# configuration fails, with forge falling back to `VM::deployCode` for the adversarial test
+# contract and the subsequent call reverting with zero gas (trace in
+# evidence/P02/adversarial-fork-trace.txt). NOT ESTABLISHED: the precise cause. The
+# executor's diagnosis is a harness/test-contract-size interaction rather than a controller
+# defect, but no minimal reproduction has been built, so that remains a diagnosis rather
+# than a proven root cause. Both stages build from the same controller source and compiler
+# settings, and failure in EITHER stage fails this command.
 set -uo pipefail
 export PATH="$HOME/.foundry/bin:$PATH"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"

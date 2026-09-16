@@ -1,0 +1,48 @@
+No files changed, compilation skipped
+
+Ran 1 test for test/contracts/adversarial/HeldControllerAdversarial.t.sol:HeldControllerAdversarialTest
+[FAIL: EvmError: Revert] test_MockHarnessHappyPathSucceeds() (block: 51353228) (gas: 1209933)
+Traces:
+  [1209933] HeldControllerAdversarialTest::test_MockHarnessHappyPathSucceeds()
+    ├─ [217696] → new MockToken@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 761 bytes of code
+    ├─ [257021] → new MockRoles@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   └─ ← [Return] 942 bytes of code
+    ├─ [335878] → new MockMorpho@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
+    │   └─ ← [Return] 1307 bytes of code
+    ├─ [66484] MockRoles::setKeys(0x8c9c399f3a756a7a20b1c7f6569bbc0fab4533dae2d0d1a4748decd1e8a6ef19, 0xbc4b61f6494b1bc991ec370e999ec6adb5855e8f834c3f0479ae4b6e2eb7fb73)
+    │   └─ ← [Stop]
+    ├─ [43916] MockRoles::setAllowances(50000000000 [5e10], 10000000000 [1e10])
+    │   └─ ← [Stop]
+    ├─ [43806] MockMorpho::setToken(MockToken: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f])
+    │   └─ ← [Return]
+    ├─ [88596] MockToken::init(0x0000000000000000000000000000000000005aFE, MockMorpho: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a], 50000000000 [5e10])
+    │   └─ ← [Return]
+    ├─ [0] VM::deployCode("contracts/src/HeldController.sol:HeldController", 0x0000000000000000000000000000000000000000000000000000000000005afe0000000000000000000000002e234dae75c793f67a35089c9d99245e1c58470b000000000000000000000000f62849f9a0b5bf2913b396098f7c7019b51a820a0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f5943923cd8c8f707942da96c79d4574a73b02c22d8a36b42ed47757ef1c3798a00000000000000000000000000000000000000000000000000000000000000114b4ecedb4964a40fe416b16c7bd8b46092040ec42ef0aa69e59f09872f105cf3414f72a4d550cad29f17d9d99a4af64b3776ec5538cd440cef0f03fef2e9e0108c9c399f3a756a7a20b1c7f6569bbc0fab4533dae2d0d1a4748decd1e8a6ef19bc4b61f6494b1bc991ec370e999ec6adb5855e8f834c3f0479ae4b6e2eb7fb73)
+    │   ├─ [2378377] → new HeldController@0xA4AD4f68d0b91CFD19687c881e50f3A00242828c
+    │   │   └─ ← [Return] 11873 bytes of code
+    │   └─ ← [Return] HeldController: [0xA4AD4f68d0b91CFD19687c881e50f3A00242828c]
+    ├─ [0] VM::addr(<pk>) [staticcall]
+    │   └─ ← [Return] 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65
+    ├─ [0] VM::prank(0x0000000000000000000000000000000000005aFE)
+    │   └─ ← [Return]
+    ├─ [0] HeldController::activate(1, 1, 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65, 0x000000000000000000000000000000000000E0E0, Policy({ Ls: 50000000000 [5e10], Ln: 50000000000 [5e10], Lr: 10000000000 [1e10], Ms: 40000000000 [4e10], Mn: 10000000000 [1e10], Mr: 5000000000 [5e9], ms: 1000000000 [1e9], mn: 1000000000 [1e9], F: 1000000000 [1e9], H: 0, Nn: 10, Nr: 5, dn: 0, dr: 0 }), ExpectedState({ usedSupply: 0, usedNormalWithdraw: 0, usedRestoration: 0, normalCount: 0, restorationCount: 0 }))
+    │   └─ ← [Revert] EvmError: Revert
+    └─ ← [Revert] EvmError: Revert
+
+Backtrace:
+  at HeldController.activate
+  at HeldControllerAdversarialTest.test_MockHarnessHappyPathSucceeds
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; finished in 4.35ms (1.34ms CPU time)
+
+Ran 1 test suite in 535.12ms (4.35ms CPU time): 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/contracts/adversarial/HeldControllerAdversarial.t.sol:HeldControllerAdversarialTest
+[FAIL: EvmError: Revert] test_MockHarnessHappyPathSucceeds() (block: 51353228) (gas: 1209933)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger

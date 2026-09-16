@@ -1,7 +1,7 @@
 # P02 — typed controller and native Roles enforcement
 
 2026-09-16. Claude, sole implementation writer. **Independent review pending; nothing
-here is accepted.** `make check-phase-02` → **25/25** across two separated evidence classes.
+here is accepted.** `make check-phase-02` → **39/39** across three separated evidence classes.
 
 **Status: existing tests PASS. P02 completeness: the previously disclosed gaps are now
 closed. Independent acceptance: still pending.**
@@ -23,14 +23,28 @@ without it), OpenZeppelin v5.1.0, forge-std v1.16.2, foundry 1.8.1.
 
 | stage | what it is | result |
 |---|---|---|
+| 0 — property/fuzz | Fuzz properties at 256 runs each against an **independent reference** of the V4 §5 rules, with a pinned seed. Local harness. | 14/14 |
 | 1 — adversarial | **Labelled hostile mocks.** Branches unreachable with well-behaved contracts: reentrancy, an ERC20 returning `false`, cleanup failing after the economic action. **Not the production profile**; no result here is native USDC / real Roles / real Morpho behaviour. | 4/4 |
 | 2 — real pinned route | Genuine Base-mainnet Safe 1.4.1, Zodiac Roles v2.1, Morpho Blue, native USDC on a fork at block 51353212. Nothing mocked. | 21/21 |
 
-They run separately. Beyond keeping the classes distinct, forge falls back to
-`VM::deployCode` for the adversarial test contract (it embeds six mock bytecodes and
-exceeds the inline-deploy size), and under `--fork-url` a call to that address reverts
-with zero gas. That is a **harness interaction, not a controller defect** — the same
-controller deploys and activates successfully under the fork in stage 2.
+They run separately on purpose: P02 asks for unit/property tests **and** realistic fork
+tests, not for every adversarial fixture to run under `--fork-url`.
+
+There is also an unresolved combined-configuration failure, and its status should be read
+precisely:
+
+- **Established:** the adversarial suite passes standalone; the real-route suite passes on
+  the fork; the combined configuration fails; forge falls back to `VM::deployCode` for the
+  adversarial test contract and the subsequent call reverts with zero gas. Trace preserved
+  at `evidence/P02/adversarial-fork-trace.txt`.
+- **Not established:** the precise cause. My diagnosis is a harness / test-contract-size
+  interaction rather than a controller defect — the same controller deploys and activates
+  under the fork in stage 2 — but **no minimal reproduction was built**, so that is a
+  diagnosis, not a proven root cause.
+
+Both stages build from the same controller source and compiler settings, and
+`make check-phase-02` fails if **either** stage fails (verified by simulating a failing
+stage).
 
 ## Gaps closed in this pass
 

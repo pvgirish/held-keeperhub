@@ -18,3 +18,6 @@ remappings = [
 
 [profile.default.fuzz]
 runs = 256
+# Pinned so a property run is reproducible and a counterexample can be re-derived.
+# Override with FOUNDRY_FUZZ_SEED=... to explore a different corpus.
+seed = "0x48454c4400000000000000000000000000000000000000000000000000000001"

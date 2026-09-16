@@ -46,12 +46,29 @@ contract HeldControllerPropertiesTest is Test {
         runner = vm.addr(PK_RUNNER);
     }
 
+    function _defaultPolicy() internal pure returns (HeldController.Policy memory p) {
+        p.Ls = LS; p.Ln = 50_000e6; p.Lr = 10_000e6;
+        p.Ms = MS; p.Mn = 10_000e6; p.Mr = 5_000e6;
+        p.ms = MIN_S; p.mn = 1_000e6;
+        p.F = F; p.H = H;
+        p.Nn = NN; p.Nr = 5; p.dn = 0; p.dr = 0;
+    }
+
     function _fresh(uint256 safeBalance) internal {
+        _freshWith(safeBalance, _defaultPolicy(), LS, 10_000e6);
+    }
+
+    function _freshWith(
+        uint256 safeBalance,
+        HeldController.Policy memory p,
+        uint128 rolesSupplyRemaining,
+        uint128 rolesRestorationRemaining
+    ) internal {
         roles = new MockRoles();
         morpho = new MockMorpho();
         token = new MockToken();
         roles.setKeys(SUPPLY_KEY, RESTORE_KEY);
-        roles.setAllowances(LS, 10_000e6);
+        roles.setAllowances(rolesSupplyRemaining, rolesRestorationRemaining);
         morpho.setToken(address(token));
         token.init(SAFE, address(morpho), safeBalance);
 
@@ -67,15 +84,37 @@ contract HeldControllerPropertiesTest is Test {
             keccak256(abi.encode(mp)), LINEAGE, NORMAL_ROLE, RESTORE_ROLE, SUPPLY_KEY, RESTORE_KEY
         );
 
-        HeldController.Policy memory p;
-        p.Ls = LS; p.Ln = 50_000e6; p.Lr = 10_000e6;
-        p.Ms = MS; p.Mn = 10_000e6; p.Mr = 5_000e6;
-        p.ms = MIN_S; p.mn = 1_000e6;
-        p.F = F; p.H = H;
-        p.Nn = NN; p.Nr = 5; p.dn = 0; p.dr = 0;
         HeldController.ExpectedState memory e;
         vm.prank(SAFE);
         controller.activate(1, 1, runner, EXECUTOR, p, e);
+    }
+
+    function _envFamily(bytes32 opId, uint8 family, uint256 amount)
+        internal view returns (HeldController.Envelope memory env)
+    {
+        env = _env(opId, amount);
+        env.actionFamily = family;
+        env.payloadHash = controller.actionHash(family, keccak256(abi.encode(mp)), address(token), amount, SAFE);
+    }
+
+    struct LaneState {
+        uint128 usedSupply;
+        uint128 usedNormalWithdraw;
+        uint128 usedRestoration;
+        uint64 normalCount;
+        uint64 restorationCount;
+        uint64 lastNormalAt;
+        uint64 lastRestorationAt;
+    }
+
+    function _lanes() internal view returns (LaneState memory l) {
+        l.usedSupply = controller.usedSupply();
+        l.usedNormalWithdraw = controller.usedNormalWithdraw();
+        l.usedRestoration = controller.usedRestoration();
+        l.normalCount = controller.normalCount();
+        l.restorationCount = controller.restorationCount();
+        l.lastNormalAt = controller.lastNormalAt();
+        l.lastRestorationAt = controller.lastRestorationAt();
     }
 
     function _env(bytes32 opId, uint256 amount) internal view returns (HeldController.Envelope memory env) {
@@ -260,5 +299,245 @@ contract HeldControllerPropertiesTest is Test {
         // Whichever lane ran, neither budget may exceed its ceiling.
         assertLe(controller.usedRestoration(), 10_000e6);
         assertLe(controller.usedNormalWithdraw(), 50_000e6);
+    }
+
+    // ---------------- family: lifetime accounting, isolation and rollback ------
+
+    /// @notice A successful SUPPLY touches only the normal-lane state. Restoration
+    ///         accounting must be untouched, or the lanes are not really separate.
+    function testFuzz_SuccessfulSupplyTouchesOnlyNormalLaneState(uint256 amount) public {
+        amount = bound(amount, MIN_S, MS);
+        _fresh(300_000e6);
+        LaneState memory before = _lanes();
+
+        HeldController.Envelope memory env = _env(keccak256("iso"), amount);
+        bytes memory sig = _sig(env);
+        vm.prank(EXECUTOR);
+        (bool ok,) = address(controller).call(
+            abi.encodeCall(HeldController.executeSupply, (env, mp, amount, sig))
+        );
+        LaneState memory afterState = _lanes();
+
+        assertEq(afterState.usedNormalWithdraw, before.usedNormalWithdraw, "withdraw budget moved");
+        assertEq(afterState.usedRestoration, before.usedRestoration, "restoration budget moved");
+        assertEq(afterState.restorationCount, before.restorationCount, "restoration count moved");
+        assertEq(afterState.lastRestorationAt, before.lastRestorationAt, "restoration clock moved");
+        if (ok) {
+            assertEq(afterState.usedSupply, before.usedSupply + amount, "supply consumption exact");
+            assertEq(afterState.normalCount, before.normalCount + 1, "normal count +1");
+        } else {
+            // A refusal must leave EVERY lane exactly as it was.
+            assertEq(afterState.usedSupply, before.usedSupply);
+            assertEq(afterState.normalCount, before.normalCount);
+            assertEq(afterState.lastNormalAt, before.lastNormalAt);
+        }
+    }
+
+    /// @notice Withdrawals never refill consumed supply capacity (V4 §5).
+    function testFuzz_WithdrawalsNeverRefillSupplyCapacity(uint256 supplyAmt, uint256 withdrawAmt) public {
+        supplyAmt = bound(supplyAmt, MIN_S, MS);
+        withdrawAmt = bound(withdrawAmt, 1_000e6, 10_000e6);
+        _fresh(300_000e6);
+
+        HeldController.Envelope memory sup = _env(keccak256("refill-sup"), supplyAmt);
+        bytes memory sigS = _sig(sup);
+        vm.prank(EXECUTOR);
+        controller.executeSupply(sup, mp, supplyAmt, sigS);
+
+        uint128 usedAfterSupply = controller.usedSupply();
+        uint256 remainingAfterSupply = controller.remainingSupply();
+
+        HeldController.Envelope memory wd = _envFamily(keccak256("refill-wd"), 2, withdrawAmt);
+        bytes memory sigW = _sig(wd);
+        vm.prank(EXECUTOR);
+        address(controller).call(abi.encodeCall(HeldController.executeWithdraw, (wd, mp, withdrawAmt, sigW)));
+
+        assertEq(controller.usedSupply(), usedAfterSupply, "a withdrawal changed supply consumption");
+        assertLe(controller.remainingSupply(), remainingAfterSupply, "supply capacity was refilled");
+    }
+
+    /// @notice A handover — fence, new ceiling, new runner, new epoch — preserves
+    ///         consumption and both timestamps.
+    function testFuzz_ActivationPreservesConsumptionAndTimestamps(uint256 amount, uint64 newCeilingDelta) public {
+        amount = bound(amount, MIN_S, MS);
+        _fresh(300_000e6);
+
+        HeldController.Envelope memory env = _env(keccak256("preserve"), amount);
+        bytes memory sig = _sig(env);
+        vm.prank(EXECUTOR);
+        controller.executeSupply(env, mp, amount, sig);
+        LaneState memory before = _lanes();
+
+        vm.prank(SAFE);
+        controller.fence();
+
+        HeldController.Policy memory p = _defaultPolicy();
+        p.Ls = uint128(bound(newCeilingDelta, before.usedSupply, 500_000e6));
+        roles.setAllowances(uint128(uint256(p.Ls) - before.usedSupply), uint128(p.Lr - before.usedRestoration));
+        HeldController.ExpectedState memory e;
+        e.usedSupply = before.usedSupply;
+        e.usedNormalWithdraw = before.usedNormalWithdraw;
+        e.usedRestoration = before.usedRestoration;
+        e.normalCount = before.normalCount;
+        e.restorationCount = before.restorationCount;
+        vm.prank(SAFE);
+        controller.activate(2, 2, address(0xB0B), EXECUTOR, p, e);
+
+        LaneState memory afterState = _lanes();
+        assertEq(afterState.usedSupply, before.usedSupply, "consumption lost across handover");
+        assertEq(afterState.normalCount, before.normalCount, "count lost across handover");
+        assertEq(afterState.lastNormalAt, before.lastNormalAt, "normal clock lost across handover");
+        assertEq(afterState.lastRestorationAt, before.lastRestorationAt, "restoration clock lost");
+        assertEq(controller.remainingSupply(), uint256(p.Ls) - uint256(before.usedSupply), "remaining exact");
+    }
+
+    // ------------------------------- family: cooldown boundaries, both lanes ---
+
+    /// @notice An action is permitted iff the elapsed time has reached the cooldown.
+    function testFuzz_CooldownBoundaryNormalLane(uint64 dn, uint64 elapsed) public {
+        dn = uint64(bound(dn, 1, 30 days));
+        elapsed = uint64(bound(elapsed, 0, 60 days));
+        HeldController.Policy memory p = _defaultPolicy();
+        p.dn = dn;
+        _freshWith(300_000e6, p, LS, 10_000e6);
+
+        HeldController.Envelope memory first = _env(keccak256("cd-a"), 5_000e6);
+        bytes memory s1 = _sig(first);
+        vm.prank(EXECUTOR);
+        controller.executeSupply(first, mp, 5_000e6, s1);
+
+        vm.warp(block.timestamp + elapsed);
+        HeldController.Envelope memory second = _env(keccak256("cd-b"), 5_000e6);
+        bytes memory s2 = _sig(second);
+        vm.prank(EXECUTOR);
+        (bool ok,) = address(controller).call(
+            abi.encodeCall(HeldController.executeSupply, (second, mp, 5_000e6, s2))
+        );
+        assertEq(ok, elapsed >= dn, "normal cooldown boundary is wrong");
+    }
+
+    function testFuzz_CooldownBoundaryRestorationLane(uint64 dr, uint64 elapsed) public {
+        dr = uint64(bound(dr, 1, 30 days));
+        elapsed = uint64(bound(elapsed, 0, 60 days));
+        HeldController.Policy memory p = _defaultPolicy();
+        p.dr = dr;
+        _freshWith(300_000e6, p, LS, 10_000e6);
+
+        // Build a position, then drop the Safe below the floor so the lane is restoration.
+        HeldController.Envelope memory sup = _env(keccak256("cdr-sup"), 20_000e6);
+        bytes memory sigS = _sig(sup);
+        vm.prank(EXECUTOR);
+        controller.executeSupply(sup, mp, 20_000e6, sigS);
+        token.init(SAFE, address(morpho), 200e6);
+
+        HeldController.Envelope memory w1 = _envFamily(keccak256("cdr-a"), 2, 300e6);
+        bytes memory sw1 = _sig(w1);
+        vm.prank(EXECUTOR);
+        controller.executeWithdraw(w1, mp, 300e6, sw1);
+        assertEq(controller.restorationCount(), 1, "restoration lane did not run");
+
+        token.init(SAFE, address(morpho), 200e6); // still below the floor
+        vm.warp(block.timestamp + elapsed);
+        HeldController.Envelope memory w2 = _envFamily(keccak256("cdr-b"), 2, 300e6);
+        bytes memory sw2 = _sig(w2);
+        vm.prank(EXECUTOR);
+        (bool ok,) = address(controller).call(
+            abi.encodeCall(HeldController.executeWithdraw, (w2, mp, 300e6, sw2))
+        );
+        assertEq(ok, elapsed >= dr, "restoration cooldown boundary is wrong");
+    }
+
+    // --------------------------- family: activation consistency and atomicity --
+
+    /// @notice Activation succeeds iff BOTH Roles lanes agree with controller
+    ///         consumption, and a rejected activation changes nothing at all.
+    function testFuzz_ActivationConsistencyIsExactAndAtomic(uint128 ls, uint128 rolesSupply, uint128 rolesRestore)
+        public
+    {
+        _fresh(300_000e6);
+        HeldController.Envelope memory env = _env(keccak256("act"), 10_000e6);
+        bytes memory sig = _sig(env);
+        vm.prank(EXECUTOR);
+        controller.executeSupply(env, mp, 10_000e6, sig);
+        uint128 used = controller.usedSupply();
+
+        vm.prank(SAFE);
+        controller.fence();
+
+        ls = uint128(bound(ls, 0, 500_000e6));
+        rolesSupply = uint128(bound(rolesSupply, 0, 500_000e6));
+        rolesRestore = uint128(bound(rolesRestore, 0, 50_000e6));
+        roles.setAllowances(rolesSupply, rolesRestore);
+
+        HeldController.Policy memory p = _defaultPolicy();
+        p.Ls = ls;
+        HeldController.ExpectedState memory e;
+        e.usedSupply = used;
+        e.normalCount = controller.normalCount();
+
+        bool expected = ls >= used
+            && uint256(rolesSupply) == uint256(ls) - uint256(used)
+            && uint256(rolesRestore) == uint256(p.Lr) - uint256(controller.usedRestoration());
+
+        vm.prank(SAFE);
+        (bool ok,) = address(controller).call(
+            abi.encodeCall(HeldController.activate, (2, 2, address(0xB0B), EXECUTOR, p, e))
+        );
+        assertEq(ok, expected, "activation guard disagreed with the reference");
+
+        if (!ok) {
+            // A rejected activation must leave the controller paused and untouched.
+            assertFalse(controller.active(), "paused state lost on a rejected activation");
+            assertEq(controller.epoch(), 1, "epoch advanced on a rejected activation");
+            assertEq(controller.runner(), runner, "runner changed on a rejected activation");
+            assertEq(controller.usedSupply(), used, "consumption changed on a rejected activation");
+        }
+    }
+
+    // ----------------------------- family: arithmetic, zero and large values ---
+
+    /// @notice Zero capacity explicitly disables a lane (V4 §5). No amount may pass.
+    function testFuzz_ZeroCapacityDisablesTheLane(uint256 amount, bool zeroCeiling) public {
+        amount = bound(amount, 0, MS);
+        HeldController.Policy memory p = _defaultPolicy();
+        if (zeroCeiling) p.Ls = 0; else p.Nn = 0;
+        _freshWith(300_000e6, p, zeroCeiling ? 0 : LS, 10_000e6);
+
+        HeldController.Envelope memory env = _env(keccak256("zero"), amount);
+        bytes memory sig = _sig(env);
+        vm.prank(EXECUTOR);
+        (bool ok,) = address(controller).call(
+            abi.encodeCall(HeldController.executeSupply, (env, mp, amount, sig))
+        );
+        assertFalse(ok, "a disabled lane executed");
+        assertEq(controller.usedSupply(), 0);
+    }
+
+    /// @notice Large supported values never wrap: consumption stays exact and bounded
+    ///         even when the ceiling and amounts are near the uint128 domain.
+    function testFuzz_LargeValuesDoNotWrap(uint128 ceiling, uint256 amount) public {
+        ceiling = uint128(bound(ceiling, 1e12, type(uint96).max));
+        amount = bound(amount, 1e6, uint256(type(uint96).max));
+
+        HeldController.Policy memory p = _defaultPolicy();
+        p.Ls = ceiling;
+        p.Ms = type(uint128).max;
+        p.ms = 1;
+        p.F = 0;
+        p.H = 0;
+        uint256 balance = uint256(type(uint96).max) * 2;
+        _freshWith(balance, p, ceiling, 10_000e6);
+
+        HeldController.Envelope memory env = _env(keccak256("big"), amount);
+        bytes memory sig = _sig(env);
+        vm.prank(EXECUTOR);
+        (bool ok,) = address(controller).call(
+            abi.encodeCall(HeldController.executeSupply, (env, mp, amount, sig))
+        );
+
+        assertEq(ok, amount <= ceiling, "large-value ceiling check disagreed");
+        assertLe(controller.usedSupply(), ceiling, "consumption wrapped past the ceiling");
+        assertEq(controller.remainingSupply(), uint256(ceiling) - uint256(controller.usedSupply()),
+            "remaining underflowed or wrapped");
     }
 }
