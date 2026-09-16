@@ -598,41 +598,49 @@ class KeeperHubClient:
                 or data.get("simulated") is True
                 or data.get("simulation") is not None
             )
-            if simulate_requested and not data:
-                # A bare 2xx with an empty body is not an affirmative simulation result.
-                # The documented success carries `success: true` and `wouldRevert: false`;
-                # treating "nothing said" as a green light is exactly how a preflight
-                # becomes vacuous.
+            if simulate_requested:
+                # A POSITIVE preflight requires the documented affirmative result. An
+                # earlier fix only rejected an EMPTY body, which still let
+                # {"success": false} and a bare {"status": "simulated"} through as
+                # SIMULATED -- a green light assembled from a missing verdict.
+                # An EXPLICIT failure is a sharper fact than a missing field, so it is
+                # read first: "the simulation says no" deserves REJECTED, not UNKNOWN.
+                if "success" in data and data["success"] is not True:
+                    return make(
+                        SendOutcome.REJECTED,
+                        error=(f"simulation reports success={data.get('success')!r}: "
+                               f"{data.get('error') or data.get('message') or 'no reason given'}"))
+                missing = [f for f in ("success", "wouldRevert") if f not in data]
+                if missing:
+                    return make(
+                        SendOutcome.UNKNOWN,
+                        error=(f"simulate response is missing {missing}. A positive "
+                               "preflight requires the documented affirmative result "
+                               "(success true, wouldRevert false), not merely the absence "
+                               "of a reported revert."))
+                if data.get("wouldRevert") is not False:
+                    return make(
+                        SendOutcome.REJECTED,
+                        error=("simulation reports wouldRevert="
+                               f"{data.get('wouldRevert')!r}: the call would fail on "
+                               f"chain. {data.get('revertReason') or data.get('message') or ''}"
+                               ).strip())
+                if status_text and status_text != STATUS_SIMULATED:
+                    return make(
+                        SendOutcome.UNKNOWN,
+                        error=(f"asked to simulate but the response reports status "
+                               f"{status_text!r}. Refusing to record this as either a "
+                               "simulation or an execution."))
+                return make(SendOutcome.SIMULATED)
+
+            if looks_simulated:
+                # A BROADCAST that comes back simulated is a contradiction: the request
+                # mode and the response mode disagree, so the on-chain outcome is unknown.
                 return make(
                     SendOutcome.UNKNOWN,
-                    error=("simulate returned an empty body. A positive preflight "
-                           "requires the documented affirmative result "
-                           "(success/status/wouldRevert), not merely the absence of a "
-                           "reported revert."))
-            if simulate_requested or looks_simulated:
-                if simulate_requested and not looks_simulated and status_text:
-                    return make(
-                        SendOutcome.UNKNOWN,
-                        error=(
-                            f"asked to simulate but the response reports status "
-                            f"{status_text!r}. Refusing to record this as either a "
-                            "simulation or an execution."))
-                if looks_simulated and not simulate_requested:
-                    return make(
-                        SendOutcome.UNKNOWN,
-                        error=("a broadcast returned a SIMULATED response; the request "
-                               "mode and the response disagree, so the on-chain outcome "
-                               "is unknown."))
-                result = make(SendOutcome.SIMULATED)
-                if data.get("wouldRevert") is True:
-                    # A simulation that predicts a revert is a successful simulation
-                    # reporting a failing call. It must never look like a green light.
-                    return make(SendOutcome.REJECTED,
-                                error=("simulation reports wouldRevert=true: the call "
-                                       "would fail on chain. "
-                                       f"{data.get('revertReason') or data.get('message') or ''}"
-                                       ).strip())
-                return result
+                    error=("a broadcast returned a SIMULATED response; the request mode "
+                           "and the response disagree, so the on-chain outcome is "
+                           "unknown."))
             return make(SendOutcome.ACCEPTED)
 
         if resp.status_code == 409:

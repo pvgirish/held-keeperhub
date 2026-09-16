@@ -432,21 +432,34 @@ class Submitter:
 
     def _record(self, operation_id: str, attempt: str, key: str, result: SendResult,
                 epoch: int, *, resumed: bool) -> Submission:
+        # THE RULE: the response to the latest HTTP request and the settlement of the
+        # ORIGINAL execution attempt are different facts.
+        #
+        # A rejection settles the request that was just made. It settles the ATTEMPT only
+        # when that request was the attempt's FIRST dispatch, because only then was
+        # nothing sent before it. Once an attempt has been dispatched at all -- which is
+        # every resume, i.e. every post-crash path -- a later rejection says nothing about
+        # whether the earlier send reached execution, and only chain evidence settles it.
+        #
+        # Keying this on individual state pairs was the wrong shape: DISPATCHED/PENDING
+        # after a process kill took the FAILED path while UNKNOWN/UNKNOWN did not, and
+        # BOTH dropped the original attempt out of the live set, so recovery could no
+        # longer find the thing it has to resolve.
+        rejection_settles_nothing = resumed and result.outcome is SendOutcome.REJECTED
+
+        attempt_state = result.outcome.value
+        if rejection_settles_nothing:
+            # The original attempt stays LIVE and discoverable.
+            attempt_state = "UNKNOWN"
+
         self.journal.record_send_result(
             attempt,
             keeperhub_execution_id=result.execution_id,
             tx_hash=result.tx_hash,
-            state=result.outcome.value)
+            state=attempt_state)
         target = _OUTCOME_TO_STATE[result.outcome]
         current = self.journal.get(operation_id).state
-
-        # A request-level rejection is definitive about THIS request only. If the
-        # operation was already UNKNOWN, some EARLIER submission may have reached the
-        # chain, and a 401 on a later retry -- a revoked credential, say -- says nothing
-        # about it. Collapsing that to FAILED would licence reauthorizing an operation
-        # that might already have executed.
-        if (result.outcome is SendOutcome.REJECTED
-                and current is OperationState.UNKNOWN):
+        if rejection_settles_nothing:
             target = OperationState.UNKNOWN
         if target is not current:
             try:

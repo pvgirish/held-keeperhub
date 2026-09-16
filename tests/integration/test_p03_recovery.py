@@ -254,7 +254,9 @@ def _():
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "held.sqlite")
         j, t, sub = rig([
-            HttpResponse(200, json.dumps({"simulated": True}).encode(), {}),
+            # The DOCUMENTED affirmative simulation result.
+            HttpResponse(200, json.dumps(
+                {"success": True, "status": "simulated", "wouldRevert": False}).encode(), {}),
             accepted(),
         ], path=path)
         j.create_or_reopen(OP_HEX, PAYLOAD_HEX, "decision-1", 0, 1)
@@ -393,22 +395,63 @@ def _():
         assert len(t.calls) == before, "resume sent a request for a CONFIRMED operation"
 
 
-@test("REGRESSION: a later rejection does not erase earlier uncertainty")
-def _():
-    # A 401 on a retry -- a revoked credential, say -- is definitive about THAT request.
-    # It says nothing about an earlier ambiguous submission that may have executed.
-    with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, "held.sqlite")
-        j1, t1, sub1 = rig([TimeoutError("t")] * 4, path=path)
-        sub1.submit(Admitted(), envelope())
-        assert j1.get(OP_HEX).state is OperationState.UNKNOWN
-        j1.close()
+def _crash_then_reject(d, kind: str):
+    """Leave a crash-preserved attempt, then reject the RESUMED request."""
+    path = os.path.join(d, kind + ".sqlite")
+    if kind == "killed":
+        # Dies inside the transport: DISPATCHED + PENDING, no outcome recorded.
+        class Dies:
+            hosted = False
+            calls: list = []
 
-        j2, t2, sub2 = rig([response({"message": "key revoked"}, 401)], path=path)
-        sub2.resume(OP_HEX)
-        assert j2.get(OP_HEX).state is OperationState.UNKNOWN, (
-            "a later rejection collapsed an operation that may already have executed "
-            "into FAILED, which would licence reauthorizing it")
+            def request(self, *a, **k):
+                raise SystemExit("process died mid-send")
+
+        j, t, sub = rig([], path=path, transport=Dies())
+        try:
+            sub.submit(Admitted(), envelope())
+        except SystemExit:
+            pass
+    else:
+        # Returns ambiguous: UNKNOWN + UNKNOWN.
+        j, t, sub = rig([TimeoutError("t")] * 4, path=path)
+        sub.submit(Admitted(), envelope())
+    before = (j.get(OP_HEX).state.value, j.attempts_for(OP_HEX)[0]["state"])
+    j.close()
+    j2, t2, sub2 = rig([response({"message": "key revoked"}, 401)], path=path)
+    sub2.resume(OP_HEX)
+    return before, j2
+
+
+@test("REGRESSION: a rejected retry settles neither post-crash form")
+def _():
+    # THE RULE: the response to the latest request and the settlement of the ORIGINAL
+    # attempt are different facts. Keying on state pairs was the wrong shape --
+    # DISPATCHED/PENDING took the FAILED path while UNKNOWN/UNKNOWN did not, and BOTH
+    # dropped the original attempt out of the live set.
+    with tempfile.TemporaryDirectory() as d:
+        for kind in ("killed", "ambiguous"):
+            before, j = _crash_then_reject(d, kind)
+            assert j.get(OP_HEX).state is OperationState.UNKNOWN, (
+                f"{kind} ({before}): a 401 on the retry declared the operation settled, "
+                "though the pre-crash request may have reached execution")
+            assert j.unresolved_attempt(OP_HEX) is not None, (
+                f"{kind} ({before}): the ORIGINAL attempt left the live set, so recovery "
+                "can no longer find the thing it has to resolve")
+            assert j.attempts_for(OP_HEX)[0]["state"] == "UNKNOWN"
+
+
+@test("CONTROL: a fresh request definitively refused IS settled")
+def _():
+    # The rule must still let a genuine first-dispatch rejection settle, or it would
+    # block every operation forever.
+    with tempfile.TemporaryDirectory() as d:
+        j, t, sub = rig([response({"message": "bad request"}, 400)],
+                        path=os.path.join(d, "held.sqlite"))
+        s = sub.submit(Admitted(), envelope())
+        assert s.journal_state is OperationState.FAILED
+        assert j.attempts_for(OP_HEX)[0]["state"] == "REJECTED"
+        assert j.unresolved_attempt(OP_HEX) is None
 
 
 @test("REGRESSION: ambiguity inside the client's own retry loop is preserved")

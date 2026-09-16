@@ -37,6 +37,25 @@ atomically with -- then exactly-once would NOT be available at that boundary, an
 `held_core.results` raises `ExactlyOnceUnavailable` rather than quietly downgrading. That
 is the honest failure mode, and it is not the one we are in.
 
+## The pinned machine can serialise but NOT restore
+
+`IntentStateMachine.to_dict()` exists; there is no `from_dict`, no state setter, and no
+documented reconstruction path at the pin. That is a real property of the native boundary,
+not an oversight here, and it has two consequences this module has to handle rather than
+paper over:
+
+1. **The durable snapshot is authoritative, not the live object.** After a restart the
+   machine cannot be rebuilt into its recorded state, so `restore()` does not pretend to:
+   for a COMPLETED decision it returns a completed marker that refuses to be used for
+   execution. Handing back a freshly-built machine would have it report
+   `needs_execution=True` for work that is already done.
+
+2. **An in-memory advance is not transactional.** `set_receipt()`/`step()` mutate the
+   machine before anything is committed, and SQL rollback cannot undo that. So the
+   consumer marks itself NOT authoritative until its snapshot is confirmed present, and
+   `verify_committed()` is the check. A mutated-but-uncommitted machine must never be
+   treated as the truth.
+
 ## What this still does not do
 
 It does not run a full native strategy loop, and the receipt is constructed from Held's
@@ -51,10 +70,90 @@ from typing import Any
 
 NATIVE_STATE_KEY = "native_state_machine:{operation_id}"
 NATIVE_ACK_KEY = "native_ack:{operation_id}"
+# The producing native decision, bound to the operation at admission time.
+NATIVE_DECISION_KEY = "native_decision:{operation_id}"
+
+TERMINAL_NATIVE_STATES = frozenset({"COMPLETED"})
 
 
 class NativeAcknowledgementError(Exception):
     """The native consumer did not accept the result."""
+
+
+class NativeStateNotAuthoritative(Exception):
+    """A live machine was used as truth without a confirmed durable snapshot."""
+
+
+def bind_native_decision(journal, operation_id: str, intent_id: str, intent_type: str) -> None:
+    """Record WHICH native decision produced this operation.
+
+    Without this the acknowledgement could be applied to any machine that happens to be
+    in the right state. The binding is what makes "the original native decision" a thing
+    a restart can identify rather than reconstruct by coincidence.
+    """
+    with journal.transaction() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+            (NATIVE_DECISION_KEY.format(operation_id=operation_id),
+             json.dumps({"intent_id": intent_id, "intent_type": intent_type})))
+
+
+def bound_native_decision(journal, operation_id: str) -> dict[str, Any] | None:
+    row = journal._db.execute(  # noqa: SLF001 - read-only accessor
+        "SELECT value FROM meta WHERE key=?",
+        (NATIVE_DECISION_KEY.format(operation_id=operation_id),)).fetchone()
+    return json.loads(row["value"]) if row else None
+
+
+@dataclass
+class RestoredDecision:
+    """What a restart can honestly say about a native decision it cannot rebuild."""
+
+    operation_id: str
+    intent_id: str | None
+    state: str | None
+    acked: bool
+    machine: Any = None
+
+    @property
+    def complete(self) -> bool:
+        return self.state in TERMINAL_NATIVE_STATES
+
+    def needs_execution(self) -> bool:
+        """A completed decision NEVER asks for execution again.
+
+        This is the whole point of the restoration path. The pinned machine has no
+        `from_dict`, so a fresh process that rebuilt one would get a machine in
+        VALIDATING_* reporting `needs_execution=True` -- for work already finished. The
+        durable snapshot is consulted FIRST, and only if it is absent or non-terminal
+        does a live machine get a say.
+        """
+        if self.complete:
+            return False
+        if self.machine is None:
+            raise NativeStateNotAuthoritative(
+                f"operation {self.operation_id} has no terminal native snapshot and no "
+                "live machine; nothing can say whether execution is still needed.")
+        return bool(getattr(self.machine.step(), "needs_execution", False))
+
+
+def restore(journal, operation_id: str, build_machine=None) -> RestoredDecision:
+    """Recover what is known about the native decision behind an operation.
+
+    The durable snapshot is the authority. `build_machine` is consulted only when there
+    is no terminal snapshot, because a rebuilt machine cannot be moved into a recorded
+    state at this pin.
+    """
+    decision = bound_native_decision(journal, operation_id) or {}
+    snapshot = native_state_after(journal, operation_id)
+    acked = native_ack_state(journal, operation_id) is not None
+    state = (snapshot or {}).get("state")
+    machine = None
+    if state not in TERMINAL_NATIVE_STATES and build_machine is not None:
+        machine = build_machine()
+    return RestoredDecision(
+        operation_id=operation_id, intent_id=decision.get("intent_id"),
+        state=state, acked=acked, machine=machine)
 
 
 @dataclass
@@ -95,7 +194,36 @@ class NativeStateMachineConsumer:
         self.machine = machine
         self.require_complete = require_complete
         self.applied_state: str | None = None
+        self.state_before_apply: str | None = None
         self.step_results: list[Any] = []
+        # The live machine is NOT authoritative until its snapshot is confirmed durable.
+        # apply() mutates it before the commit, and SQL rollback cannot undo that.
+        self._authoritative = False
+
+    @property
+    def authoritative(self) -> bool:
+        return self._authoritative
+
+    def verify_committed(self, journal, operation_id: str) -> bool:
+        """Confirm the durable snapshot matches the live machine, after the commit.
+
+        Returns False when the transaction rolled back after `apply()` had already
+        advanced the machine. In that case the live object is ahead of the record and
+        must not be used as truth -- there is no way to move it back.
+        """
+        saved = native_state_after(journal, operation_id)
+        ok = bool(saved) and saved.get("state") == self.state and \
+            native_ack_state(journal, operation_id) == self.state
+        self._authoritative = ok
+        return ok
+
+    def require_authoritative(self) -> None:
+        if not self._authoritative:
+            raise NativeStateNotAuthoritative(
+                f"the native machine is at {self.state} but that advance is not confirmed "
+                "durable. The pinned IntentStateMachine has no from_dict and no state "
+                "setter, so it cannot be moved back -- this object must be discarded, not "
+                "used as authoritative state.")
 
     # ------------------------------------------------------------------ helpers --
     @property
@@ -114,6 +242,8 @@ class NativeStateMachineConsumer:
         receipt = NativeReceipt(**json.loads(payload)).to_native()
 
         before = self.state
+        self.state_before_apply = before
+        self._authoritative = False
         self.machine.set_receipt(receipt)
         result = self.machine.step()
         self.step_results.append(result)

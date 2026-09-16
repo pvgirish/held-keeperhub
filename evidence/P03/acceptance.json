@@ -12,11 +12,11 @@
   "interception": "17 passed",
   "native_bundle": "9 passed (against the REAL pinned compiler)",
   "signing": "18 passed",
-  "keeperhub_wire_contract": "27 passed",
+  "keeperhub_wire_contract": "28 passed",
   "submission_binding_and_reconciliation": "18 passed",
-  "crash_restart_recovery": "19 passed",
-  "total_local": 108,
-  "composed": "make check-phase-03-composed \u2014 PASS, 8 checks (local only)"
+  "crash_restart_recovery": "20 passed",
+  "total_local": 110,
+  "composed": "make check-phase-03-composed \u2014 PASS, 11 checks (local only)"
  },
  "what_is_established": {
   "native_connection": "CompilationResult -> action_bundle -> Held record -> admission, with economic calldata copied byte for byte. The producer verdict is strictly fail-closed: exact status set, no prefix match, no default success for a missing verdict, FAILED+is_safety_refusal preserved as a refusal, PARTIAL refused, self-contradictory SUCCESS refused, and a declared intent_type that disagrees with the family decoded from calldata refused.",
@@ -199,5 +199,26 @@
    "This is not a full native strategy loop, and the receipt is built from Held's own verified on-chain reading rather than handed over by a gateway.",
    "The local harness test is KEPT beside it, relabelled MODEL ONLY. It was never the native consumer."
   ]
+ },
+ "fourth_review_findings_repaired": {
+  "when": "9c830cc review, 2026-09-16",
+  "all_reproduced_against_the_real_implementation_first": true,
+  "rejected_retry_rule": {
+   "was": "Uncertainty was preserved only when the operation was ALREADY UNKNOWN. The process-kill path leaves DISPATCHED/PENDING, which still took the FAILED route; and BOTH forms dropped the original attempt out of the live set, so recovery could no longer find the thing it has to resolve.",
+   "reproduced": "crash DISPATCHED/PENDING --401--> FAILED, attempt REJECTED, live=False. UNKNOWN/UNKNOWN --401--> UNKNOWN but attempt REJECTED, live=False.",
+   "now": "The RULE, not another state pair: the response to the latest HTTP request and the settlement of the ORIGINAL attempt are different facts. A rejection settles the attempt only when that request was its FIRST dispatch. Every resume is by definition not a first dispatch, so a rejection there leaves the operation UNKNOWN and the attempt LIVE.",
+   "control_preserved": "A fresh, definitively refused first dispatch is still FAILED with the attempt REJECTED -- otherwise the rule would block every operation forever."
+  },
+  "preflight_affirmative_fields": {
+   "was": "The guard rejected only an EMPTY body. {\"success\": false} and a bare {\"status\": \"simulated\"} still classified as SIMULATED -- a green light assembled from a missing verdict.",
+   "now": "An explicit failure reads REJECTED (sharper than UNKNOWN); a missing success/wouldRevert reads UNKNOWN; a status that is not 'simulated' reads UNKNOWN; only success true + wouldRevert false is SIMULATED. The invented `simulated: true` shape no longer passes as a preflight -- it survives only for the broadcast contradiction check."
+  },
+  "native_restart_safety": {
+   "producing_decision_bound": "bind_native_decision() records WHICH native decision (intent_id, intent_type) produced the operation, so a restart can IDENTIFY the original rather than reconstruct one by coincidence.",
+   "pinned_sdk_finding": "IntentStateMachine has to_dict() but NO from_dict, no state setter and no reconstruction path at the pin. This is a real property of the native boundary and it drives the design rather than being worked around.",
+   "restoration": "restore() treats the DURABLE SNAPSHOT as authoritative. For a COMPLETED decision it returns a completed marker and does NOT build a machine -- a rebuilt one would report needs_execution=True for finished work. Verified across a real close/reopen: complete=True, acked=True, needs_execution()=False, and zero machines rebuilt.",
+   "persistence_failure": "An in-memory advance is not transactional and cannot be undone. So the guarantee is not 'the machine is restored' -- it cannot be. The consumer is NOT authoritative until verify_committed() confirms the snapshot, and require_authoritative() raises otherwise. Exercised with a consumer that fails AFTER the advance: machine COMPLETED, nothing durable, authoritative False.",
+   "ordering_note": "results.deliver() INSERTs the results row BEFORE apply(), so a foreign-key failure never reaches the machine. That path was already safe; the hazard is a failure between the advance and the commit, which is what the test models."
+  }
  }
 }

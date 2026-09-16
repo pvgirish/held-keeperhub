@@ -48,8 +48,12 @@ from held_adapter.execution.interceptor import Profile  # noqa: E402
 from held_adapter.execution.native_result import (  # noqa: E402
     NativeAcknowledgementError,
     NativeStateMachineConsumer,
+    NativeStateNotAuthoritative,
+    bind_native_decision,
+    bound_native_decision,
     native_ack_state,
     native_state_after,
+    restore,
 )
 from held_adapter.execution.native_boundary import (  # noqa: E402
     ExecutionContext,
@@ -89,6 +93,7 @@ ADMITTED = None
 NATIVE_CALLS = None
 BUILT = None
 PROFILE = None
+NATIVE_MACHINE = None
 SOURCE_DECISION_ID = "composed-local-run"
 MORPHO = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
 
@@ -440,6 +445,13 @@ def _():
     journal.close()
 
 
+def _receipt() -> str:
+    # LABEL: tx_hash is a fixture value -- the fork does not surface a transaction hash
+    # to this process. The ECONOMIC effect is what was verified, in composed-result.json.
+    return json.dumps({"success": True, "tx_hash": "0x" + "ef" * 32,
+                       "block_number": 51353228, "gas_used": 210000})
+
+
 def native_state_machine(v: dict):
     """The REAL pinned IntentStateMachine for this run's intent."""
     from decimal import Decimal
@@ -456,6 +468,133 @@ def native_state_machine(v: dict):
                           amount=Decimal("100"),
                           market_id=hex32(PROFILE.market_id()), use_as_collateral=False)
     return IntentStateMachine(intent, IntentCompiler(**kwargs))
+
+
+@test("the producing native decision is BOUND to the composed operation")
+def _():
+    """Which decision produced this operation, recorded durably at admission time.
+
+    Without the binding, an acknowledgement could be applied to any machine that happens
+    to be in the right state, and a restart could not identify the original decision --
+    only reconstruct one by coincidence.
+    """
+    global NATIVE_MACHINE
+    v = load_vector()
+    NATIVE_MACHINE = native_state_machine(v)
+    step = NATIVE_MACHINE.step()
+    assert step.needs_execution and step.action_bundle is not None, (
+        f"the machine is not offering work to execute (state {NATIVE_MACHINE.state})")
+
+    journal = Journal(JOURNAL_PATH)
+    oid = hex32(ADMITTED.operation_id)
+    bind_native_decision(journal, oid, NATIVE_MACHINE.intent.intent_id,
+                         NATIVE_MACHINE.intent.intent_type.value)
+    bound = bound_native_decision(journal, oid)
+    assert bound["intent_id"] == NATIVE_MACHINE.intent.intent_id
+    assert bound["intent_type"] == "SUPPLY"
+    journal.close()
+
+
+@test("RESTART: a completed native decision is restored and does NOT ask for execution")
+def _():
+    """The pinned machine has no from_dict, so the snapshot has to be the authority.
+
+    A fresh process that simply rebuilt an IntentStateMachine would get one in
+    VALIDATING_* reporting needs_execution=True -- for work that is finished. restore()
+    consults the durable snapshot first and refuses to let a rebuilt machine override it.
+    """
+    with open(RESULT_FILE) as fh:
+        result = json.load(fh)
+    v = load_vector()
+
+    with tempfile.TemporaryDirectory() as d:
+        journal = Journal(os.path.join(d, "restart.sqlite"))
+        oid = result["operationId"]
+        journal.create_or_reopen(oid, result["consumedPayload"], SOURCE_DECISION_ID, 0, 1)
+
+        machine = native_state_machine(v)
+        consumer = NativeStateMachineConsumer(machine)
+        consumer.needs_execution()
+        bind_native_decision(journal, oid, machine.intent.intent_id,
+                             machine.intent.intent_type.value)
+        R.deliver(journal, oid, result["consumedPayload"], _receipt(), consumer)
+        assert consumer.verify_committed(journal, oid) is True
+        journal.close()
+
+        # --- a NEW process: nothing in memory survives, only the database.
+        del machine, consumer
+        reopened = Journal(os.path.join(d, "restart.sqlite"))
+        rebuilt = []
+
+        def build():
+            rebuilt.append(1)
+            return native_state_machine(v)
+
+        decision = restore(reopened, oid, build_machine=build)
+        assert decision.complete is True, f"restored state was {decision.state}"
+        assert decision.acked is True
+        assert decision.intent_id is not None, "the producing decision was not identified"
+        assert decision.needs_execution() is False, (
+            "a completed native decision asked to be executed again after restart")
+        assert rebuilt == [], (
+            "a machine was rebuilt for a COMPLETED decision; the rebuilt one would report "
+            "needs_execution=True for finished work")
+        reopened.close()
+
+
+@test("a persistence failure leaves the advanced machine NON-AUTHORITATIVE")
+def _():
+    """SQL rollback cannot undo an in-memory advance, and the pin offers no way back.
+
+    So the guarantee is not "the machine is restored" -- it cannot be. It is that the
+    mutated object refuses to be treated as truth, and that nothing durable survives.
+    """
+    with open(RESULT_FILE) as fh:
+        result = json.load(fh)
+    v = load_vector()
+
+    class FailsAfterAdvancing(NativeStateMachineConsumer):
+        """Persistence dies AFTER the native machine has advanced.
+
+        Note the ordering in results.deliver(): the results INSERT happens BEFORE
+        apply(), so a foreign-key failure never reaches the machine -- that path is
+        already safe. The hazard is a failure between the advance and the commit, which
+        is what this models.
+        """
+
+        def apply(self, conn, operation_id, result_hash, payload):
+            state = super().apply(conn, operation_id, result_hash, payload)
+            raise RuntimeError(f"persistence died after the machine reached {state}")
+
+    with tempfile.TemporaryDirectory() as d:
+        journal = Journal(os.path.join(d, "fail.sqlite"))
+        oid = result["operationId"]
+        journal.create_or_reopen(oid, result["consumedPayload"], SOURCE_DECISION_ID, 0, 1)
+        machine = native_state_machine(v)
+        consumer = FailsAfterAdvancing(machine)
+        consumer.needs_execution()
+
+        raised = None
+        try:
+            R.deliver(journal, oid, result["consumedPayload"], _receipt(), consumer)
+        except RuntimeError as e:
+            raised = e
+        assert raised is not None and "after the machine reached" in str(raised)
+
+        # The live object HAS advanced -- that is the honest part.
+        assert consumer.state == "COMPLETED", consumer.state
+        # ...and nothing durable survived.
+        assert native_ack_state(journal, oid) is None
+        assert native_state_after(journal, oid) is None
+        # ...so it must refuse to be authoritative.
+        assert consumer.verify_committed(journal, oid) is False
+        assert consumer.authoritative is False
+        try:
+            consumer.require_authoritative()
+            raise AssertionError("a mutated, uncommitted machine passed as authoritative")
+        except NativeStateNotAuthoritative as e:
+            assert "cannot be moved back" in str(e), str(e)
+        journal.close()
 
 
 @test("the ACTUAL pinned Almanak consumer advances to COMPLETED on Held's result")
@@ -486,21 +625,15 @@ def _():
         oid = result["operationId"]
         journal.create_or_reopen(oid, result["consumedPayload"], SOURCE_DECISION_ID, 0, 1)
 
-        receipt = json.dumps({
-            "success": True,
-            "tx_hash": "0x" + "ef" * 32,   # LABEL: the fork does not surface a tx hash to
-                                           # this process; the ECONOMIC effect is what was
-                                           # verified, in composed-result.json.
-            "block_number": 51353228,
-            "gas_used": 210000,
-        })
-        outcome = R.deliver(journal, oid, result["consumedPayload"], receipt, consumer)
+        outcome = R.deliver(journal, oid, result["consumedPayload"], _receipt(), consumer)
         assert outcome is R.DeliveryOutcome.APPLIED, outcome
 
         # The NATIVE state advanced -- this is the acknowledgement, not a Held row.
         assert consumer.state == "COMPLETED", consumer.state
         assert native_ack_state(journal, oid) == "COMPLETED"
         assert native_state_after(journal, oid) is not None, "native state was not persisted"
+        assert consumer.verify_committed(journal, oid) is True, (
+            "the advance was not confirmed durable")
 
         # And it has stopped asking to be executed, which is the part that matters:
         # a consumer still requesting execution would have Held resubmit.
@@ -509,7 +642,7 @@ def _():
         assert follow_up.is_complete and follow_up.success
 
         # Redelivery is a no-op at the consumer: at-least-once, applied once.
-        again = R.deliver(journal, oid, result["consumedPayload"], receipt,
+        again = R.deliver(journal, oid, result["consumedPayload"], _receipt(),
                           NativeStateMachineConsumer(machine))
         assert again is R.DeliveryOutcome.DUPLICATE, again
         journal.close()

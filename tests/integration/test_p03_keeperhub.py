@@ -195,6 +195,27 @@ def _():
     assert r.tx_hash is None
 
 
+@test("C1 REGRESSION: a positive preflight requires the AFFIRMATIVE documented fields")
+def _():
+    # Rejecting only an empty object was not enough: {"success": false} and a bare
+    # {"status": "simulated"} still classified as SIMULATED -- a green light assembled
+    # from a missing verdict.
+    cases = {
+        '{}': ({}, SendOutcome.UNKNOWN),
+        'success=false': ({"success": False}, SendOutcome.REJECTED),
+        'status only': ({"status": "simulated"}, SendOutcome.UNKNOWN),
+        'no wouldRevert': ({"success": True, "status": "simulated"}, SendOutcome.UNKNOWN),
+        'documented ok': ({"success": True, "status": "simulated", "wouldRevert": False},
+                          SendOutcome.SIMULATED),
+        'wrong status': ({"success": True, "status": "executed", "wouldRevert": False},
+                         SendOutcome.UNKNOWN),
+    }
+    for label, (body, expected) in cases.items():
+        c, _ = client([response(body, 200)])
+        got = c.dry_run(request(simulate=True)).outcome
+        assert got is expected, f"{label}: expected {expected.value}, got {got.value}"
+
+
 @test("C1: a simulation predicting a revert is REJECTED, not a green light")
 def _():
     c, _ = client([response(
@@ -203,7 +224,7 @@ def _():
     r = c.dry_run(request(simulate=True))
     assert r.outcome is SendOutcome.REJECTED, (
         "a successful simulation reporting a failing call must not read as SIMULATED-ok")
-    assert "wouldRevert=true" in (r.error or "") and "AmountOutOfRange" in (r.error or "")
+    assert "wouldRevert=True" in (r.error or "") and "AmountOutOfRange" in (r.error or "")
 
 
 @test("C1: request mode and response mode must agree")
@@ -214,16 +235,22 @@ def _():
     r = c.broadcast(request(), KEY)
     assert r.outcome is SendOutcome.UNKNOWN and "disagree" in (r.error or "")
 
-    c2, _ = client([response({"success": True, "status": "executed"}, 200)])
+    c2, _ = client([response(
+        {"success": True, "status": "executed", "wouldRevert": False}, 200)])
     r2 = c2.dry_run(request(simulate=True))
     assert r2.outcome is SendOutcome.UNKNOWN
     assert "asked to simulate" in (r2.error or "")
 
 
-@test("C1: the legacy fixture shape is still recognised, so old records stay readable")
+@test("C1: the invented `simulated: true` shape no longer passes as a preflight")
 def _():
+    # This shape was MY invention, never documented. It is still recognised for the
+    # contradiction check on a broadcast, but on a simulate request it carries no
+    # affirmative verdict and must not be a green light.
     c, _ = client([response({"simulated": True}, 200)])
-    assert c.dry_run(request(simulate=True)).outcome is SendOutcome.SIMULATED
+    r = c.dry_run(request(simulate=True))
+    assert r.outcome is SendOutcome.UNKNOWN, r.outcome
+    assert "missing" in (r.error or "")
 
 
 
