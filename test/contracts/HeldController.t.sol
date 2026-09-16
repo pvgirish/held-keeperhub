@@ -83,6 +83,7 @@ contract HeldControllerForkTest is Test {
         // onBehalf permissive. Roles must be an INDEPENDENT defence: controller-side
         // checks do not substitute for it.
         _scopeSupplyTight();
+        _scopeApproveBounded();
         _setAllowance(LS, LS);
         // Withdraw needs its own scoped function and its own non-refilling quota, or
         // Roles rejects it outright (FunctionNotAllowed) -- scopeTarget sets
@@ -160,13 +161,30 @@ contract HeldControllerForkTest is Test {
         c[2] = ConditionFlat(0, 1, 28, abi.encode(allowKey));                // param1 assets WithinAllowance
         c[3] = ConditionFlat(0, 1, 16, abi.encode(uint256(0)));              // param2 shares == 0
         c[4] = ConditionFlat(0, 1, 16, abi.encode(safe));                    // param3 onBehalf == Safe
-        c[5] = ConditionFlat(0, 2, 0, "");                                   // param4 data (dynamic)
+        // EqualTo accepts Dynamic. compValue is hashed on store and compared against
+        // keccak256(pluck(...)) at check time, so the empty-bytes encoding below pins
+        // the callback to empty AT THE ROLES LAYER, independently of the controller.
+        c[5] = ConditionFlat(0, 2, 16, abi.encode(bytes("")));               // param4 data == 0x
         c[6] = ConditionFlat(1, 1, 16, abi.encode(USDC));
         c[7] = ConditionFlat(1, 1, 16, abi.encode(COLL));
         c[8] = ConditionFlat(1, 1, 16, abi.encode(ORACLE));
         c[9] = ConditionFlat(1, 1, 16, abi.encode(IRM));
         c[10] = ConditionFlat(1, 1, 16, abi.encode(LLTV));
         IRolesAdmin(roles).scopeFunction(roleKey, MORPHO, IMorpho.supply.selector, _withCallCount(c, NORMAL_COUNT_KEY), 0);
+    }
+
+    /// @dev P02 overlay for the token approval. The P00 fixture bound the spender to
+    ///      Morpho but left the VALUE unrestricted at the native layer. A finite bound is
+    ///      applied here; cleanup approve(0) stays permitted because 0 < bound.
+    ///
+    ///      Deliberately NOT a WithinAllowance: the approval must not charge the economic
+    ///      amount quota, which is consumed by the protocol call alone (V4 §5).
+    function _scopeApproveBounded() internal {
+        ConditionFlat[] memory c = new ConditionFlat[](3);
+        c[0] = ConditionFlat(0, 5, 5, "");                                   // root Calldata/Matches
+        c[1] = ConditionFlat(0, 1, 16, abi.encode(MORPHO));                  // spender == Morpho
+        c[2] = ConditionFlat(0, 1, 18, abi.encode(uint256(MS) + 1));         // value < Ms + 1
+        IRolesAdmin(roles).scopeFunction(roleKey, USDC, IERC20.approve.selector, c, 0);
     }
 
     /// @dev Insert a CallWithinAllowance node so the native COUNT allowance is actually
@@ -869,6 +887,120 @@ contract HeldControllerForkTest is Test {
         assertFalse(ok, string.concat("Roles ADMITTED: ", what));
         assertEq(bytes4(ret), bytes4(0xd0a9bf58),
             string.concat("refused, but not by a Roles condition: ", what));
+    }
+
+    /// @dev THE operating-synchronisation regression. Activation is correct, then the
+    ///      native quota DRIFTS upward with plenty of capacity left, so a quota shortage
+    ///      cannot be the reason for refusal. Without an operating check the supply would
+    ///      succeed and leave native remaining at 55,000 while the controller believed
+    ///      45,000.
+    function test_OperatingDriftInTheNativeQuotaIsRefused() public {
+        _activate(1, runnerB);
+        (,,, uint128 remaining,) = IRoles(roles).allowances(allowKey);
+        assertEq(remaining, LS, "starts synchronised");
+
+        vm.prank(safe);
+        _setAllowance(60_000e6, 80_000e6); // drift UP: capacity is not the constraint
+
+        HeldController.Envelope memory env = _envelope(keccak256("op-drift"), 1, 5_000e6, 1, runnerB);
+        bytes memory sig = _sign(env, PK_RUNNER_B);
+        MarketParams memory mp_ = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert(abi.encodeWithSelector(
+            HeldController.AllowanceDesynchronised.selector, uint256(60_000e6), uint256(LS)));
+        controller.executeSupply(env, mp_, 5_000e6, sig);
+
+        assertEq(controller.usedSupply(), 0, "nothing consumed under drift");
+
+        // Restore agreement and the SAME operation goes through: the refusal was the
+        // drift, not a broken path.
+        vm.prank(safe);
+        _setAllowance(LS, LS);
+        _supply(keccak256("op-drift-ok"), 5_000e6, 1, PK_RUNNER_B, runnerB);
+        assertEq(controller.usedSupply(), 5_000e6);
+    }
+
+    /// @dev Drift in a COUNT quota is refused on the same footing as an amount quota.
+    function test_OperatingDriftInTheNativeCountIsRefused() public {
+        _activate(1, runnerB);
+        vm.prank(safe);
+        IRolesAdmin(roles).setAllowance(NORMAL_COUNT_KEY, 7, 10, 0, 0, 0); // drift, still plenty
+
+        HeldController.Envelope memory env = _envelope(keccak256("op-cdrift"), 1, 5_000e6, 1, runnerB);
+        bytes memory sig = _sign(env, PK_RUNNER_B);
+        MarketParams memory mp_ = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert(abi.encodeWithSelector(
+            HeldController.AllowanceDesynchronised.selector, uint256(7), uint256(10)));
+        controller.executeSupply(env, mp_, 5_000e6, sig);
+    }
+
+    /// @dev A stored balance that matches today does not mean the quota cannot accrue
+    ///      tomorrow. Roles keeps refill and period separately; a refilling quota is
+    ///      outside the admitted non-refilling profile and is refused at BOTH boundaries.
+    function test_RefillingAllowanceIsRefusedAtActivationAndAtOperatingTime() public {
+        // operating time: activate clean, then make the quota refilling
+        _activate(1, runnerB);
+        vm.prank(safe);
+        IRolesAdmin(roles).setAllowance(allowKey, LS, LS, 1, 3600, 0); // balance still matches
+
+        HeldController.Envelope memory env = _envelope(keccak256("op-refill"), 1, 5_000e6, 1, runnerB);
+        bytes memory sig = _sign(env, PK_RUNNER_B);
+        MarketParams memory mp_ = _mp();
+        vm.prank(EXECUTOR);
+        vm.expectRevert(abi.encodeWithSelector(
+            HeldController.AllowanceRefillsNotPermitted.selector, allowKey, uint128(1), uint64(3600)));
+        controller.executeSupply(env, mp_, 5_000e6, sig);
+
+        // activation: same configuration must not be admitted either
+        vm.prank(safe);
+        controller.fence();
+        HeldController.Policy memory p = _policy();
+        HeldController.ExpectedState memory exp = _expected();
+        vm.prank(safe);
+        vm.expectRevert(abi.encodeWithSelector(
+            HeldController.AllowanceRefillsNotPermitted.selector, allowKey, uint128(1), uint64(3600)));
+        controller.activate(2, 2, runnerB, EXECUTOR, p, exp);
+    }
+
+    /// @dev The approval bound and empty-callback restriction at the ROLES layer,
+    ///      exercised directly by a role member with the controller out of the picture.
+    function test_RolesIndependentlyBoundsApprovalAndRequiresEmptyCallback() public {
+        _activate(1, runnerB);
+        vm.prank(safe);
+        _assign(runnerA, roleKey, true);
+
+        // excessive approval
+        vm.prank(runnerA);
+        (bool okBig,) = roles.call(abi.encodeWithSignature(
+            "execTransactionWithRoleReturnData(address,uint256,bytes,uint8,bytes32,bool)",
+            USDC, uint256(0), abi.encodeCall(IERC20.approve, (MORPHO, type(uint256).max)),
+            uint8(0), roleKey, true));
+        assertFalse(okBig, "Roles admitted an unlimited approval");
+
+        // non-empty callback on the economic call
+        bytes memory withCallback = abi.encodeCall(
+            IMorpho.supply, (_mp(), 1_000e6, 0, safe, hex"01"));
+        vm.prank(runnerA);
+        (bool okCb, bytes memory retCb) = roles.call(abi.encodeWithSignature(
+            "execTransactionWithRoleReturnData(address,uint256,bytes,uint8,bytes32,bool)",
+            MORPHO, uint256(0), withCallback, uint8(0), roleKey, true));
+        assertFalse(okCb, "Roles admitted a non-empty callback");
+        assertEq(bytes4(retCb), bytes4(0xd0a9bf58), "callback refused, but not by a Roles condition");
+
+        // CONTROLS: a bounded approval and an empty callback are admitted.
+        vm.prank(runnerA);
+        (bool okOk,) = roles.call(abi.encodeWithSignature(
+            "execTransactionWithRoleReturnData(address,uint256,bytes,uint8,bytes32,bool)",
+            USDC, uint256(0), abi.encodeCall(IERC20.approve, (MORPHO, 1_000e6)),
+            uint8(0), roleKey, true));
+        assertTrue(okOk, "Roles refused a bounded approval: the negatives prove nothing");
+        vm.prank(runnerA);
+        (bool okZero,) = roles.call(abi.encodeWithSignature(
+            "execTransactionWithRoleReturnData(address,uint256,bytes,uint8,bytes32,bool)",
+            USDC, uint256(0), abi.encodeCall(IERC20.approve, (MORPHO, 0)),
+            uint8(0), roleKey, true));
+        assertTrue(okZero, "cleanup approve(0) must stay permitted");
     }
 
     function test_ForeignMarketIsRejected() public {

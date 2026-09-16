@@ -50,12 +50,33 @@ contract MockRoles {
         return (0, bal, 0, bal, 0);
     }
 
+    /// @dev Per-role lane mapping, so this mock CONSUMES quotas the way real Roles does.
+    ///      Without it the controller's operating-synchronisation check would be testing
+    ///      a fixture that never charges anything -- the mock would silently defeat the
+    ///      guard instead of modelling it.
+    /// @dev Keyed by (role, selector), because real Roles scopes one condition tree per
+    ///      (role, target, selector): the SAME normal role charges the supply amount key
+    ///      for supply and the normal-withdraw key for withdraw. Keying by role alone
+    ///      charged the wrong quota and refused legitimate normal withdrawals.
+    mapping(bytes32 => mapping(bytes4 => bytes32)) public laneAmountKey;
+    mapping(bytes32 => mapping(bytes4 => bytes32)) public laneCountKey;
+    address public economicTarget;
+
+    function setLane(bytes32 role, bytes4 selector, bytes32 amountKey, bytes32 countKey) external {
+        laneAmountKey[role][selector] = amountKey;
+        laneCountKey[role][selector] = countKey;
+    }
+
+    function setEconomicTarget(address t) external {
+        economicTarget = t;
+    }
+
     function execTransactionWithRoleReturnData(
         address to,
         uint256 value,
         bytes calldata data,
         uint8,
-        bytes32,
+        bytes32 roleKey,
         bool shouldRevert
     ) external returns (bool success, bytes memory returnData) {
         (success, returnData) = to.call{value: value}(data);
@@ -63,6 +84,16 @@ contract MockRoles {
             assembly {
                 revert(add(returnData, 0x20), mload(returnData))
             }
+        }
+        // Charge ONLY on the economic call, never on the token approval or its cleanup.
+        // MarketParams is a 5-word static tuple, so `assets` is the sixth word.
+        if (success && to == economicTarget && data.length >= 4 + 6 * 32) {
+            uint256 assets = abi.decode(data[4 + 5 * 32:4 + 6 * 32], (uint256));
+            bytes4 sel = bytes4(data[:4]);
+            bytes32 aKey = laneAmountKey[roleKey][sel];
+            bytes32 cKey = laneCountKey[roleKey][sel];
+            if (aKey != bytes32(0)) balances[aKey] -= uint128(assets);
+            if (cKey != bytes32(0)) balances[cKey] -= 1;
         }
     }
 }

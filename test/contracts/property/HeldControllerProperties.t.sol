@@ -95,6 +95,10 @@ contract HeldControllerPropertiesTest is Test {
             })
         );
 
+        roles.setEconomicTarget(address(morpho));
+        roles.setLane(NORMAL_ROLE, MockMorpho.supply.selector, SUPPLY_KEY, NC_KEY);
+        roles.setLane(NORMAL_ROLE, MockMorpho.withdraw.selector, NW_KEY, NC_KEY);
+        roles.setLane(RESTORE_ROLE, MockMorpho.withdraw.selector, RESTORE_KEY, RC_KEY);
         roles.setKeyBalance(NW_KEY, p.Ln);
         roles.setKeyBalance(NC_KEY, uint128(p.Nn));
         roles.setKeyBalance(RC_KEY, uint128(p.Nr));

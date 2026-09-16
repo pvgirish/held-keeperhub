@@ -165,6 +165,8 @@ contract HeldController {
     error CollateralChanged();
     error StaleActivation();
     error AllowanceDesynchronised(uint256 rolesRemaining, uint256 expected);
+    error AllowanceRefillsNotPermitted(bytes32 key, uint128 refill, uint64 period);
+    error AllowanceNotConsumed(bytes32 key, uint256 before, uint256 afterCall, uint256 expectedDelta);
     error CeilingBelowConsumption();
     error Reentrancy();
 
@@ -293,6 +295,11 @@ contract HeldController {
         if (borrow0 != 0) revert BorrowSharesPresent();
         if (IERC20(token).allowance(safe, morpho) != 0) revert EntryAllowanceNotZero();
 
+        // OPERATING synchronisation, not just activation: the native quotas must still
+        // agree with this controller's consumption before anything executes.
+        uint256 quotaBefore = _syncedRemaining(supplyAllowanceKey, uint256(p.Ls) - uint256(usedSupply));
+        uint256 countQuotaBefore = _syncedRemaining(normalCountKey, uint256(p.Nn) - uint256(normalCount));
+
         _approveThroughRoles(amount);
         _callThroughRoles(morpho, abi.encodeCall(IMorpho.supply, (mp, amount, 0, safe, bytes(""))), normalRoleKey);
         _approveThroughRoles(0);
@@ -306,6 +313,10 @@ contract HeldController {
         if (borrow1 != 0) revert BorrowSharesPresent();
         if (collateral1 != collateral0) revert CollateralChanged();
         if (IERC20(token).allowance(safe, morpho) != 0) revert ExitAllowanceNotZero();
+        // The economic call must have charged the amount quota exactly once and the
+        // shared normal count exactly once. The approval and its cleanup charge neither.
+        _requireConsumed(supplyAllowanceKey, quotaBefore, amount);
+        _requireConsumed(normalCountKey, countQuotaBefore, 1);
 
         usedSupply += uint128(amount);
         normalCount += 1;
@@ -345,6 +356,17 @@ contract HeldController {
         // Withdraw needs no token approval: Morpho moves its own accounting. The
         // managed allowance must still be zero on both sides of the call.
         if (IERC20(token).allowance(safe, morpho) != 0) revert EntryAllowanceNotZero();
+
+        bytes32 amountKey = restoration ? restorationAllowanceKey : normalWithdrawAllowanceKey;
+        bytes32 countKey = restoration ? restorationCountKey : normalCountKey;
+        uint256 quotaBefore = _syncedRemaining(
+            amountKey,
+            restoration ? uint256(p.Lr) - uint256(usedRestoration) : uint256(p.Ln) - uint256(usedNormalWithdraw)
+        );
+        uint256 countQuotaBefore = _syncedRemaining(
+            countKey,
+            restoration ? uint256(p.Nr) - uint256(restorationCount) : uint256(p.Nn) - uint256(normalCount)
+        );
         _callThroughRoles(
             morpho,
             abi.encodeCall(IMorpho.withdraw, (mp, amount, 0, safe, safe)),
@@ -358,6 +380,8 @@ contract HeldController {
         if (borrow1 != 0) revert BorrowSharesPresent();
         if (collateral1 != collateral0) revert CollateralChanged();
         if (IERC20(token).allowance(safe, morpho) != 0) revert ExitAllowanceNotZero();
+        _requireConsumed(amountKey, quotaBefore, amount);
+        _requireConsumed(countKey, countQuotaBefore, 1);
 
         if (restoration) {
             usedRestoration += uint128(amount);
@@ -375,10 +399,32 @@ contract HeldController {
     // ---------------------------------------------------------------- internals --
 
     /// @dev One Roles allowance must equal its ceiling minus the corresponding
-    ///      consumption. Used for every amount lane and every count lane alike.
-    function _requireSynced(bytes32 key, uint256 expected) internal view {
-        (,,, uint128 remaining,) = IRoles(roles).allowances(key);
+    ///      consumption, AND must be configured non-refilling.
+    ///
+    ///      Checking only the stored balance is not enough: Roles keeps `refill` and
+    ///      `period` separately, so a balance that matches today can still accrue
+    ///      tomorrow. V4 §5 admits only non-refilling quotas, and a non-zero refill is
+    ///      what makes a quota refill -- so it is refused outright.
+    function _syncedRemaining(bytes32 key, uint256 expected) internal view returns (uint256) {
+        (uint128 refill,, uint64 period, uint128 remaining,) = IRoles(roles).allowances(key);
+        if (refill != 0) revert AllowanceRefillsNotPermitted(key, refill, period);
         if (uint256(remaining) != expected) revert AllowanceDesynchronised(remaining, expected);
+        return uint256(remaining);
+    }
+
+    function _requireSynced(bytes32 key, uint256 expected) internal view {
+        _syncedRemaining(key, expected);
+    }
+
+    /// @dev The native quota must have been charged by exactly the expected amount.
+    ///      Reading only the controller's own counters would let native and Held state
+    ///      drift apart unnoticed; this closes the operating half of V4 §5's
+    ///      "synchronization at activation AND operating checks".
+    function _requireConsumed(bytes32 key, uint256 before, uint256 expectedDelta) internal view {
+        (,,, uint128 remaining,) = IRoles(roles).allowances(key);
+        if (before - uint256(remaining) != expectedDelta) {
+            revert AllowanceNotConsumed(key, before, uint256(remaining), expectedDelta);
+        }
     }
 
     function _authorize(
