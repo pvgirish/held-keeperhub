@@ -15,8 +15,9 @@
   "keeperhub_wire_contract": "28 passed",
   "submission_binding_and_reconciliation": "18 passed",
   "crash_restart_recovery": "20 passed",
-  "total_local": 110,
-  "composed": "make check-phase-03-composed \u2014 PASS, 11 checks (local only)"
+  "total_local": 130,
+  "composed": "make check-phase-03-composed \u2014 PASS, 16 checks (local only)",
+  "bootstrap_collector_decisions": "20 passed (incl. positive control)"
  },
  "what_is_established": {
   "native_connection": "CompilationResult -> action_bundle -> Held record -> admission, with economic calldata copied byte for byte. The producer verdict is strictly fail-closed: exact status set, no prefix match, no default success for a missing verdict, FAILED+is_safety_refusal preserved as a refusal, PARTIAL refused, self-contradictory SUCCESS refused, and a declared intent_type that disagrees with the family decoded from calldata refused.",
@@ -222,7 +223,7 @@
   }
  },
  "bootstrap_checklist": {
-  "status": "REHEARSED on the fork. NOT satisfied for any public installation.",
+  "status": "REHEARSED on the fork against the actual PAUSED Held installation. NOT satisfied for any public installation.",
   "gate": "make check-bootstrap-rehearsal",
   "requirement": "P03 required work 6 / V4 \u00a76: at ONE stated block, report separately Safe ownership/threshold/implementation and enabled modules/guard/fallback; Roles implementation, members, conditions and allowance state; Morpho grants confirmed by mapping readback; relevant token approvals and delegated spend paths; runner/executor identities with attested control kept DISTINCT from chain facts.",
   "method": "Every value is READ with cast from the running fork. Nothing is taken from the fixture scripts' own output, because the checklist's job is to verify the installation independently of whatever built it.",
@@ -235,6 +236,36 @@
    "Morpho grant completeness is WITHIN THE DECLARED DISCOVERY SET. The readback checks the listed identities; it cannot enumerate every address that might hold a grant.",
    "Private-key and credential control is ATTESTED, never verified. Public chain data cannot prove it, and the fork's keys are well-known anvil accounts that are not custody."
   ],
-  "effect_on_request_B": "This removes the rehearsal from the critical path but NOT the requirement. Request B still needs the same collection performed against the actual public Safe/controller/Roles at a stated finalized block."
+  "effect_on_request_B": "This removes the rehearsal from the critical path but NOT the requirement. Request B still needs the same collection performed against the actual public Safe/controller/Roles at a stated finalized block.",
+  "superseded_claim": "The earlier entry said 'all five sections COMPLETE'. That claim is WITHDRAWN as evidence of a completed activation rehearsal: it inspected only the P00 native fixture with no Held controller, and its predicates permitted 14 scripted situations that should have blocked. The readbacks it performed were real; the completeness verdict it drew from them was not supported."
+ },
+ "fifth_review_findings_repaired": {
+  "when": "1b07557 review, 2026-09-16",
+  "all_reproduced_against_the_real_code_first": true,
+  "native_checkpoint_identity": {
+   "binding_was_replaceable": "bind_native_decision used INSERT OR REPLACE, so a second call silently replaced the original decision -- even with a different intent type. A binding that can be overwritten identifies nothing. It is now WRITE-ONCE: an identical reopen is idempotent, a different identity or type raises NativeDecisionConflict.",
+   "consumption_ignored_the_binding": "Reproduced: a machine for decision B applied under an operation bound to decision A, deliver() returned APPLIED, and verify_committed() returned True because it compared only STATE LABELS. Both machines saying COMPLETED is not proof the correct decision completed. apply() now checks identity FIRST, before the machine is touched, and the identity is stamped into the snapshot.",
+   "verification_could_see_uncommitted_writes": "verify_committed() read the journal's OWN connection, so called inside the delivering transaction it saw its own uncommitted snapshot and set authoritative=True; a later rollback removed the snapshot and left the flag set. It now reads through a SEPARATE connection, which cannot see an uncommitted write, so 'verified' means committed.",
+   "restore_ignored_durable_operation_state": "Reproduced: a CONFIRMED operation with no native snapshot built a fresh machine and let it decide work was needed -- at exactly the gap between economic confirmation and native acknowledgement. restore() now consults the DURABLE OPERATION STATE first. CONFIRMED-but-unacked raises NativeRecoveryBlocked telling the operator to recover and DELIVER the existing result; UNKNOWN and DISPATCHED stay blocked; no machine is built in any of those cases.",
+   "authority_is_enforced_in_the_decision_path": "needs_execution() raises on an inconsistent durable record, on a recoverable result, and on an unsettled operation, rather than relying on callers to remember an optional require_authoritative() check.",
+   "inconsistent_records_are_reported": "A terminal snapshot with no acknowledgement, or with no bound decision, is recorded as inconsistent and blocks rather than reading as complete."
+  },
+  "bootstrap_collector": {
+   "finding": "14 of 20 scripted negative scenarios returned exit 0 and PERMITTED. The prose above the predicates claimed checks the predicates did not make: Safe completeness ignored the guard/fallback result, Roles completeness did not require a matching owner/avatar/target, identity completeness was literally complete=True.",
+   "restructured": "Every section now answers READ (did the query return usable data), COMPLETE (are all required fields present) and COMPATIBLE (does it match the supported profile) SEPARATELY, and a failure of any one blocks. A section that cannot distinguish 'read failed' from 'read fine, value wrong' cannot be trusted to block.",
+   "now_blocks_on": [
+    "unreadable guard or fallback handler; a guard that is SET",
+    "Roles owner/avatar/target that is not the Safe; unreadable Roles fields",
+    "a Roles module not actually enabled on the Safe; any unrecognised enabled module",
+    "chain id or threshold or owner count outside the declared profile; unreadable block hash",
+    "malformed Morpho grant output (parsed strictly; never read as False)",
+    "unreadable token allowance (never read as zero) and unreadable authorization history",
+    "a missing, ACTIVE, elsewhere-bound or already-consuming Held controller"
+   ],
+   "discovery_widened": "Morpho candidates now come from the Safe's BOUNDED authorization history over the pinned range PLUS known identities, then mapping readback. Probing a hand-supplied list was not discovery -- a grant to an address nobody listed was never queried. A regression covers exactly that: a grant visible only in history now blocks.",
+   "reads_are_pinned": "All state reads pass --block for the observation block, so the single-block observation the artifact advertises is what actually happens.",
+   "now_inspects_the_real_installation": "fixtures/scripts/03d deploys the Held controller PAUSED and enables it on the Safe, and the collector checks active=false, epoch 0, immutable bindings and zero consumption across all five budget dimensions. The previous rehearsal inspected only the P00 native Safe/Roles fixture and still reported COMPLETE, so it could not have established the paused initial state it claimed.",
+   "failure_path_tested": "20 decision tests run the REAL collector as a subprocess with a scripted cast shim, including a positive control that must still PERMIT. A checklist that blocks everything proves as little as one that blocks nothing."
+  }
  }
 }

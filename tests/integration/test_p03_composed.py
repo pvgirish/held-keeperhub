@@ -47,6 +47,8 @@ from held_adapter.execution.keeperhub import (  # noqa: E402
 from held_adapter.execution.interceptor import Profile  # noqa: E402
 from held_adapter.execution.native_result import (  # noqa: E402
     NativeAcknowledgementError,
+    NativeDecisionConflict,
+    NativeRecoveryBlocked,
     NativeStateMachineConsumer,
     NativeStateNotAuthoritative,
     bind_native_decision,
@@ -445,6 +447,11 @@ def _():
     journal.close()
 
 
+def _bind(journal, oid, machine):
+    bind_native_decision(journal, oid, machine.intent.intent_id,
+                         machine.intent.intent_type.value)
+
+
 def _receipt() -> str:
     # LABEL: tx_hash is a fixture value -- the fork does not surface a transaction hash
     # to this process. The ECONOMIC effect is what was verified, in composed-result.json.
@@ -487,12 +494,163 @@ def _():
 
     journal = Journal(JOURNAL_PATH)
     oid = hex32(ADMITTED.operation_id)
-    bind_native_decision(journal, oid, NATIVE_MACHINE.intent.intent_id,
-                         NATIVE_MACHINE.intent.intent_type.value)
-    bound = bound_native_decision(journal, oid)
-    assert bound["intent_id"] == NATIVE_MACHINE.intent.intent_id
+    existing = bound_native_decision(journal, oid)
+    if existing is None:
+        bind_native_decision(journal, oid, NATIVE_MACHINE.intent.intent_id,
+                             NATIVE_MACHINE.intent.intent_type.value)
+        bound = bound_native_decision(journal, oid)
+        assert bound["intent_id"] == NATIVE_MACHINE.intent.intent_id
+    else:
+        # Verify phase: pass 2 bound the producing decision and the binding is WRITE-ONCE,
+        # so a fresh machine here must NOT be able to take its place.
+        bound = existing
+        assert bound["intent_id"] != NATIVE_MACHINE.intent.intent_id, (
+            "a new machine coincidentally shares the bound intent id")
+        try:
+            bind_native_decision(journal, oid, NATIVE_MACHINE.intent.intent_id, "SUPPLY")
+            raise AssertionError("a later run replaced the producing decision")
+        except NativeDecisionConflict:
+            pass
     assert bound["intent_type"] == "SUPPLY"
     journal.close()
+
+
+@test("REGRESSION: the producing-decision binding is WRITE-ONCE")
+def _():
+    # INSERT OR REPLACE meant a second call silently replaced the original decision, even
+    # with a different intent type. A binding that can be overwritten identifies nothing.
+    v = load_vector()
+    with tempfile.TemporaryDirectory() as d:
+        j = Journal(os.path.join(d, "bind.sqlite"))
+        oid = hex32(ADMITTED.operation_id)
+        j.create_or_reopen(oid, hex32(ADMITTED.payload_hash), SOURCE_DECISION_ID, 0, 1)
+        bind_native_decision(j, oid, "decision-A", "SUPPLY")
+        bind_native_decision(j, oid, "decision-A", "SUPPLY")   # identical reopen: fine
+        try:
+            bind_native_decision(j, oid, "decision-B", "WITHDRAW")
+            raise AssertionError("the original binding was silently replaced")
+        except NativeDecisionConflict as e:
+            assert "already bound" in str(e), str(e)
+        assert bound_native_decision(j, oid)["intent_id"] == "decision-A"
+        j.close()
+
+
+@test("REGRESSION: a machine for a DIFFERENT decision cannot apply under the binding")
+def _():
+    # Both machines reaching COMPLETED is not proof the correct decision completed.
+    v = load_vector()
+    with tempfile.TemporaryDirectory() as d:
+        j = Journal(os.path.join(d, "wrong.sqlite"))
+        oid = hex32(ADMITTED.operation_id)
+        j.create_or_reopen(oid, hex32(ADMITTED.payload_hash), SOURCE_DECISION_ID, 0, 1)
+
+        right = native_state_machine(v)
+        bind_native_decision(j, oid, right.intent.intent_id, right.intent.intent_type.value)
+
+        other = native_state_machine(v)   # a DIFFERENT intent id
+        assert other.intent.intent_id != right.intent.intent_id
+        wrong = NativeStateMachineConsumer(other)
+        wrong.needs_execution()
+        try:
+            R.deliver(j, oid, hex32(ADMITTED.payload_hash), _receipt(), wrong)
+            raise AssertionError("the wrong decision was advanced")
+        except NativeDecisionConflict as e:
+            assert "bound to native decision" in str(e), str(e)
+        assert wrong.state.startswith("VALIDATING"), (
+            f"the wrong machine was advanced to {wrong.state} before the check")
+        assert native_ack_state(j, oid) is None
+        j.close()
+
+
+@test("REGRESSION: an uncommitted snapshot cannot verify as committed")
+def _():
+    # verify_committed() read the journal's OWN connection, so called inside the
+    # delivering transaction it saw its own uncommitted write and set authoritative=True;
+    # a later rollback removed the snapshot and left the flag set.
+    v = load_vector()
+
+    class VerifiesTooEarly(NativeStateMachineConsumer):
+        def __init__(self, machine, journal):
+            super().__init__(machine)
+            self._journal = journal
+            self.verified_inside = None
+
+        def apply(self, conn, operation_id, result_hash, payload):
+            state = super().apply(conn, operation_id, result_hash, payload)
+            # Still inside the transaction, before any commit.
+            self.verified_inside = self.verify_committed(self._journal, operation_id)
+            raise RuntimeError("rolled back after verifying")
+
+    with tempfile.TemporaryDirectory() as d:
+        j = Journal(os.path.join(d, "early.sqlite"))
+        oid = hex32(ADMITTED.operation_id)
+        j.create_or_reopen(oid, hex32(ADMITTED.payload_hash), SOURCE_DECISION_ID, 0, 1)
+        machine = native_state_machine(v)
+        bind_native_decision(j, oid, machine.intent.intent_id, machine.intent.intent_type.value)
+        c = VerifiesTooEarly(machine, j)
+        c.needs_execution()
+        try:
+            R.deliver(j, oid, hex32(ADMITTED.payload_hash), _receipt(), c)
+        except RuntimeError:
+            pass
+        assert c.verified_inside is False, (
+            "an uncommitted write verified as committed; a rollback would then leave the "
+            "authority flag set on a machine with no durable record")
+        assert native_state_after(j, oid) is None
+        assert c.verify_committed(j, oid) is False
+        j.close()
+
+
+@test("REGRESSION: a CONFIRMED operation with no native snapshot does not request work")
+def _():
+    # The crash window between economic confirmation and native acknowledgement. restore()
+    # consulted only the native snapshot, so with it missing a fresh machine decided that
+    # execution was needed -- for work already on chain.
+    v = load_vector()
+    with tempfile.TemporaryDirectory() as d:
+        j = Journal(os.path.join(d, "gap.sqlite"))
+        oid = hex32(ADMITTED.operation_id)
+        j.create_or_reopen(oid, hex32(ADMITTED.payload_hash), SOURCE_DECISION_ID, 0, 1)
+        for st in (OperationState.AUTHORIZED, OperationState.DISPATCHED,
+                   OperationState.CONFIRMED):
+            j.transition(oid, st, epoch=1)
+        built = []
+
+        def build():
+            built.append(1)
+            return native_state_machine(v)
+
+        decision = restore(j, oid, build_machine=build)
+        assert decision.result_recoverable is True
+        try:
+            decision.needs_execution()
+            raise AssertionError("a CONFIRMED operation asked for fresh economic work")
+        except NativeRecoveryBlocked as e:
+            assert "Recover and DELIVER" in str(e), str(e)
+        assert built == [], "a machine was built for an already-confirmed operation"
+        j.close()
+
+
+@test("REGRESSION: an UNKNOWN operation stays blocked rather than deciding to work")
+def _():
+    v = load_vector()
+    with tempfile.TemporaryDirectory() as d:
+        j = Journal(os.path.join(d, "unk.sqlite"))
+        oid = hex32(ADMITTED.operation_id)
+        j.create_or_reopen(oid, hex32(ADMITTED.payload_hash), SOURCE_DECISION_ID, 0, 1)
+        for st in (OperationState.AUTHORIZED, OperationState.DISPATCHED,
+                   OperationState.UNKNOWN):
+            j.transition(oid, st, epoch=1)
+        built = []
+        decision = restore(j, oid, build_machine=lambda: (built.append(1),
+                                                          native_state_machine(v))[1])
+        try:
+            decision.needs_execution()
+            raise AssertionError("an UNKNOWN operation produced a work decision")
+        except NativeRecoveryBlocked as e:
+            assert "not settled" in str(e), str(e)
+        assert built == []
+        j.close()
 
 
 @test("RESTART: a completed native decision is restored and does NOT ask for execution")
@@ -517,6 +675,9 @@ def _():
         consumer.needs_execution()
         bind_native_decision(journal, oid, machine.intent.intent_id,
                              machine.intent.intent_type.value)
+        journal.transition(oid, OperationState.AUTHORIZED, epoch=1)
+        journal.transition(oid, OperationState.DISPATCHED, epoch=1)
+        journal.transition(oid, OperationState.CONFIRMED, epoch=1)
         R.deliver(journal, oid, result["consumedPayload"], _receipt(), consumer)
         assert consumer.verify_committed(journal, oid) is True
         journal.close()
@@ -571,6 +732,7 @@ def _():
         oid = result["operationId"]
         journal.create_or_reopen(oid, result["consumedPayload"], SOURCE_DECISION_ID, 0, 1)
         machine = native_state_machine(v)
+        _bind(journal, oid, machine)
         consumer = FailsAfterAdvancing(machine)
         consumer.needs_execution()
 
@@ -624,6 +786,7 @@ def _():
         journal = Journal(os.path.join(d, "native.sqlite"))
         oid = result["operationId"]
         journal.create_or_reopen(oid, result["consumedPayload"], SOURCE_DECISION_ID, 0, 1)
+        _bind(journal, oid, machine)
 
         outcome = R.deliver(journal, oid, result["consumedPayload"], _receipt(), consumer)
         assert outcome is R.DeliveryOutcome.APPLIED, outcome
@@ -662,6 +825,7 @@ def _():
         journal = Journal(os.path.join(d, "native-fail.sqlite"))
         oid = result["operationId"]
         journal.create_or_reopen(oid, result["consumedPayload"], SOURCE_DECISION_ID, 0, 1)
+        _bind(journal, oid, machine)
 
         # A FAILED receipt: the native machine goes to sadflow, not COMPLETED.
         bad = json.dumps({"success": False, "tx_hash": "0x" + "11" * 32,

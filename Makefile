@@ -76,6 +76,7 @@ check-phase-03-local:
 	@$(PY) tests/integration/test_p03_keeperhub.py
 	@$(PY) tests/integration/test_p03_submit.py
 	@$(PY) tests/integration/test_p03_recovery.py
+	@$(PY) tests/integration/test_p03_bootstrap_collector.py
 
 ## P03 required work 6, REHEARSAL: the bounded bootstrap checklist collected manually
 ## against the FORK fixture. Not public-Safe activation evidence and not the P04

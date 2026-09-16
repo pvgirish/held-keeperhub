@@ -1,35 +1,55 @@
 {
  "observation": {
-  "block_number": 51353228,
-  "block_hash": "0xdd9aa149d181446fee02e9e26ca757f9f5c0ac272c296032e5cb7bd6d919f213",
+  "read": true,
+  "complete": true,
+  "compatible": true,
+  "verdict": "COMPLETE",
+  "block_number": 51353230,
+  "block_hash": "0x03b23cffeda47803fb4abbdfccea7f618b493d18aa1f3405e17ea813cdc074b0",
   "chain_id": 8453,
-  "finality": "NONE \u2014 anvil fork. This is the observation point, not finalized evidence. A public installation must state a finalized block/hash.",
+  "expected_chain_id": 8453,
+  "all_state_reads_pinned_to_block": true,
+  "finality": "NONE \u2014 anvil fork. This is the observation point, not finalized evidence.",
   "scope": "FORK REHEARSAL. Not the public installation, not the P04 automated service."
  },
  "safe": {
+  "read": true,
   "complete": true,
+  "compatible": true,
+  "verdict": "COMPLETE",
   "owners": [
    "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
    "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
    "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
   ],
+  "owner_count": 3,
+  "expected_owner_count": 3,
   "threshold": 2,
+  "expected_threshold": 2,
   "implementation_version": "\"1.4.1\"",
   "enabled_modules": [
+   "0xB4A7e7Ef53bBdA157A1c3c8715Cc98f93FFD674B",
    "0x3875311CC0D4017A033893a9653A0725378acA1C"
   ],
+  "roles_module_enabled": true,
   "unrecognised_modules": [],
   "guard": "0x0000000000000000000000000000000000000000",
-  "guard_is_set": false,
+  "guard_is_unset": true,
   "fallback_handler": "0x0000000000000000000000000000000000000000",
-  "note": "An unrecognised enabled module is an unrecognised delegated path and blocks protected activation (V4 \u00a76)."
+  "note": "An UNREADABLE guard or fallback is INCOMPLETE, not 'absent'. An unrecognised enabled module, a guard that is set, a Roles module that is not actually enabled, or a threshold/owner count outside the declared profile are all incompatible and block activation (V4 \u00a76)."
  },
  "roles": {
+  "read": true,
   "complete": true,
+  "compatible": true,
+  "verdict": "COMPLETE",
   "module": "0x3875311cc0d4017a033893a9653a0725378aca1c",
   "owner": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180",
   "avatar": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180",
   "target": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180",
+  "owner_is_safe": true,
+  "avatar_is_safe": true,
+  "target_is_safe": true,
   "role_key": "0x68656c642d6f70657261746f722d763100000000000000000000000000000000",
   "allowance_key": "0x68656c642d737570706c792d6361700000000000000000000000000000000000",
   "allowance": {
@@ -37,37 +57,121 @@
    "maxRefill": "50000000000",
    "period": "0",
    "balance": "20000000000",
-   "timestamp": "1789495779"
+   "timestamp": "1789495777"
   },
   "non_refilling": true,
-  "note": "A refilling allowance is refused by the controller at activation AND during operation. Read back here rather than trusted from the setup script."
+  "note": "A Roles module whose owner/avatar/target is not the Safe is not this Safe's module, however well configured it looks. A refilling allowance is refused by the controller at activation and during operation; read back here rather than trusted from the setup script."
  },
  "morpho_grants": {
+  "read": true,
   "complete": true,
-  "checked": {
-   "safe_self": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
-   "roles_module": "0x3875311cc0d4017a033893a9653a0725378aca1c"
+  "compatible": true,
+  "verdict": "COMPLETE",
+  "history_range": {
+   "from_block": 51353212,
+   "to_block": 51353230,
+   "readable": true
   },
+  "candidates": {
+   "safe_self": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
+   "roles_module": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "held_controller": "0xB4A7e7Ef53bBdA157A1c3c8715Cc98f93FFD674B",
+   "history_0": "0xf1d1157b17af4d2e973e686d11b7b1235de68254",
+   "history_1": "0x000000000000000000000000000000007023b227",
+   "history_2": "0x9a620a62b78bc508ddc0891fbbd8b7ac0f8fce87",
+   "history_3": "0xae36f6f3d49d606d7f2a15eb0c931416a58875d8",
+   "history_4": "0x9c4cdb06d7f210fd8a863289608d0144e7116396",
+   "history_5": "0x000000000000000000000000000000001a1b5980",
+   "history_6": "0x22afbf5a17496295ef3bc9bb5944056c63ccaa09",
+   "history_7": "0x001e9afd72ec07b149175f9622372dbc09492609",
+   "history_8": "0x5eddb4103e3ccd56d3825b98b6226af9d4b6077c",
+   "history_9": "0x000000000000000000000000000000005880c8f6",
+   "history_10": "0x2be109dcf28344484f91185f9a79bd5a805a55ae",
+   "history_11": "0xf3a5e6d13e2e22fb146f050bf0653e4857ac0559",
+   "history_12": "0x00000000000000000000000000000002540be400",
+   "history_13": "0xf1caa8d008f12f6440918c20d75a3602cda30fe0",
+   "history_14": "0x001ec8f975373a9028542c65a88d4e9f8adfe423",
+   "history_15": "0x0000000000000000000000000000000056aa978f",
+   "history_16": "0x4edb8d3a8cdf2cf60ec1536b462ca7d73aa0ccdb",
+   "history_17": "0xec5c4daba63e6f329e323e81f375261bf4776e14",
+   "history_18": "0x0000000000000000000000000000000056604464",
+   "history_19": "0xb663e19b9742e5a918a6c5337373bd004f78e7dc"
+  },
+  "candidates_from_history": 42,
   "grants": {
    "safe_self": false,
-   "roles_module": false
+   "roles_module": false,
+   "held_controller": false,
+   "history_0": false,
+   "history_1": false,
+   "history_2": false,
+   "history_3": false,
+   "history_4": false,
+   "history_5": false,
+   "history_6": false,
+   "history_7": false,
+   "history_8": false,
+   "history_9": false,
+   "history_10": false,
+   "history_11": false,
+   "history_12": false,
+   "history_13": false,
+   "history_14": false,
+   "history_15": false,
+   "history_16": false,
+   "history_17": false,
+   "history_18": false,
+   "history_19": false
   },
+  "unreadable": [],
   "external_delegates": [],
-  "note": "Confirmed by mapping readback, not by history alone. BOUNDARY: this checks the identities listed above. It does not and cannot enumerate every address that might hold a grant, so completeness is within the declared discovery set."
+  "note": "Candidates come from the Safe's bounded authorization history PLUS known identities, then mapping readback -- not from a hand-supplied list. Malformed output is UNREADABLE, never False. BOUNDARY: completeness is bounded by the history range above; this does not enumerate every address on the chain."
  },
  "token_approvals": {
+  "read": true,
   "complete": true,
+  "compatible": true,
+  "verdict": "COMPLETE",
   "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   "allowances": {
    "morpho": "0",
    "roles": "0",
-   "permit2": "0"
+   "permit2": "0",
+   "held_controller": "0"
   },
+  "unreadable": [],
   "nonzero": [],
   "note": "The managed Safe->Morpho allowance must be zero at rest; the controller also requires it zero on entry and exit of every operation."
  },
- "identities": {
+ "held_controller": {
+  "read": true,
   "complete": true,
+  "compatible": true,
+  "verdict": "COMPLETE",
+  "address": "0xB4A7e7Ef53bBdA157A1c3c8715Cc98f93FFD674B",
+  "active": false,
+  "epoch": "0",
+  "bindings": {
+   "safe": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180",
+   "roles": "0x3875311CC0D4017A033893a9653A0725378acA1C",
+   "morpho": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+   "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+  },
+  "consumption": {
+   "usedSupply": "0",
+   "usedNormalWithdraw": "0",
+   "usedRestoration": "0",
+   "normalCount": "0",
+   "restorationCount": "0"
+  },
+  "consumption_all_zero": true,
+  "note": "Initial activation requires a PAUSED, never-active controller at epoch 0 with zero consumption and immutable bindings pointing at this installation (V4 \u00a76). A controller that is already active, or bound elsewhere, is not a fresh installation."
+ },
+ "identities": {
+  "read": true,
+  "complete": true,
+  "compatible": true,
+  "verdict": "COMPLETE",
   "public_chain_facts": {
    "safe_owners": [
     "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
@@ -81,29 +185,13 @@
    "statement": "Control of the runner and executor keys, and of any KeeperHub organisation credential, is ATTESTED and NOT verified here.",
    "why": "Public chain data cannot prove private-key ownership. V4 \u00a76 requires this distinction to be explicit rather than folded into the chain findings.",
    "fork_note": "Every key in this fixture is a well-known anvil account. It is not custody and proves nothing about a production installation."
-  }
+  },
+  "note": "Completeness here depends on the SAFE section's reads; it is no longer hardcoded True, which made this section incapable of failing."
  },
  "verdict": {
   "all_sections_complete": true,
   "incomplete_sections": [],
   "activation_would_be": "PERMITTED BY THIS CHECKLIST",
-  "important": "'PERMITTED BY THIS CHECKLIST' means the declared sections read clean at this observation point on a FORK. It is not authorization, not finality, and not evidence about the public installation."
- },
- "non_vacuity_control": {
-  "why": "A checklist that cannot fail is decoration. This records that it does fail, with the exact injected state.",
-  "method": "On the same fork, impersonated the Safe and injected two supported-profile violations: Morpho.setAuthorization(0x\u2026dEaD, true) and USDC.approve(Morpho, 1).",
-  "observed_injected_state": {
-   "morpho_isAuthorized_stranger": true,
-   "usdc_allowance_morpho": "1"
-  },
-  "result": {
-   "morpho_grants": "INCOMPLETE \u2014 external delegate detected",
-   "token_approvals": "INCOMPLETE \u2014 non-zero managed allowance",
-   "safe": "COMPLETE (correctly unaffected)",
-   "roles": "COMPLETE (correctly unaffected)",
-   "verdict": "BLOCKED",
-   "exit_code": 1
-  },
-  "reading": "The two sections that should notice did, the two that should not were unaffected, and the run exited non-zero. V4 \u00a76: incomplete evidence blocks activation."
+  "important": "'PERMITTED BY THIS CHECKLIST' means the declared sections read clean at this observation point on a FORK, within the declared history range. It is not authorization, not finality, and not evidence about the public installation."
  }
 }

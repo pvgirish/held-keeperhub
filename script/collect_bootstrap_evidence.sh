@@ -29,11 +29,12 @@ OUT="evidence/P03/bootstrap-rehearsal.json"
   set -uo pipefail
   export PATH="$HOME/.foundry/bin:$PATH"
   for s in 01_deploy_safe_and_roles 02_enable_module_and_fund 03_scope_role \
-           03b_bind_allowance_and_build_history; do
+           03b_bind_allowance_and_build_history 03d_deploy_paused_controller; do
     bash ./fixtures/scripts/$s.sh >/tmp/held_boot_$s.log 2>&1 || { echo "fixture $s failed"; exit 1; }
   done
   . /tmp/held_fixture.env
   export HELD_SAFE="$SAFE" HELD_ROLES="$ROLES" HELD_ROLE_KEY="$ROLE_KEY" HELD_ALLOW_KEY="$ALLOW_KEY"
+  export HELD_CONTROLLER="${HELD_CONTROLLER:-}"
   exec "${PY:-$HOME/venv312/bin/python}" script/collect_bootstrap_evidence.py
 ' | tee /tmp/held_bootstrap.log
 

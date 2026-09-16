@@ -65,7 +65,7 @@ where they occur.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 NATIVE_STATE_KEY = "native_state_machine:{operation_id}"
@@ -84,18 +84,37 @@ class NativeStateNotAuthoritative(Exception):
     """A live machine was used as truth without a confirmed durable snapshot."""
 
 
-def bind_native_decision(journal, operation_id: str, intent_id: str, intent_type: str) -> None:
-    """Record WHICH native decision produced this operation.
+class NativeDecisionConflict(Exception):
+    """An operation is already bound to a DIFFERENT native decision."""
 
-    Without this the acknowledgement could be applied to any machine that happens to be
-    in the right state. The binding is what makes "the original native decision" a thing
-    a restart can identify rather than reconstruct by coincidence.
+
+class NativeRecoveryBlocked(Exception):
+    """The durable record does not permit a fresh work decision."""
+
+
+def bind_native_decision(journal, operation_id: str, intent_id: str, intent_type: str) -> None:
+    """Bind WHICH native decision produced this operation. WRITE-ONCE.
+
+    Reopening the identical binding is idempotent -- a restart must be able to re-assert
+    what it already recorded. Changing the identity or the type is a conflict and raises.
+
+    The previous version used INSERT OR REPLACE, so calling it twice silently replaced
+    the original decision, even with a different intent type. A binding that can be
+    overwritten identifies nothing: the whole point is that a restart can tell WHICH
+    decision this operation came from rather than accept whichever one shows up.
     """
+    key = NATIVE_DECISION_KEY.format(operation_id=operation_id)
+    new = {"intent_id": intent_id, "intent_type": intent_type}
     with journal.transaction() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
-            (NATIVE_DECISION_KEY.format(operation_id=operation_id),
-             json.dumps({"intent_id": intent_id, "intent_type": intent_type})))
+        row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        if row is not None:
+            existing = json.loads(row["value"])
+            if existing != new:
+                raise NativeDecisionConflict(
+                    f"operation {operation_id} is already bound to native decision "
+                    f"{existing}; refusing to rebind to {new}")
+            return  # identical reopen: idempotent
+        conn.execute("INSERT INTO meta(key,value) VALUES(?,?)", (key, json.dumps(new)))
 
 
 def bound_native_decision(journal, operation_id: str) -> dict[str, Any] | None:
@@ -114,22 +133,43 @@ class RestoredDecision:
     state: str | None
     acked: bool
     machine: Any = None
+    operation_state: str | None = None
+    inconsistent: list[str] = field(default_factory=list)
 
     @property
     def complete(self) -> bool:
-        return self.state in TERMINAL_NATIVE_STATES
+        return self.state in TERMINAL_NATIVE_STATES and self.acked and not self.inconsistent
+
+    @property
+    def result_recoverable(self) -> bool:
+        """The economic outcome is settled but the native side has not acknowledged."""
+        return self.operation_state == "CONFIRMED" and not self.complete
 
     def needs_execution(self) -> bool:
-        """A completed decision NEVER asks for execution again.
+        """Whether this decision still needs economic work. Durable record decides.
 
-        This is the whole point of the restoration path. The pinned machine has no
-        `from_dict`, so a fresh process that rebuilt one would get a machine in
-        VALIDATING_* reporting `needs_execution=True` -- for work already finished. The
-        durable snapshot is consulted FIRST, and only if it is absent or non-terminal
-        does a live machine get a say.
+        A completed decision NEVER asks again; and neither does one whose OPERATION is
+        settled or unresolved. The pinned machine has no `from_dict`, so a fresh process
+        that rebuilt one would get a machine in VALIDATING_* reporting True -- for work
+        already done, or for work whose outcome nobody knows.
         """
+        if self.inconsistent:
+            raise NativeRecoveryBlocked(
+                f"operation {self.operation_id} has an inconsistent durable record "
+                f"({'; '.join(self.inconsistent)}). Resolve it before deciding whether "
+                "work is needed.")
         if self.complete:
             return False
+        if self.result_recoverable:
+            raise NativeRecoveryBlocked(
+                f"operation {self.operation_id} is CONFIRMED on chain but its native "
+                "acknowledgement is missing. Recover and DELIVER the existing result; "
+                "this is not a request for fresh economic work.")
+        if self.operation_state in _NO_FRESH_WORK:
+            raise NativeRecoveryBlocked(
+                f"operation {self.operation_id} is {self.operation_state}: its outcome is "
+                "not settled, so no fresh work decision may be derived. Reconcile against "
+                "the chain first.")
         if self.machine is None:
             raise NativeStateNotAuthoritative(
                 f"operation {self.operation_id} has no terminal native snapshot and no "
@@ -137,23 +177,50 @@ class RestoredDecision:
         return bool(getattr(self.machine.step(), "needs_execution", False))
 
 
+# Durable operation states from which NO fresh economic-work decision may be derived.
+# CONFIRMED: it executed; the job is to recover and deliver the result.
+# UNKNOWN:   the outcome is unresolved; the job is to stay blocked.
+_NO_FRESH_WORK = {"CONFIRMED", "UNKNOWN", "DISPATCHED"}
+
+
 def restore(journal, operation_id: str, build_machine=None) -> RestoredDecision:
     """Recover what is known about the native decision behind an operation.
 
-    The durable snapshot is the authority. `build_machine` is consulted only when there
-    is no terminal snapshot, because a rebuilt machine cannot be moved into a recorded
-    state at this pin.
+    Order matters and was wrong before: this consulted ONLY the native snapshot, so with
+    the snapshot missing it happily built a fresh machine and let THAT decide whether
+    execution was needed -- at precisely the gap between economic confirmation and native
+    acknowledgement. A CONFIRMED operation with no native snapshot is the crash window,
+    and the answer there is "recover and deliver the result", never "ask a new machine
+    whether to work".
+
+    So the DURABLE OPERATION STATE is consulted first, then the native snapshot, and only
+    then may a machine be built.
     """
     decision = bound_native_decision(journal, operation_id) or {}
     snapshot = native_state_after(journal, operation_id)
     acked = native_ack_state(journal, operation_id) is not None
     state = (snapshot or {}).get("state")
+
+    op = journal.get(operation_id)
+    op_state = op.state.value if op is not None else None
+
+    # An inconsistent durable record is reported, not smoothed over.
+    inconsistent = []
+    if state in TERMINAL_NATIVE_STATES and not acked:
+        inconsistent.append("a terminal native snapshot exists with no acknowledgement")
+    if state in TERMINAL_NATIVE_STATES and not decision:
+        inconsistent.append("a terminal native snapshot exists with no bound decision")
+
     machine = None
     if state not in TERMINAL_NATIVE_STATES and build_machine is not None:
-        machine = build_machine()
+        # Only build when the durable operation state permits a fresh work decision.
+        if op_state not in _NO_FRESH_WORK:
+            machine = build_machine()
+
     return RestoredDecision(
         operation_id=operation_id, intent_id=decision.get("intent_id"),
-        state=state, acked=acked, machine=machine)
+        state=state, acked=acked, machine=machine,
+        operation_state=op_state, inconsistent=inconsistent)
 
 
 @dataclass
@@ -205,15 +272,40 @@ class NativeStateMachineConsumer:
         return self._authoritative
 
     def verify_committed(self, journal, operation_id: str) -> bool:
-        """Confirm the durable snapshot matches the live machine, after the commit.
+        """Confirm the durable snapshot matches this machine, AFTER the commit.
 
-        Returns False when the transaction rolled back after `apply()` had already
-        advanced the machine. In that case the live object is ahead of the record and
-        must not be used as truth -- there is no way to move it back.
+        Two things were wrong before.
+
+        First, it compared only STATE LABELS, so a different already-completed machine
+        verified fine. It now requires the recorded identity to match as well.
+
+        Second, it read the journal's OWN connection. Called from inside the delivering
+        transaction it could see its own uncommitted write and set `authoritative=True`;
+        a later rollback removed the snapshot and left the flag set. It now reads through
+        a SEPARATE connection, which by definition cannot see an uncommitted write, so
+        "verified" means committed.
         """
-        saved = native_state_after(journal, operation_id)
-        ok = bool(saved) and saved.get("state") == self.state and \
-            native_ack_state(journal, operation_id) == self.state
+        import sqlite3
+
+        probe = sqlite3.connect(journal.path, timeout=30.0)
+        probe.row_factory = sqlite3.Row
+        try:
+            def meta(key: str):
+                r = probe.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+                return r["value"] if r else None
+
+            raw = meta(NATIVE_STATE_KEY.format(operation_id=operation_id))
+            ack = meta(NATIVE_ACK_KEY.format(operation_id=operation_id))
+        finally:
+            probe.close()
+
+        saved = json.loads(raw) if raw else None
+        ok = (
+            bool(saved)
+            and saved.get("state") == self.state
+            and saved.get("held_bound_decision") == self._identity()
+            and ack == self.state
+        )
         self._authoritative = ok
         return ok
 
@@ -237,8 +329,31 @@ class NativeStateMachineConsumer:
         return bool(getattr(result, "needs_execution", False))
 
     # -------------------------------------------------------------------- apply --
+    def _identity(self) -> dict[str, str]:
+        intent = self.machine.intent
+        return {"intent_id": str(intent.intent_id),
+                "intent_type": str(getattr(intent.intent_type, "value", intent.intent_type))}
+
     def apply(self, conn, operation_id: str, result_hash: str, payload: str) -> str:
         """Hand the receipt to the native machine, in the ack's own transaction."""
+        # IDENTITY FIRST, before the machine is touched. Previously any machine could
+        # apply under any binding as long as it reached COMPLETED -- a machine for
+        # decision B satisfied an operation bound to decision A, and verify_committed()
+        # returned True because it compared only STATE LABELS. Both saying "COMPLETED" is
+        # not proof that the correct decision was completed.
+        key = NATIVE_DECISION_KEY.format(operation_id=operation_id)
+        row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        if row is None:
+            raise NativeDecisionConflict(
+                f"operation {operation_id} has no bound native decision. Bind the "
+                "producing decision before delivering a result to it.")
+        bound = json.loads(row["value"])
+        mine = self._identity()
+        if bound != mine:
+            raise NativeDecisionConflict(
+                f"operation {operation_id} is bound to native decision {bound}, but this "
+                f"consumer carries {mine}. Refusing to advance the wrong decision.")
+
         receipt = NativeReceipt(**json.loads(payload)).to_native()
 
         before = self.state
@@ -266,10 +381,15 @@ class NativeStateMachineConsumer:
 
         # The advanced native state is written on the SAME connection as the ack, so the
         # two cannot be torn apart by a crash.
+        snapshot = dict(self.machine.to_dict())
+        # Stamp the identity INTO the snapshot so a later reader can check whose state
+        # this is, not merely what label it carries.
+        snapshot.setdefault("intent_id", mine["intent_id"])
+        snapshot["held_bound_decision"] = mine
         conn.execute(
             "INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
             (NATIVE_STATE_KEY.format(operation_id=operation_id),
-             json.dumps(self.machine.to_dict(), default=str)))
+             json.dumps(snapshot, default=str)))
         conn.execute(
             "INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
             (NATIVE_ACK_KEY.format(operation_id=operation_id), after))
