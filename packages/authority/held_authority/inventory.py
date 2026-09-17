@@ -54,6 +54,15 @@ class AuthorityInventory:
     external_delegates: list[str]
     clauses: list[dict[str, Any]]
     observation: dict[str, Any]
+    # The SCOPE this inventory belongs to. Without these an inventory is just a shape:
+    # a COMPLETE report about somebody else's controller would clear a handover.
+    chain_id: int | None = None
+    controller: str | None = None
+    safe: str | None = None
+    roles: str | None = None
+    lineage: str | None = None
+    block_number: int | None = None
+    schema_ok: bool = False
     raw: dict[str, Any] = field(repr=False, default_factory=dict)
     evidence_grade: str = "REAL LOCAL FORK"
 
@@ -65,9 +74,48 @@ class AuthorityInventory:
     def unsatisfied_obligations(self) -> list[str]:
         return [c["obligation"] for c in self.clauses if not c.get("satisfied")]
 
+    def scope(self) -> dict[str, Any]:
+        return {"chainId": self.chain_id, "controller": self.controller,
+                "safe": self.safe, "roles": self.roles, "lineage": self.lineage,
+                "blockNumber": self.block_number}
+
+    def scope_problems(self, *, chain_id: int, controller: str, safe: str,
+                       lineage: str | None = None,
+                       not_before_block: int | None = None) -> list[str]:
+        """Every reason this inventory does NOT describe the named installation.
+
+        Returned as a list rather than a bool so a refusal can say which field was wrong.
+        A caller that cannot tell "another controller" from "stale" cannot act on either.
+        """
+        problems: list[str] = []
+        if not self.schema_ok:
+            problems.append("the report does not carry a recognisable declared installation")
+        if self.chain_id != chain_id:
+            problems.append(f"inventory is for chain {self.chain_id}, not {chain_id}")
+        for name, got, want in (("controller", self.controller, controller),
+                                ("safe", self.safe, safe)):
+            if not (isinstance(got, str) and isinstance(want, str)
+                    and got.lower() == want.lower()):
+                problems.append(f"inventory is for {name} {got}, not {want}")
+        if lineage is not None:
+            if not (isinstance(self.lineage, str)
+                    and self.lineage.lower() == lineage.lower()):
+                problems.append(f"inventory is for lineage {self.lineage}, not {lineage}")
+        if not_before_block is not None:
+            if self.block_number is None:
+                problems.append("the inventory states no observation block, so its "
+                                "freshness cannot be judged")
+            elif self.block_number < not_before_block:
+                problems.append(
+                    f"the inventory was observed at block {self.block_number}, before the "
+                    f"fence at {not_before_block}; a pre-fence inventory cannot describe "
+                    "the installation being handed over")
+        return problems
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "complete": self.complete,
+            "scope": self.scope(),
             "sectionCount": self.section_count,
             "incompleteSections": self.incomplete_sections,
             "externalDelegates": self.external_delegates,
@@ -113,14 +161,25 @@ def collect(
     run_env = {**os.environ, **(env or {})}
     os.makedirs(os.path.join(workdir, "evidence", "P03"), exist_ok=True)
 
+    path = os.path.join(workdir, REPORT)
+    # A report left over from a previous run is NOT this run's evidence. Reading whatever
+    # file happened to be on disk is how a stale inventory -- observed before the fence,
+    # describing a state that has since changed -- got presented as a live collection.
+    before = os.stat(path).st_mtime_ns if os.path.exists(path) else None
+
     proc = subprocess.run(
         [python or sys.executable, COLLECTOR],
         env=run_env, cwd=workdir, capture_output=True, text=True, timeout=timeout)
 
-    path = os.path.join(workdir, REPORT)
     if not os.path.exists(path):
         raise InventoryError(
             f"the collector produced no report at {path}. exit={proc.returncode}. "
+            f"stderr: {proc.stderr.strip()[:400]}")
+    after = os.stat(path).st_mtime_ns
+    if before is not None and after == before:
+        raise InventoryError(
+            f"the collector did not write {path} on this run, so the file on disk is a "
+            f"previous collection, not current evidence. exit={proc.returncode}. "
             f"stderr: {proc.stderr.strip()[:400]}")
     try:
         with open(path) as fh:
@@ -150,6 +209,14 @@ def from_report(raw: dict[str, Any]) -> AuthorityInventory:
 
     observation = raw.get("observation") or {}
     finalized = bool(observation.get("finality") and "NONE" not in str(observation.get("finality")))
+
+    declared_section = raw.get("declared_installation") or {}
+    declared = declared_section.get("declared") or {}
+    controller_section = raw.get("held_controller") or {}
+    # A report with no declared installation cannot be bound to anything. It is not a
+    # weaker inventory; it is an unusable one.
+    schema_ok = bool(declared) and bool(observation)
+
     return AuthorityInventory(
         complete=not incomplete,
         sections=sections,
@@ -157,6 +224,13 @@ def from_report(raw: dict[str, Any]) -> AuthorityInventory:
         external_delegates=external,
         clauses=list(raw.get("clause_to_evidence") or []),
         observation=observation,
+        chain_id=observation.get("chain_id"),
+        controller=controller_section.get("address") or declared.get("controller"),
+        safe=declared.get("safe"),
+        roles=declared.get("roles"),
+        lineage=declared.get("lineage"),
+        block_number=observation.get("block_number"),
+        schema_ok=schema_ok,
         raw=raw,
         evidence_grade="PUBLIC CHAIN" if finalized else "REAL LOCAL FORK",
     )

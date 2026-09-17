@@ -5,10 +5,11 @@
     "compatible": true,
     "verdict": "COMPLETE",
     "block_number": 51353229,
-    "block_hash": "0x5e5bc25ac18f884bcb1db2db7836146d12544405a6b2b5f24d061016767876e5",
+    "block_hash": "0x57f7db043166893ab82fdbadee8bf57714cc9f6596dacf58f0fd426178de3c5a",
     "chain_id": 8453,
     "expected_chain_id": 8453,
     "all_state_reads_pinned_to_block": true,
+    "mode": "initial",
     "finality": "NONE \u2014 anvil fork. This is the observation point, not finalized evidence.",
     "scope": "FORK REHEARSAL. Not the public installation, not the P04 automated service."
   },
@@ -106,7 +107,7 @@
         "maxRefill": 50000000000,
         "period": 0,
         "balance": 50000000000,
-        "timestamp": 1789495786,
+        "timestamp": 1789495788,
         "non_refilling": true,
         "declared_limit": 50000000000,
         "matches_declared": true
@@ -118,7 +119,7 @@
         "maxRefill": 50000000000,
         "period": 0,
         "balance": 50000000000,
-        "timestamp": 1789495786,
+        "timestamp": 1789495788,
         "non_refilling": true,
         "declared_limit": 50000000000,
         "matches_declared": true
@@ -130,7 +131,7 @@
         "maxRefill": 10000000000,
         "period": 0,
         "balance": 10000000000,
-        "timestamp": 1789495786,
+        "timestamp": 1789495788,
         "non_refilling": true,
         "declared_limit": 10000000000,
         "matches_declared": true
@@ -142,7 +143,7 @@
         "maxRefill": 10,
         "period": 0,
         "balance": 10,
-        "timestamp": 1789495786,
+        "timestamp": 1789495788,
         "non_refilling": true,
         "declared_limit": 10,
         "matches_declared": true
@@ -154,7 +155,7 @@
         "maxRefill": 5,
         "period": 0,
         "balance": 5,
-        "timestamp": 1789495786,
+        "timestamp": 1789495788,
         "non_refilling": true,
         "declared_limit": 5,
         "matches_declared": true
@@ -314,6 +315,7 @@
       "restorationCount": 0
     },
     "consumption_all_zero": true,
+    "mode": "initial",
     "note": "Initial activation requires a PAUSED, never-active controller at epoch 0 with zero consumption across ALL FIVE dimensions, immutable bindings pointing at this installation, and the market and lineage the installation declared (V4 \u00a76). The controller's seven key immutables are compared with the declared keys: a controller bound to budget keys the Roles side never configured would read zero everywhere and look clean."
   },
   "identities": {

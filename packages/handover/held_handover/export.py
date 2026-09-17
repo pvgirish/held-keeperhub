@@ -25,6 +25,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+
+def _same(a: Any, b: Any) -> bool:
+    return isinstance(a, str) and isinstance(b, str) and a.lower() == b.lower()
+
 # A 32-byte hex string is a private key often enough that carrying one by accident is a
 # real risk. Reference forms are permitted; raw material is not.
 _KEY_SHAPED = re.compile(r"^(0x)?[0-9a-fA-F]{64}$")
@@ -106,6 +110,11 @@ class ReplacementExport:
             "_consumption": "CARRIED FORWARD. B inherits the budget the retiring runner "
                             "spent from; it does not get a fresh one. That is the point of "
                             "a handover as opposed to a redeployment.",
+            "_usable": "usable=true means the replacement has everything this supported "
+                       "continuation requires AND the controller was observed active at "
+                       "the replacement epoch with the replacement runner. An export that "
+                       "is missing checkpoints, settled history or a real configuration "
+                       "digest is NOT usable, however complete it looks.",
         }
 
     def to_json(self) -> str:
@@ -138,8 +147,54 @@ def build_export(
     if not getattr(reading, "usable", False):
         blocked.append(
             f"the controller state could not be established: {getattr(reading, 'reason', '')}")
-    if not candidate.native_config_digest:
+    else:
+        # The export must be bound to a CONFIRMED ACTIVE replacement, not merely to a
+        # candidate someone intends to activate. Previously it was assembled from the
+        # candidate's own numbers and never checked against the chain at all.
+        if getattr(reading, "epoch", None) != candidate.new_epoch:
+            blocked.append(
+                f"the controller is at epoch {getattr(reading, 'epoch', None)}, not the "
+                f"replacement epoch {candidate.new_epoch}")
+        if not _same(getattr(reading, "runner", None), candidate.runner):
+            blocked.append(
+                f"the active runner is {getattr(reading, 'runner', None)}, not the "
+                f"replacement {candidate.runner}")
+        if not _same(getattr(reading, "executor", None), candidate.executor):
+            blocked.append(
+                f"the active executor is {getattr(reading, 'executor', None)}, not the "
+                f"approved {candidate.executor}")
+        if getattr(reading, "active", None) is not True:
+            blocked.append("the controller is not active, so the replacement cannot run")
+        observed = getattr(reading, "used", {}) or {}
+        if observed:
+            on_chain = (observed.get("usedSupply"), observed.get("usedNormalWithdraw"),
+                        observed.get("usedRestoration"), observed.get("normalCount"),
+                        observed.get("restorationCount"))
+            if on_chain != candidate.expected.as_tuple():
+                blocked.append(
+                    f"consumption on chain {on_chain} does not match the carried "
+                    f"{candidate.expected.as_tuple()}; the export would state a remaining "
+                    "capacity the controller will not honour")
+
+    digest = candidate.native_config_digest
+    if not digest:
         blocked.append("no native configuration digest was pinned for the replacement")
+    elif set(digest.lower().replace("0x", "")) <= {"a", "b"}:
+        blocked.append(
+            f"the native configuration digest {digest!r} is a placeholder, not the digest "
+            "of the actual pinned configuration; runner B cannot verify what it is "
+            "continuing")
+
+    # What B actually needs to CONTINUE rather than start over. Empty defaults used to
+    # sail straight through and still report usable=true.
+    if not native_checkpoints:
+        blocked.append(
+            "no native checkpoints were exported. Without them runner B would re-derive "
+            "the strategy's history from scratch and could repeat work the retiring runner "
+            "already did")
+    if settled_operations is None:
+        blocked.append("the settled-operation history was not supplied, so B cannot tell "
+                       "which predecessors already completed")
 
     carried = dict(zip(
         ("usedSupply", "usedNormalWithdraw", "usedRestoration", "normalCount",

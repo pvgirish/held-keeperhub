@@ -209,6 +209,39 @@ def _():
     assert len(trace["steps"]) >= 12, len(trace["steps"])
 
 
+# ------------------------------------------------- R8: the ACTUAL console binary --
+
+@test("R8: live mode refuses to start without real sources rather than falling back")
+def _():
+    # The finding: --state-source was documented and never implemented; the console always
+    # built the demonstration state. A console that silently shows demo numbers when the
+    # chain is unreachable is worse than one that will not start.
+    import subprocess
+    out = subprocess.run(
+        [sys.executable, os.path.join(ROOT, "console", "run.py"),
+         "--state-source", "live", "--port", "0"],
+        capture_output=True, text=True, timeout=60,
+        env={**os.environ, "HELD_CONSOLE_SECRET": "x", "HELD_BASE_RPC": ""})
+    assert out.returncode == 2, (out.returncode, out.stdout[:400], out.stderr[:400])
+    assert "live mode needs" in out.stderr, out.stderr[:400]
+    assert "demonstration" in out.stderr, "it did not say why it refused"
+
+
+@test("R8: the console exposes both modes, and demo mode is labelled")
+def _():
+    import subprocess
+    out = subprocess.run(
+        [sys.executable, os.path.join(ROOT, "console", "run.py"), "--help"],
+        capture_output=True, text=True, timeout=60)
+    assert "--state-source" in out.stdout, out.stdout[:400]
+    assert "{demo,live}" in out.stdout.replace(" ", ""), out.stdout[:400]
+    src = open(os.path.join(ROOT, "console", "run.py")).read()
+    assert "DEMONSTRATION STATE — not evidence" in src
+    # ...and live mode must never construct the demonstration state.
+    live_block = src[src.index('if args.state_source == "live":'):src.index("    else:")]
+    assert "demonstration_state" not in live_block, "live mode can reach the demo state"
+
+
 def main() -> int:
     print("---")
     if FAILED:

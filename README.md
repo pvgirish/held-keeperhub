@@ -1,7 +1,10 @@
 # Held
 
 **Customer-approved operating limits and recoverable runner handover for Almanak
-strategies, executed through KeeperHub.**
+strategies.** KeeperHub is the intended execution layer and the client is built and
+wire-tested against it — but **Held has not yet executed through KeeperHub**, because the
+organisation credential that route requires does not exist here. That is stated up front
+rather than implied away.
 
 ```
 Almanak  →  Held  →  KeeperHub  →  HeldController  →  Zodiac Roles  →  Safe  →  Morpho
@@ -52,11 +55,11 @@ This is what `make hero-demo` runs, end to end, against real contracts on a fork
 |---|---|
 | 1 | Runner A is **active** under the customer's approved limits |
 | 2 | Runner A executes a **real supply** — 12 USDC actually leaves the Safe into Morpho |
-| 3 | An operation becomes **ambiguous** — the send never returned |
+| 3 | A **real** operation is dispatched and its transport never returns — durable attempt, `UNKNOWN` |
 | 4 | The owner **fences** the controller on chain |
-| 5 | The handover is **REFUSED** while the outcome is unresolved |
+| 5 | The handover is **REFUSED** — on a set the machine derives from the journal, not from a list it was handed |
 | 6 | Reconciliation asks the controller's own `consumed[]` record, not the transport |
-| 7 | A **bounded authority inventory** over the supported profile |
+| 7 | A **bounded authority inventory**, collected live at the fence and scoped to this installation |
 | 8 | Runner B is **pinned** against the consumption actually on chain |
 | 9 | Held **prepares** the activation and describes it; it does not sign it |
 | 10 | Runner B is active — **`usedSupply` is still 12000000**, remaining 49988000000 |
@@ -64,9 +67,11 @@ This is what `make hero-demo` runs, end to end, against real contracts on a fork
 | 12 | Runner B receives what it needs — **no key material** |
 
 Steps 5, 10 and 11 are the product. Step 5 is the refusal that stops a handover from
-guessing. Step 10 is the budget surviving the swap. Step 11 is behavioural: runner A really
-signs a fresh operation under its retired epoch, really sends it, and the controller really
-reverts with `WrongEpoch(uint64,uint64)` — selector `0x2b9264ec`.
+guessing — and the operation it names is a real dispatched one whose transport genuinely
+never answered, not a constructed id. Step 10 is the budget surviving the swap. Step 11 is
+behavioural: runner A really signs a fresh operation under its retired epoch, really sends
+it, and the controller really reverts with `WrongEpoch(uint64,uint64)` — selector
+`0x2b9264ec`.
 
 ## Architecture
 

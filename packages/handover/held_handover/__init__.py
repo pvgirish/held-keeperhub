@@ -16,7 +16,14 @@ from .owner_tx import (
     build_activate,
     build_fence,
 )
-from .sources import CastControllerSource
+from .sources import CastConsumptionReader, CastControllerSource
+from .reconcile import (
+    OperationResolution,
+    ReconciliationError,
+    ReconciliationReport,
+    build_report,
+    operations_for_epoch,
+)
 from .readback import (
     ControllerReading,
     ControllerStatus,
@@ -25,7 +32,9 @@ from .readback import (
 )
 
 __all__ = [
-    "CastControllerSource", "ExportError", "ReplacementExport", "assert_reference",
+    "OperationResolution", "ReconciliationError", "ReconciliationReport",
+    "build_report", "operations_for_epoch",
+    "CastControllerSource", "CastConsumptionReader", "ExportError", "ReplacementExport", "assert_reference",
     "build_export",
     "Candidate", "HandoverBlocked", "HandoverError", "HandoverMachine", "HandoverRecord",
     "HandoverState", "ExpectedState", "OwnerTransaction", "OwnerTransactionError",

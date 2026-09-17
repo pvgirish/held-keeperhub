@@ -43,6 +43,7 @@ from held_handover import (  # noqa: E402
 from held_handover.readback import read_controller_state  # noqa: E402
 from held_handover.sources import CastControllerSource  # noqa: E402
 from held_handover.owner_tx import build_activate  # noqa: E402
+from held_handover import CastConsumptionReader, build_report  # noqa: E402
 
 RPC = os.environ["HELD_BASE_RPC"]
 SAFE = os.environ["HELD_SAFE"]
@@ -56,6 +57,7 @@ EXECUTOR = "0x976EA74026E726554dB657fA54763abd0C3a0aa9"
 LINEAGE = "0x" + "0" * 62 + "11"
 
 STEPS: list[dict] = []
+NATIVE_CHECKPOINTS: list[dict] = []
 _t0 = time.time()
 
 
@@ -90,7 +92,9 @@ def step(n: int, title: str, **detail) -> None:
 
 
 def read(dispatching: bool = True):
-    src = CastControllerSource(RPC, finalized=False)
+    # No finality source: this is a fork, so nothing here is finalized and the
+    # evidence grades as REAL LOCAL FORK rather than PUBLIC CHAIN.
+    src = CastControllerSource(RPC)
     return read_controller_state(src, controller=CONTROLLER, expected_chain_id=CHAIN,
                                  adapter_dispatching=dispatching)
 
@@ -109,6 +113,31 @@ def expected_from(reading) -> ExpectedState:
 
 
 RUNNER_A_KEY = "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"
+
+
+def native_config_digest() -> str:
+    """The digest of the ACTUAL pinned native configuration runner B must continue under.
+
+    Derived from the real SDK revision and the real intent configuration, not a constant.
+    Runner B compares this before continuing: a replacement operating under a different
+    compiler revision, chain, Safe, market or price mode is not continuing the same work,
+    and the digest is what makes that checkable rather than assumed.
+    """
+    from eth_utils import keccak
+
+    sdk_rev = subprocess.run(
+        ["git", "-C", os.path.expanduser("~/src/sdk"), "rev-parse", "HEAD"],
+        capture_output=True, text=True).stdout.strip() or "UNPINNED"
+    parts = [
+        f"sdk={sdk_rev}",
+        f"chain={CHAIN}",
+        f"safe={SAFE.lower()}",
+        f"controller={CONTROLLER.lower()}",
+        "protocol=morpho_blue",
+        "token=USDC",
+        f"priceMode={os.environ.get('HELD_PRICE_MODE', 'production')}",
+    ]
+    return "0x" + keccak("|".join(parts).encode()).hex()
 SUPPLY_AMOUNT = 12_000_000  # 12 USDC, well inside the approved per-action maximum
 
 
@@ -150,6 +179,9 @@ def _build_supply(live, *, decision_id: str, runner: str, key: str, epoch: int |
         ],
     }
     admitted = admit_bundle(bundle, profile, decision_id, 0)
+    NATIVE_CHECKPOINTS.append({"intent_id": decision_id, "intent_type": "SUPPLY",
+                               "state": "VALIDATING_SUPPLY",
+                               "operation_id": "0x" + bytes(admitted.operation_id).hex()})
     env = AuthorizationEnvelope(
         scope=profile.scope(),
         operation_id=admitted.operation_id,
@@ -186,6 +218,66 @@ def decode_revert(blob: str) -> tuple[str, str]:
         return "", blob.strip().split(chr(10))[0][:160]
     sel = m.group(0).lower()
     return CONTROLLER_ERRORS.get(sel, ""), sel
+
+
+def interrupt_a_real_submission(live, journal) -> dict:
+    """Dispatch a REAL Held operation whose transport never returns.
+
+    The previous version of this demo assigned `ambiguous = "0x" + "7e"*32` and narrated it
+    as a send that never came back. Nothing was ever built, journaled or submitted, and the
+    later isConsumed() asked the controller about an id that had never existed -- so `false`
+    was guaranteed and proved nothing.
+
+    This is the real thing: the actual Submitter admits an action, derives the operation id
+    from this deployment's scope, signs the envelope, claims the operation durably BEFORE
+    any I/O, and then the transport raises instead of answering. That is the exact ambiguous
+    boundary the product exists to survive: the request may or may not have reached the
+    executor, and Held must not guess.
+    """
+    from held_adapter.execution.keeperhub import KeeperHubClient
+    from held_adapter.execution.submit import Submitter
+    from held_adapter.signing.runner_signer import RunnerSigner
+    from held_core.identity import AuthorizationEnvelope
+
+    admitted, env, _calldata = _build_supply(
+        live, decision_id="hero-demo-interrupted", runner=RUNNER_A, key=RUNNER_A_KEY)
+    oid = "0x" + bytes(admitted.operation_id).hex()
+
+    class NeverReturns:
+        """A transport that raises instead of answering. The outcome is unknowable."""
+
+        hosted = False
+
+        def __init__(self):
+            self.calls = 0
+
+        def request(self, method, url, *, headers, body, timeout):
+            self.calls += 1
+            raise TimeoutError("the response never arrived")
+
+    market = (os.environ.get("HELD_USDC", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
+              "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452",
+              "0xD7A1abA119a236Fea5BBC5cAC6836465cbe9289A",
+              "0x46415998764C29aB2a25CbeA6254146D50D22687",
+              860000000000000000)
+    os.environ["HELD_KEEPERHUB_API_KEY"] = "kh_local_fork_demo_not_a_real_credential"
+    transport = NeverReturns()
+    os.environ["HELD_HERO_KEY"] = RUNNER_A_KEY
+    sub = Submitter(journal,
+                    KeeperHubClient(transport=transport, sleep=lambda _: None),
+                    RunnerSigner("env:HELD_HERO_KEY", RUNNER_A),
+                    CONTROLLER, CHAIN, market,
+                    new_attempt_id=lambda: "hero-interrupted-attempt-1")
+    submission = sub.submit(admitted, env)
+
+    op = journal.get(oid)
+    attempt = journal.unresolved_attempt(oid)
+    return {"operation_id": oid,
+            "journal_state": op.state.value if op else None,
+            "attempt": (attempt or {}).get("attempt_id"),
+            "idempotency_key": (attempt or {}).get("idempotency_key"),
+            "outcome": submission.send.outcome.name,
+            "transport_calls": transport.calls}
 
 
 def attempt_stale_authorization(live) -> dict:
@@ -261,112 +353,105 @@ def main() -> int:
          path="Almanak-shaped bundle -> Held admission -> runner A EIP-712 -> "
               "HeldController -> Zodiac Roles -> Safe -> Morpho")
 
-    # ------------------------------------------- 3. an operation becomes ambiguous --
-    # A DECLARED interruption, not a staged one: a real submission whose transport never
-    # returned. Held records it UNKNOWN because the outcome genuinely is not known.
-    ambiguous = "0x" + "7e" * 32
-    step(3, "An operation becomes AMBIGUOUS — the send never returned",
-         operation=ambiguous[:18] + "...",
-         held_state="UNKNOWN",
-         why="the transport did not answer. Whether it executed is not known, and an "
-             "unknown is not a verified negative")
+    # ------------------------------------- 3. a REAL operation becomes ambiguous --
+    from held_core.journal import Journal
 
-    # ----------------------------------------------- 4. the handover is REFUSED ----
     journal_path = os.path.join(ROOT, "fixtures", "generated", "hero-demo-journal.sqlite")
     os.makedirs(os.path.dirname(journal_path), exist_ok=True)
     for suffix in ("", "-wal", "-shm"):
         if os.path.exists(journal_path + suffix):
             os.remove(journal_path + suffix)
+    j = Journal(journal_path)
 
-    import sqlite3
+    interrupted = interrupt_a_real_submission(live, j)
+    step(3, "A REAL operation is dispatched and its transport never returns",
+         operation=interrupted["operation_id"][:18] + "...",
+         journal_state=interrupted["journal_state"],
+         durable_attempt=interrupted["attempt"],
+         send_outcome=interrupted["outcome"],
+         transport_calls=interrupted["transport_calls"],
+         why="the request may or may not have reached the executor. Held claimed the "
+             "operation durably BEFORE any I/O, so the attempt is recoverable — but the "
+             "outcome is genuinely unknown, and an unknown is not a verified negative")
 
-    class J:
-        def __init__(self, path):
-            self.path = path
-            self._db = sqlite3.connect(path, isolation_level=None)
-            self._db.row_factory = sqlite3.Row
-            self._db.execute("CREATE TABLE IF NOT EXISTS meta("
-                             "key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-
-        from contextlib import contextmanager
-
-        @contextmanager
-        def transaction(self):
-            self._db.execute("BEGIN IMMEDIATE")
-            try:
-                yield self._db
-                self._db.execute("COMMIT")
-            except Exception:
-                self._db.execute("ROLLBACK")
-                raise
-
-        def close(self):
-            self._db.close()
-
-    j = J(journal_path)
     m = HandoverMachine.start(j, handover_id="hero", controller=CONTROLLER, chain_id=CHAIN,
-                              retiring_runner=live.runner, retiring_epoch=live.epoch)
+                              retiring_runner=live.runner, retiring_epoch=live.epoch,
+                              safe=SAFE, lineage=LINEAGE)
     fence_tx = m.prepare_fence(current_epoch=live.epoch)
     owner_send(fence_tx)
     m.confirm_fenced(read(dispatching=False))
     step(4, "Owner FENCES the controller on chain (Held prepared it; the owner sent it)",
          selector=fence_tx.data,
+         fence_block=read(dispatching=False).block_number,
          status=read(dispatching=False).status.value,
          note="an adapter that merely stops dispatching is NOT a fence — the controller "
               "would still honour a signed envelope")
 
+    # The machine DERIVES the retiring-epoch operation set from the journal. With the
+    # chain unreachable the interrupted operation is UNRESOLVED, and that blocks.
+    fence_reading = read(dispatching=False)
+
+    class Unreachable:
+        def consumed(self, controller, operation_id):
+            raise RuntimeError("the chain is unreachable")
+
+    stuck = build_report(j, record=m.record, fence_reading=fence_reading,
+                         reader=Unreachable())
     try:
-        m.reconcile([ambiguous])
+        m.reconcile(stuck)
         raise AssertionError("the handover proceeded with an unresolved operation")
     except HandoverBlocked as exc:
         step(5, "Handover REFUSED while the outcome is unresolved",
+             operations_derived_from_journal=len(stuck.resolutions),
              blockers=exc.blockers,
-             why="activating now would either lose consumption that really happened or "
-                 "charge the customer twice for work that did not")
+             why="the machine derived this set from the durable journal, not from a list "
+                 "someone handed it. Activating now would either lose consumption that "
+                 "really happened or charge the customer twice for work that did not")
 
     # ------------------------------------------------------- 6. reconcile the truth --
-    consumed = cast("call", CONTROLLER, "isConsumed(bytes32)(bool)", ambiguous)
-    m.reconcile([])
+    reader = CastConsumptionReader(RPC, chain_id=CHAIN)
+    report = build_report(j, record=m.record, fence_reading=fence_reading, reader=reader)
+    m.reconcile(report)
     after_recon = read(dispatching=False)
-    step(6, "Reconciled against the controller's own record",
-         isConsumed=consumed,
-         verdict="the operation did NOT execute" if consumed == "false" else "it executed",
+    resolved = report.resolutions[0] if report.resolutions else None
+    step(6, "Reconciled from the controller's own consumed[] record",
+         operations=len(report.resolutions),
+         verdict=resolved.resolution if resolved else "none",
+         marker=(resolved.marker or "")[:18] + "..." if resolved else "",
          used_supply=after_recon.used["usedSupply"],
-         note="the verdict comes from consumed[operationId] on chain, not from the "
-              "transport's silence")
+         note="the verdict comes from consumed[operationId] at a stated block, not from "
+              "the transport's silence")
 
     # ------------------------------------------------- 7. bounded authority inventory --
-    from held_authority import from_report
-    report_path = os.path.join(ROOT, "evidence", "P03", "bootstrap-rehearsal.json")
-    if os.path.exists(report_path):
-        with open(report_path) as fh:
-            inv = from_report(json.load(fh))
-    else:
-        inv = None
-    if inv is not None:
-        step(7, "Bounded authority inventory over the supported profile",
-             sections=inv.section_count, complete=inv.complete,
-             external_delegates=inv.external_delegates or "none",
-             grade=inv.evidence_grade)
-        m.clear_authority_input = inv
+    from held_authority import collect
+    # Collected LIVE against this fork, at or after the fence. There is deliberately no
+    # fallback: the previous version built an empty SimpleNamespace when the report was
+    # missing, which turned absent authority evidence into clean authority evidence.
+    # HANDOVER mode, not initial: this controller has already run one epoch and spent
+    # budget, which is exactly what makes the handover worth doing. The initial-activation
+    # checklist asks a different question (is this fresh?) and would be INCOMPLETE forever.
+    inv = collect(env={"HELD_SAFE": SAFE, "HELD_CONTROLLER": CONTROLLER,
+                       "HELD_BASE_RPC": RPC, "HELD_INVENTORY_MODE": "handover"},
+                  cwd=ROOT)
+    step(7, "Bounded authority inventory, collected LIVE at the fence",
+         mode="handover",
+         sections=inv.section_count, complete=inv.complete,
+         observed_at_block=inv.block_number,
+         external_delegates=inv.external_delegates or "none",
+         grade=inv.evidence_grade)
 
     # --------------------------------------------------------- 8. prepare runner B --
     paused = read(dispatching=False)
     cand = Candidate(runner=RUNNER_B, executor=EXECUTOR, new_epoch=paused.epoch + 1,
                      new_policy_version=2, policy=policy(),
                      expected=expected_from(paused),
-                     native_config_digest="0x" + "ab" * 32, lineage=LINEAGE)
+                     native_config_digest=native_config_digest(), lineage=LINEAGE)
     m.prepare_candidate(cand, observed=paused)
     step(8, "Runner B pinned against the consumption actually on chain",
          runner_b=RUNNER_B, new_epoch=cand.new_epoch,
          carried=list(cand.expected.as_tuple()))
 
-    if inv is not None:
-        m.clear_authority(inv)
-    else:
-        from types import SimpleNamespace
-        m.clear_authority(SimpleNamespace(incomplete_sections=[], external_delegates=[],
-                                          section_count=0))
+    m.clear_authority(inv, fence_block=fence_reading.block_number)
 
     # ------------------------------------------------------------- 9. owner activates --
     act_tx = m.prepare_activation()
@@ -396,8 +481,15 @@ def main() -> int:
              "CURRENT epoch and runner, so it reverts.")
 
     # ------------------------------------------------------------ 12. B can continue --
+    # What B genuinely needs: the native decision checkpoints from this lineage, and the
+    # settled predecessors so it does not re-derive history from scratch.
+    checkpoints = [{"intentId": cp["intent_id"], "intentType": cp["intent_type"],
+                    "state": cp["state"], "source": "REAL OFFLINE SDK"}
+                   for cp in NATIVE_CHECKPOINTS]
+    settled = [r.to_dict() for r in report.resolutions]
     exp = build_export(handover_id="hero", record=m.record, reading=final,
-                       runner_key_reference="env:HELD_RUNNER_B_KEY")
+                       runner_key_reference="env:HELD_RUNNER_B_KEY",
+                       native_checkpoints=checkpoints, settled_operations=settled)
     out = os.path.join(ROOT, "evidence", "P04", "hero-demo-replacement-export.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w") as fh:

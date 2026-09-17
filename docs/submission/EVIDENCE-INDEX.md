@@ -20,12 +20,12 @@ Revision: `git rev-parse HEAD` at the time of reading. Every row below was produ
 | P2, P3, P9, P17 | Composed local run, real controller on fork | REAL LOCAL FORK | `make check-phase-03-composed` | `evidence/P03/acceptance.json` | 16 checks |
 | P5, P6 | Controller + Roles against real pinned contracts | REAL LOCAL FORK | `make check-phase-02` | `evidence/P02/report.md` | 50 pass, 3 stages |
 | P15 | Live bounded inventory readback | REAL LOCAL FORK | `make check-bootstrap-rehearsal` | `evidence/P03/bootstrap-rehearsal.json` | 9 sections, 14/14 obligations |
-| P11, P13, P14, P16 | Handover machine, owner tx, export | SYNTHETIC | `make check-phase-04` | `tests/handover/test_handover_machine.py` | 22 pass |
+| P11, P13, P14, P16, P21–P26 | Handover machine, owner tx, reconciliation, export | SYNTHETIC | `make check-phase-04` | `tests/handover/test_handover_machine.py` | 33 pass |
 | P15 | Authority inventory interpretation | SYNTHETIC | `make check-phase-04` | `tests/authority/test_authority_inventory.py` | 7 pass |
 | — | Authority/fencing on the fork | REAL LOCAL FORK | `make check-phase-04` | `test/contracts/HeldAuthority.t.sol` | 10 pass |
 | **P10, P11, P12** | **The hero workflow, end to end** | **REAL LOCAL FORK** | `make hero-demo` | `evidence/P04/hero-demo-trace.json` | **12 steps** |
 | P16 | Replacement export, no key material | REAL LOCAL FORK | `make hero-demo` | `evidence/P04/hero-demo-replacement-export.json` | usable=true |
-| P20 | Operator console | SYNTHETIC | `make check-phase-05` | `tests/integration/test_p05_console.py` | prototype |
+| P20 | Operator console + live views | SYNTHETIC | `make check-phase-05` | `tests/integration/test_p05_console.py`, `test_p05_live_views.py` | 30 + 14 pass |
 | **M1, M2, P18, P19** | **KeeperHub public execution** | — | — | — | **NOT YET ESTABLISHED** |
 
 ## The hero demo trace
@@ -36,7 +36,8 @@ numbers a judge would check:
 | Fact | Value | Where |
 |---|---|---|
 | Budget actually spent by runner A | `12000000` (12 USDC) | step 2 |
-| Handover blocker while unresolved | `UNRESOLVED:0x7e7e…` | step 5 |
+| The interrupted operation | a REAL dispatched operation, journal `UNKNOWN`, durable attempt `hero-interrupted-attempt-1`, send outcome `UNKNOWN` | step 3 |
+| Handover blocker while unresolved | `UNRESOLVED:<real operation id>`, derived from the journal | step 5 |
 | Reconciliation source | `consumed[operationId]` on chain | step 6 |
 | Consumption carried across the handover | `[12000000, 0, 0, 1, 0]` | step 8 |
 | `usedSupply` after handover | `12000000` — unchanged | step 10 |

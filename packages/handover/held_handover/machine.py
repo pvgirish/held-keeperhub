@@ -47,6 +47,32 @@ from typing import Any
 
 from .owner_tx import ExpectedState, OwnerTransaction, Policy, build_activate, build_fence
 from .readback import ControllerReading, ControllerStatus
+from .reconcile import SCHEMA as RECONCILIATION_SCHEMA
+from .reconcile import ReconciliationReport, operations_for_epoch
+
+try:  # the authority package is a sibling; import it by name when it is on the path
+    from held_authority import AuthorityInventory
+except ImportError:  # pragma: no cover - only when packages/authority is not installed
+    AuthorityInventory = ()  # type: ignore[assignment]
+
+
+def _same(a: Any, b: Any) -> bool:
+    return isinstance(a, str) and isinstance(b, str) and a.lower() == b.lower()
+
+
+def _policy_ceilings(raw: str) -> tuple[int, int, int] | None:
+    """The first three policy fields (Ls, Ln, Lr) from a `cast call policy()` result.
+
+    Returns None rather than guessing if the shape is not what we expect: an unreadable
+    policy is unreadable, not a matching one.
+    """
+    parts = [p.strip().split()[0] for p in str(raw).strip().split("\n") if p.strip()]
+    if len(parts) < 3:
+        return None
+    try:
+        return (int(parts[0]), int(parts[1]), int(parts[2]))
+    except ValueError:
+        return None
 
 HANDOVER_KEY = "handover:{handover_id}"
 
@@ -76,9 +102,12 @@ _ALLOWED: dict[HandoverState, frozenset[HandoverState]] = {
     HandoverState.CLEARED: frozenset({HandoverState.ACTIVATION_PREPARED, HandoverState.BLOCKED}),
     HandoverState.ACTIVATION_PREPARED: frozenset({HandoverState.ACTIVE, HandoverState.BLOCKED}),
     HandoverState.ACTIVE: frozenset(),
-    # BLOCKED is not terminal: the owner resolves the cause and the machine retries from
-    # the state it was blocked in, which is recorded alongside the reason.
-    HandoverState.BLOCKED: frozenset(_s for _s in HandoverState if _s is not HandoverState.ACTIVE),
+    # BLOCKED is NOT generically permissive. It used to allow every state except ACTIVE,
+    # so a machine blocked during authority clearance could reach ACTIVATION_PREPARED
+    # directly if a candidate already existed -- jumping the gate that refused it.
+    # Resume is now computed from `blocked_from`: the only way out of BLOCKED is to
+    # re-attempt the exact gate that failed. See `_legal_targets`.
+    HandoverState.BLOCKED: frozenset(),
 }
 
 
@@ -136,9 +165,13 @@ class HandoverRecord:
     chain_id: int
     retiring_runner: str
     retiring_epoch: int
+    safe: str = ""
+    lineage: str = ""
     candidate: Candidate | None = None
     blocked_from: HandoverState | None = None
     blockers: list[str] = field(default_factory=list)
+    reconciliation: dict[str, Any] | None = None
+    inventory_scope: dict[str, Any] | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -146,9 +179,11 @@ class HandoverRecord:
             "handoverId": self.handover_id, "state": self.state.value,
             "controller": self.controller, "chainId": self.chain_id,
             "retiringRunner": self.retiring_runner, "retiringEpoch": self.retiring_epoch,
+            "safe": self.safe, "lineage": self.lineage,
             "candidate": self.candidate.to_dict() if self.candidate else None,
             "blockedFrom": self.blocked_from.value if self.blocked_from else None,
-            "blockers": self.blockers, "history": self.history,
+            "blockers": self.blockers, "reconciliation": self.reconciliation,
+            "inventoryScope": self.inventory_scope, "history": self.history,
         }
 
     @staticmethod
@@ -157,9 +192,11 @@ class HandoverRecord:
             handover_id=d["handoverId"], state=HandoverState(d["state"]),
             controller=d["controller"], chain_id=d["chainId"],
             retiring_runner=d["retiringRunner"], retiring_epoch=d["retiringEpoch"],
+            safe=d.get("safe", ""), lineage=d.get("lineage", ""),
             candidate=Candidate.from_dict(d["candidate"]) if d.get("candidate") else None,
             blocked_from=HandoverState(d["blockedFrom"]) if d.get("blockedFrom") else None,
-            blockers=d.get("blockers", []), history=d.get("history", []))
+            blockers=d.get("blockers", []), reconciliation=d.get("reconciliation"),
+            inventory_scope=d.get("inventoryScope"), history=d.get("history", []))
 
 
 class HandoverMachine:
@@ -175,16 +212,40 @@ class HandoverMachine:
         self.record = record
 
     # ------------------------------------------------------------------ durability --
+    # The handover identity. Reopening under the same id must mean the SAME handover, not
+    # merely the same string -- the exact distinction a P03 review already forced on the
+    # native decision binding. A mismatch is a conflict, never a silently returned machine.
+    SCOPE_FIELDS = ("controller", "chain_id", "safe", "lineage", "retiring_runner",
+                    "retiring_epoch")
+
     @classmethod
     def start(cls, journal, *, handover_id: str, controller: str, chain_id: int,
-              retiring_runner: str, retiring_epoch: int) -> "HandoverMachine":
+              retiring_runner: str, retiring_epoch: int, safe: str = "",
+              lineage: str = "") -> "HandoverMachine":
+        wanted = {"controller": controller, "chain_id": chain_id, "safe": safe,
+                  "lineage": lineage, "retiring_runner": retiring_runner,
+                  "retiring_epoch": retiring_epoch}
         existing = cls.load(journal, handover_id)
         if existing is not None:
+            mismatched = {}
+            for f in cls.SCOPE_FIELDS:
+                got, want = getattr(existing.record, f), wanted[f]
+                if isinstance(got, str) and isinstance(want, str):
+                    same = got.lower() == want.lower()
+                else:
+                    same = got == want
+                if not same:
+                    mismatched[f] = (got, want)
+            if mismatched:
+                raise HandoverError(
+                    f"handover {handover_id!r} already exists for a DIFFERENT installation: "
+                    + "; ".join(f"{k} is {g!r}, not {w!r}" for k, (g, w) in mismatched.items())
+                    + ". An idempotent reopen must mean the same handover, not the same key.")
             return existing
         record = HandoverRecord(
             handover_id=handover_id, state=HandoverState.PROPOSED, controller=controller,
             chain_id=chain_id, retiring_runner=retiring_runner,
-            retiring_epoch=retiring_epoch)
+            retiring_epoch=retiring_epoch, safe=safe, lineage=lineage)
         machine = cls(journal, record)
         machine._persist("start", {"controller": controller, "epoch": retiring_epoch})
         return machine
@@ -207,8 +268,50 @@ class HandoverMachine:
             conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
                          (key, json.dumps(self.record.to_dict())))
 
+    def _legal_targets(self) -> frozenset[HandoverState]:
+        """Where this machine may go next, including the narrow way out of BLOCKED."""
+        if self.record.state is not HandoverState.BLOCKED:
+            return _ALLOWED[self.record.state]
+        origin = self.record.blocked_from
+        if origin is None:
+            return frozenset()
+        # Re-attempting the gate that failed means moving as if from the state it stalled
+        # in -- and nothing else.
+        return _ALLOWED[origin]
+
+    def _require_state(self, *expected: HandoverState) -> None:
+        """Every public transition asserts its exact source state.
+
+        A blocked machine counts as being in the state it stalled in, and only that one, so
+        a refusal cannot be walked around by calling the next method.
+        """
+        current = self.record.state
+        effective = (self.record.blocked_from
+                     if current is HandoverState.BLOCKED else current)
+        if effective not in expected:
+            want = " or ".join(s.value for s in expected)
+            raise HandoverError(
+                f"this step requires the handover to be at {want}; it is at "
+                f"{current.value}"
+                + (f" (blocked from {effective.value})" if current is HandoverState.BLOCKED
+                   and effective else ""))
+
+    def _refuse(self, reason: str, blockers: list[str]) -> "HandoverBlocked":
+        """Persist the refusal BEFORE raising it.
+
+        Guard failures used to raise without recording anything, so a restart lost the fact
+        that a gate had refused and why. A blocker that does not survive a restart is not a
+        blocker.
+        """
+        if self.record.state is not HandoverState.BLOCKED:
+            self.record.blocked_from = self.record.state
+        self.record.blockers = blockers
+        self.record.state = HandoverState.BLOCKED
+        self._persist("blocked", {"reason": reason, "blockers": blockers})
+        return HandoverBlocked(reason, blockers=blockers)
+
     def _move(self, to: HandoverState, event: str, detail: dict[str, Any] | None = None) -> None:
-        if to not in _ALLOWED[self.record.state]:
+        if to not in self._legal_targets():
             raise HandoverError(
                 f"{self.record.state.value} -> {to.value} is not a legal handover move. "
                 "The order exists so a step cannot be skipped to reach activation sooner.")
@@ -229,6 +332,7 @@ class HandoverMachine:
     # ----------------------------------------------------------------- transitions --
     def prepare_fence(self, *, current_epoch: int) -> OwnerTransaction:
         """Build the owner's fence transaction. Held does NOT execute it."""
+        self._require_state(HandoverState.PROPOSED)
         tx = build_fence(controller=self.record.controller, chain_id=self.record.chain_id,
                          current_epoch=current_epoch)
         self._move(HandoverState.FENCE_PREPARED, "fence prepared",
@@ -241,44 +345,103 @@ class HandoverMachine:
         An adapter that stopped dispatching is not a fence, and this is the guard that
         refuses to call it one.
         """
+        self._require_state(HandoverState.FENCE_PREPARED)
         if not reading.usable:
-            raise HandoverBlocked(
+            raise self._refuse(
                 f"the controller's state could not be established: {reading.reason}. An "
-                "unknown is not a verified fence.", blockers=["OBSERVATION_INCOMPLETE"])
+                "unknown is not a verified fence.", ["OBSERVATION_INCOMPLETE"])
         if reading.status is ControllerStatus.ADAPTER_REFUSING:
-            raise HandoverBlocked(
+            raise self._refuse(
                 "Held's adapter has stopped dispatching, but the controller is STILL "
                 "ACTIVE on chain. That is not a fence: a correctly signed envelope from "
                 "the retiring runner would still execute. The owner must call fence().",
-                blockers=["ADAPTER_REFUSING_NOT_FENCED"])
+                ["ADAPTER_REFUSING_NOT_FENCED"])
         if reading.status is not ControllerStatus.OWNER_FENCED:
-            raise HandoverBlocked(
+            raise self._refuse(
                 f"the controller reads {reading.status.value}, not OWNER_FENCED.",
-                blockers=[reading.status.value])
+                [reading.status.value])
         self._move(HandoverState.FENCED, "fence confirmed on chain",
                    {"epoch": reading.epoch, "blockNumber": reading.block_number})
 
-    def reconcile(self, unresolved: list[str]) -> None:
-        """Advance only when nothing from the retiring epoch is still in the air."""
-        if unresolved:
-            raise HandoverBlocked(
-                f"{len(unresolved)} operation(s) from the retiring epoch are unresolved. "
-                "Activating a replacement now would either lose consumption that really "
-                "happened or charge the customer twice for work that did not. Reconcile "
-                "each against the chain first.",
-                blockers=[f"UNRESOLVED:{oid}" for oid in unresolved])
-        self._move(HandoverState.RECONCILED, "all operations of the retiring epoch settled")
+    def reconcile(self, report: "ReconciliationReport") -> None:
+        """Advance only on a report the machine itself can confirm is COMPLETE.
+
+        This used to take `unresolved: list[str]` and advance whenever the list was empty,
+        which made the caller the authority on what was outstanding. It is now given a
+        report, and it RE-DERIVES the retiring-epoch operation set from the durable journal
+        to check that report against. A report that omits an operation the journal knows
+        about is refused, so forgetting and concealing are the same refused thing.
+        """
+        self._require_state(HandoverState.FENCED)
+
+        if getattr(report, "schema", None) != RECONCILIATION_SCHEMA:
+            raise self._refuse(
+                f"reconciliation report schema {getattr(report, 'schema', None)!r} is not "
+                f"{RECONCILIATION_SCHEMA!r}; a shape that merely looks right is not a report",
+                ["BAD_REPORT_SCHEMA"])
+
+        # The report must be about THIS handover, installation and epoch.
+        scope: list[str] = []
+        if report.handover_id != self.record.handover_id:
+            scope.append(f"report is for handover {report.handover_id!r}")
+        if not _same(report.controller, self.record.controller):
+            scope.append(f"report is for controller {report.controller}")
+        if report.chain_id != self.record.chain_id:
+            scope.append(f"report is for chain {report.chain_id}")
+        if report.retiring_epoch != self.record.retiring_epoch:
+            scope.append(f"report is for epoch {report.retiring_epoch}")
+        if report.fence_block is None:
+            scope.append("the report states no fence block, so it cannot be tied to the "
+                         "observation the fence was confirmed at")
+        if scope:
+            raise self._refuse(
+                "the reconciliation report does not describe this handover: "
+                + "; ".join(scope), ["REPORT_OUT_OF_SCOPE"])
+
+        # THE GUARANTEE. The journal, not the caller, says what existed.
+        known = set(operations_for_epoch(self.journal, self.record.retiring_epoch))
+        covered = report.operation_ids
+        missing = sorted(known - covered)
+        if missing:
+            raise self._refuse(
+                f"the reconciliation report omits {len(missing)} operation(s) the journal "
+                f"holds for epoch {self.record.retiring_epoch}: {', '.join(missing[:4])}"
+                + (" ..." if len(missing) > 4 else "")
+                + ". A report is complete or it is not a report.",
+                [f"OMITTED:{oid}" for oid in missing])
+        extra = sorted(covered - known)
+        if extra:
+            raise self._refuse(
+                f"the reconciliation report covers {len(extra)} operation(s) the journal "
+                f"does not hold for this epoch: {', '.join(extra[:4])}. Evidence about "
+                "something else is not evidence about this handover.",
+                [f"UNKNOWN_OPERATION:{oid}" for oid in extra])
+
+        if report.unresolved:
+            raise self._refuse(
+                f"{len(report.unresolved)} operation(s) from the retiring epoch are "
+                "unresolved. Activating a replacement now would either lose consumption "
+                "that really happened or charge the customer twice for work that did not.",
+                [f"UNRESOLVED:{oid}" for oid in report.unresolved])
+
+        self.record.reconciliation = report.to_dict()
+        self._move(HandoverState.RECONCILED,
+                   "every operation of the retiring epoch is settled from chain evidence",
+                   {"operations": len(report.resolutions),
+                    "executed": len(report.executed),
+                    "fenceBlock": report.fence_block})
 
     def prepare_candidate(self, candidate: Candidate, *, observed: ControllerReading) -> None:
         """Pin the replacement against the consumption actually on chain right now."""
+        self._require_state(HandoverState.RECONCILED)
         if not observed.usable:
-            raise HandoverBlocked(
+            raise self._refuse(
                 f"the candidate cannot be pinned to an unreadable controller: "
-                f"{observed.reason}", blockers=["OBSERVATION_INCOMPLETE"])
+                f"{observed.reason}", ["OBSERVATION_INCOMPLETE"])
         if observed.status is not ControllerStatus.OWNER_FENCED:
-            raise HandoverBlocked(
+            raise self._refuse(
                 "the controller must stay PAUSED throughout preparation; it reads "
-                f"{observed.status.value}", blockers=[observed.status.value])
+                f"{observed.status.value}", [observed.status.value])
         on_chain = ExpectedState(
             usedSupply=observed.used["usedSupply"],
             usedNormalWithdraw=observed.used["usedNormalWithdraw"],
@@ -286,52 +449,104 @@ class HandoverMachine:
             normalCount=observed.used["normalCount"],
             restorationCount=observed.used["restorationCount"])
         if candidate.expected.as_tuple() != on_chain.as_tuple():
-            raise HandoverBlocked(
+            raise self._refuse(
                 f"the candidate was prepared against consumption "
                 f"{candidate.expected.as_tuple()} but the controller reads "
                 f"{on_chain.as_tuple()}. Preparing against stale state would ask the owner "
                 "to approve remaining capacity that does not exist.",
-                blockers=["STALE_CANDIDATE"])
+                ["STALE_CANDIDATE"])
         if candidate.new_epoch <= self.record.retiring_epoch:
-            raise HandoverBlocked(
+            raise self._refuse(
                 f"epoch {candidate.new_epoch} does not advance past the retiring epoch "
-                f"{self.record.retiring_epoch}", blockers=["STALE_EPOCH"])
+                f"{self.record.retiring_epoch}", ["STALE_EPOCH"])
         if candidate.runner.lower() == self.record.retiring_runner.lower():
-            raise HandoverBlocked(
+            raise self._refuse(
                 "the candidate runner is the runner being retired; that is not a handover",
-                blockers=["SAME_RUNNER"])
+                ["SAME_RUNNER"])
+        if self.record.lineage and not _same(candidate.lineage, self.record.lineage):
+            raise self._refuse(
+                f"the candidate declares lineage {candidate.lineage}, but this handover is "
+                f"bound to {self.record.lineage}. A replacement under a different lineage "
+                "is a different installation, not a handover.", ["LINEAGE_MISMATCH"])
+        if not candidate.native_config_digest or set(
+                candidate.native_config_digest.lower().replace("0x", "")) <= {"a", "b"}:
+            raise self._refuse(
+                f"the candidate's native configuration digest {candidate.native_config_digest!r} "
+                "is absent or a placeholder. Runner B's continuation depends on it being "
+                "the digest of the ACTUAL pinned configuration.",
+                ["NATIVE_CONFIG_DIGEST_PLACEHOLDER"])
         self.record.candidate = candidate
         self._move(HandoverState.CANDIDATE_PREPARED, "candidate pinned",
                    {"runner": candidate.runner, "newEpoch": candidate.new_epoch})
 
-    def clear_authority(self, inventory: Any) -> None:
-        """Require a COMPLETE bounded inventory before offering an activation.
+    def clear_authority(self, inventory: Any, *, fence_block: int | None = None) -> None:
+        """Require a COMPLETE inventory that provably describes THIS installation.
 
-        `inventory` is a `held_authority.AuthorityInventory`. Incomplete sections block:
-        V4 §6 says incomplete evidence blocks activation, and an inventory that cannot say
-        what authority exists cannot say that cleanup is done.
+        This used to ask two duck-typed questions -- are `incomplete_sections` and
+        `external_delegates` empty? -- of any object at all. A `SimpleNamespace` with two
+        empty lists satisfied it, and so would a genuine COMPLETE inventory of somebody
+        else's controller. Missing evidence could be turned into clean evidence by
+        constructing it.
+
+        So the inventory must now be the real typed one, and it must carry a scope that
+        matches this handover: chain, controller, Safe, lineage, and an observation no
+        older than the fence. No inventory means BLOCKED, never CLEARED.
         """
-        incomplete = list(getattr(inventory, "incomplete_sections", []) or [])
-        if incomplete:
-            raise HandoverBlocked(
-                f"the bounded authority inventory is INCOMPLETE in {len(incomplete)} "
-                f"section(s): {', '.join(incomplete)}. Activation requires complete "
-                "supported evidence, and an unreadable section is not an empty one.",
-                blockers=[f"INCOMPLETE:{s}" for s in incomplete])
-        external = list(getattr(inventory, "external_delegates", []) or [])
-        if external:
-            raise HandoverBlocked(
+        self._require_state(HandoverState.CANDIDATE_PREPARED)
+
+        if inventory is None:
+            raise self._refuse(
+                "no bounded authority inventory was supplied. Missing evidence is not "
+                "clean evidence: without it nothing is known about who can move the "
+                "customer's funds.", ["NO_INVENTORY"])
+        if not isinstance(inventory, AuthorityInventory):
+            raise self._refuse(
+                f"the authority inventory must be a real AuthorityInventory, not "
+                f"{type(inventory).__name__}. An object of the right shape is not a "
+                "collected report.", ["NOT_AN_INVENTORY"])
+
+        problems = inventory.scope_problems(
+            chain_id=self.record.chain_id,
+            controller=self.record.controller,
+            safe=self.record.safe or "",
+            lineage=(self.record.candidate.lineage if self.record.candidate else None),
+            not_before_block=fence_block)
+        if problems:
+            raise self._refuse(
+                "the authority inventory does not describe this installation: "
+                + "; ".join(problems), [f"SCOPE:{p}" for p in problems])
+
+        if inventory.incomplete_sections:
+            raise self._refuse(
+                f"the bounded authority inventory is INCOMPLETE in "
+                f"{len(inventory.incomplete_sections)} section(s): "
+                f"{', '.join(inventory.incomplete_sections)}. An unreadable section is not "
+                "an empty one.",
+                [f"INCOMPLETE:{s}" for s in inventory.incomplete_sections])
+        if inventory.unsatisfied_obligations:
+            raise self._refuse(
+                f"{len(inventory.unsatisfied_obligations)} declared obligation(s) are "
+                "unsatisfied even though every section reported COMPLETE: "
+                + "; ".join(inventory.unsatisfied_obligations),
+                [f"OBLIGATION:{o}" for o in inventory.unsatisfied_obligations])
+        if inventory.external_delegates:
+            raise self._refuse(
                 f"external Morpho delegate(s) still hold authority over the Safe: "
-                f"{', '.join(external)}. These are NOT revoked automatically -- they may "
-                "be legitimate conflicting use by another agent, and revoking someone "
-                "else's access to make a checklist green would be its own incident. The "
-                "owner must decide.",
-                blockers=[f"EXTERNAL_DELEGATE:{d}" for d in external])
-        self._move(HandoverState.CLEARED, "bounded authority inventory complete",
-                   {"sections": getattr(inventory, "section_count", None)})
+                f"{', '.join(inventory.external_delegates)}. These are NOT revoked "
+                "automatically -- they may be legitimate conflicting use by another agent, "
+                "and revoking someone else's access to make a checklist green would be its "
+                "own incident. The owner must decide.",
+                [f"EXTERNAL_DELEGATE:{d}" for d in inventory.external_delegates])
+
+        self.record.inventory_scope = inventory.scope()
+        self._move(HandoverState.CLEARED,
+                   "bounded authority inventory complete and scoped to this installation",
+                   {"sections": inventory.section_count,
+                    "observedAtBlock": inventory.block_number})
 
     def prepare_activation(self) -> OwnerTransaction:
         """Build the single atomic activation, carrying the owner's expected state."""
+        self._require_state(HandoverState.CLEARED)
         c = self.record.candidate
         if c is None:
             raise HandoverError("no candidate has been prepared")
@@ -350,22 +565,46 @@ class HandoverMachine:
         c = self.record.candidate
         if c is None:
             raise HandoverError("no candidate has been prepared")
+        self._require_state(HandoverState.ACTIVATION_PREPARED)
         if not reading.usable:
-            raise HandoverBlocked(
+            raise self._refuse(
                 f"activation could not be verified: {reading.reason}",
-                blockers=["OBSERVATION_INCOMPLETE"])
+                ["OBSERVATION_INCOMPLETE"])
         if reading.status is not ControllerStatus.CONTRACT_ACTIVE:
-            raise HandoverBlocked(
+            raise self._refuse(
                 f"the controller reads {reading.status.value}, not CONTRACT_ACTIVE",
-                blockers=[reading.status.value])
+                [reading.status.value])
+
+        # ACTIVE is accepted only when EVERY observable candidate field matches. Checking
+        # epoch and runner alone let an activation that installed a different executor,
+        # policy version or lineage read as the one the owner approved.
+        mismatches: list[str] = []
         if reading.epoch != c.new_epoch:
-            raise HandoverBlocked(
-                f"the controller is at epoch {reading.epoch}, not the activated "
-                f"{c.new_epoch}", blockers=["EPOCH_MISMATCH"])
-        if (reading.runner or "").lower() != c.runner.lower():
-            raise HandoverBlocked(
-                f"the controller's runner is {reading.runner}, not the activated "
-                f"{c.runner}", blockers=["RUNNER_MISMATCH"])
+            mismatches.append(f"EPOCH_MISMATCH: on chain {reading.epoch}, approved {c.new_epoch}")
+        if not _same(reading.runner, c.runner):
+            mismatches.append(f"RUNNER_MISMATCH: on chain {reading.runner}, approved {c.runner}")
+        if not _same(reading.executor, c.executor):
+            mismatches.append(
+                f"EXECUTOR_MISMATCH: on chain {reading.executor}, approved {c.executor}")
+        if reading.policy_version != c.new_policy_version:
+            mismatches.append(
+                f"POLICY_VERSION_MISMATCH: on chain {reading.policy_version}, approved "
+                f"{c.new_policy_version}")
+        if reading.lineage is not None and not _same(reading.lineage, c.lineage):
+            mismatches.append(
+                f"LINEAGE_MISMATCH: on chain {reading.lineage}, approved {c.lineage}")
+        if reading.policy_raw:
+            observed_ceilings = _policy_ceilings(reading.policy_raw)
+            approved = (c.policy.Ls, c.policy.Ln, c.policy.Lr)
+            if observed_ceilings is not None and observed_ceilings != approved:
+                mismatches.append(
+                    f"POLICY_MISMATCH: ceilings on chain {observed_ceilings}, approved "
+                    f"{approved}")
+        if mismatches:
+            raise self._refuse(
+                "the activated controller is not the candidate the owner approved: "
+                + "; ".join(mismatches), mismatches)
+
         carried = ExpectedState(
             usedSupply=reading.used["usedSupply"],
             usedNormalWithdraw=reading.used["usedNormalWithdraw"],
@@ -373,10 +612,10 @@ class HandoverMachine:
             normalCount=reading.used["normalCount"],
             restorationCount=reading.used["restorationCount"])
         if carried.as_tuple() != c.expected.as_tuple():
-            raise HandoverBlocked(
+            raise self._refuse(
                 f"consumption after activation is {carried.as_tuple()}, not the "
                 f"{c.expected.as_tuple()} that was carried. Held's verified history must "
-                "survive a handover unchanged.", blockers=["CONSUMPTION_NOT_PRESERVED"])
+                "survive a handover unchanged.", ["CONSUMPTION_NOT_PRESERVED"])
         self._move(HandoverState.ACTIVE, "replacement active on chain",
                    {"epoch": reading.epoch, "runner": reading.runner,
                     "preservedConsumption": list(carried.as_tuple())})

@@ -1,14 +1,25 @@
 #!/usr/bin/env python3
 """Run the private operator console locally.
 
-    HELD_CONSOLE_SECRET=... python console/run.py [--journal PATH] [--port N]
+    HELD_CONSOLE_SECRET=... python console/run.py --state-source live \\
+        --controller 0x... --safe 0x... --rpc http://127.0.0.1:8545 --journal PATH
 
 Binds to 127.0.0.1 only. The console holds no keys and cannot move funds: it reads state
 and prepares owner actions that the owner executes in their own Safe.
 
-Without --state-source it renders from a DEMONSTRATION state, clearly labelled in the
-banner, so the interface can be reviewed without a fork running. That demonstration state
-is NOT evidence about any deployed controller.
+## Two modes, and they never blend
+
+    live   reads the ACTUAL controller, journal, bounded inventory and handover record.
+           If a source cannot be read, the affected view renders UNAVAILABLE with the
+           reason. It does NOT fall back to demonstration numbers -- an operator would act
+           on those, which is worse than showing nothing.
+
+    demo   renders a clearly labelled demonstration state so the interface can be reviewed
+           without a fork running. It is NOT evidence about any deployed controller and the
+           banner says so.
+
+`--state-source` used to be documented here and not implemented: the console always built
+the demonstration state regardless. That is the gap this file closes.
 """
 from __future__ import annotations
 
@@ -17,10 +28,11 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "packages", "core"))
-sys.path.insert(0, os.path.join(ROOT, "console"))
+for p in ("packages/core", "packages/handover", "packages/authority", "console"):
+    sys.path.insert(0, os.path.join(ROOT, p))
 
 from held_console.app import Console, serve  # noqa: E402
+from held_console.live import build_views, live_state_from  # noqa: E402
 from held_console.state import Budget, LiveState  # noqa: E402
 from held_core.journal import Journal  # noqa: E402
 
@@ -52,16 +64,122 @@ class EmptyJournal:
     def attempts_for(self, oid): return []
 
 
+class LiveSources:
+    """Real state, assembled per request. A dead source blanks its view and nothing else."""
+
+    def __init__(self, *, controller: str, safe: str, rpc: str, chain_id: int,
+                 journal, handover_id: str | None, policy) -> None:
+        self.controller = controller
+        self.safe = safe
+        self.rpc = rpc
+        self.chain_id = chain_id
+        self.journal = journal
+        self.handover_id = handover_id
+        self.policy = policy
+
+    def reading(self):
+        from held_handover.readback import read_controller_state
+        from held_handover.sources import CastControllerSource
+        # No finality source: a local fork has none, so this grades REAL LOCAL FORK.
+        return read_controller_state(
+            CastControllerSource(self.rpc), controller=self.controller,
+            expected_chain_id=self.chain_id, adapter_dispatching=False)
+
+    def operations(self):
+        """None means the journal could not be read -- which is not the same as empty."""
+        try:
+            rows = self.journal._db.execute(  # noqa: SLF001 - read-only accessor
+                "SELECT operation_id, state, epoch FROM operations "
+                "ORDER BY updated_at DESC LIMIT 50").fetchall()
+        except Exception:  # noqa: BLE001
+            return None
+        return [{"operation_id": r["operation_id"], "state": r["state"],
+                 "epoch": r["epoch"]} for r in rows]
+
+    def inventory(self):
+        path = os.path.join(ROOT, "evidence", "P03", "bootstrap-rehearsal.json")
+        if not os.path.exists(path):
+            return None
+        try:
+            import json
+
+            from held_authority import from_report
+            with open(path) as fh:
+                return from_report(json.load(fh))
+        except Exception:  # noqa: BLE001
+            return None
+
+    def handover(self):
+        if not self.handover_id:
+            return None
+        try:
+            from held_handover import HandoverMachine
+            m = HandoverMachine.load(self.journal, self.handover_id)
+            return m.status() if m else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def state(self) -> LiveState | None:
+        return live_state_from(self.reading(), self.policy, safe=self.safe)
+
+    def views(self):
+        return build_views(reading=self.reading(), policy=self.policy,
+                           operations=self.operations(), inventory=self.inventory(),
+                           handover_status=self.handover())
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--state-source", choices=("demo", "live"), default="demo",
+                    help="'live' reads the real controller/journal/inventory; 'demo' "
+                         "renders a clearly labelled demonstration state")
     ap.add_argument("--journal", help="path to the durable journal (SQLite)")
+    ap.add_argument("--controller", help="controller address (live mode)")
+    ap.add_argument("--safe", help="Safe address (live mode)")
+    ap.add_argument("--rpc", default=os.environ.get("HELD_BASE_RPC", ""),
+                    help="RPC endpoint (live mode)")
+    ap.add_argument("--chain-id", type=int, default=8453)
+    ap.add_argument("--handover-id", help="a handover in progress, if any")
     ap.add_argument("--port", type=int, default=8799)
     args = ap.parse_args()
 
     journal = Journal(args.journal) if args.journal else EmptyJournal()
-    console = Console(demonstration_state, journal)
+
+    if args.state_source == "live":
+        missing = [n for n in ("controller", "safe", "rpc") if not getattr(args, n)]
+        if missing:
+            print(f"live mode needs --{', --'.join(missing)}. Refusing to start: a console "
+                  "that silently fell back to demonstration numbers would be worse than "
+                  "one that did not start.", file=sys.stderr)
+            return 2
+        from held_handover import Policy
+        sources = LiveSources(
+            controller=args.controller, safe=args.safe, rpc=args.rpc,
+            chain_id=args.chain_id, journal=journal, handover_id=args.handover_id,
+            # Ceilings the owner approved. Read from the controller in a later pass; stated
+            # here so Terms can compute remaining rather than assert it.
+            policy=Policy(Ls=50_000_000_000, Ln=50_000_000_000, Lr=10_000_000_000,
+                          Ms=40_000_000_000, Mn=40_000_000_000, Mr=10_000_000_000,
+                          ms=1_000_000, mn=1_000_000, F=0, H=0, Nn=10, Nr=5))
+
+        def state_fn():
+            s = sources.state()
+            if s is None:
+                raise RuntimeError(
+                    "the controller could not be read. This console does NOT substitute "
+                    "demonstration data; fix the source or use --state-source demo.")
+            return s
+
+        console = Console(state_fn, journal)
+        console.views = sources.views          # the four V4 §8 views, from real sources
+        banner = f"LIVE — controller {args.controller} on chain {args.chain_id}"
+    else:
+        console = Console(demonstration_state, journal)
+        banner = "DEMONSTRATION STATE — not evidence about any deployed controller"
+
     srv = serve(console, "127.0.0.1", args.port)
     print(f"held console on http://127.0.0.1:{args.port}  (localhost only, no keys held)")
+    print(f"  {banner}")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

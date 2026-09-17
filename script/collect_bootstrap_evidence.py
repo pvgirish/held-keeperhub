@@ -60,6 +60,24 @@ ALLOW_KEY = os.environ["HELD_ALLOW_KEY"]
 CONTROLLER = os.environ.get("HELD_CONTROLLER")  # the paused Held installation, if deployed
 MANIFEST_PATH = os.environ.get("HELD_INSTALL_MANIFEST")
 
+# WHICH QUESTION IS BEING ASKED. These are different questions about the same surfaces and
+# conflating them makes one of them unanswerable.
+#
+#   initial    V4 section 6: is this a FRESH installation, safe to activate for the first
+#              time? A never-active controller at epoch 0 with zero consumption and full
+#              budgets. Anything else is not a fresh installation.
+#   handover   P04: what authority exists over this Safe RIGHT NOW, mid-life? The same
+#              Safe/module/guard/fallback/Roles/Morpho/token surfaces, but a controller
+#              that has already run is expected -- it has an epoch and it has spent budget.
+#              Demanding epoch 0 here would make every real handover INCOMPLETE forever.
+#
+# Everything that is about AUTHORITY rather than about freshness is identical in both.
+MODE = os.environ.get("HELD_INVENTORY_MODE", "initial")
+if MODE not in ("initial", "handover"):
+    print(f"HELD_INVENTORY_MODE={MODE!r} is not 'initial' or 'handover'", file=sys.stderr)
+    sys.exit(2)
+INITIAL = MODE == "initial"
+
 MORPHO = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
 USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 COLL = "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452"
@@ -319,6 +337,7 @@ section(
     chain_id=uint(chain_id),
     expected_chain_id=EXPECTED_CHAIN_ID,
     all_state_reads_pinned_to_block=BLOCK is not None,
+    mode=MODE,
     finality="NONE — anvil fork. This is the observation point, not finalized evidence.",
     scope="FORK REHEARSAL. Not the public installation, not the P04 automated service.",
 )
@@ -482,9 +501,17 @@ for label, key_field, limit_field in budget_spec:
     declared = manifest.get(limit_field)
     got["declared_limit"] = declared
     if got.get("readable"):
-        got["matches_declared"] = (
-            isinstance(declared, int) and got["balance"] == declared
-            and got["maxRefill"] == declared)
+        if INITIAL:
+            # A fresh installation has its full declared budget, untouched.
+            got["matches_declared"] = (
+                isinstance(declared, int) and got["balance"] == declared
+                and got["maxRefill"] == declared)
+        else:
+            # Mid-life: the ceiling must still be the declared one, and the remaining
+            # balance must be within it. Spent budget is expected, not a defect.
+            got["matches_declared"] = (
+                isinstance(declared, int) and got["maxRefill"] == declared
+                and 0 <= got["balance"] <= declared)
     budgets[label] = got
 
 budgets_readable = all(b.get("readable") for b in budgets.values())
@@ -785,6 +812,7 @@ if CONTROLLER:
               for n in ("normalCount", "restorationCount")}
     consumption = {**used, **counts}
     zeroed = all(v == 0 for v in consumption.values())
+    consumption_readable = all(v is not None for v in consumption.values())
 
     market_ok = same(scope.get("marketId"), parse_b32(manifest.get("marketId")))
     lineage_ok = same(scope.get("lineage"), parse_b32(manifest.get("lineage")))
@@ -805,15 +833,17 @@ if CONTROLLER:
         read=all(v is not None for v in reads),
         complete=len(consumption) == 5 and len(ckeys) == 7 and all(v is not None for v in ckeys.values()),
         compatible=(
-            active is False
-            and epoch == 0
-            and same(bound["safe"], SAFE) and same(bound["roles"], ROLES)
+            same(bound["safe"], SAFE) and same(bound["roles"], ROLES)
             and same(bound["morpho"], MORPHO) and same(bound["token"], USDC)
             and owner_ok
             and is_declared_controller
             and market_ok and lineage_ok
             and not key_mismatches
-            and zeroed
+            # Freshness is an INITIAL-activation question only. A controller mid-life has
+            # an epoch and has spent budget, and requiring otherwise would make every real
+            # handover permanently INCOMPLETE.
+            and (active is False and epoch == 0 and zeroed if INITIAL
+                 else epoch is not None and consumption_readable)
         ),
         address=CONTROLLER,
         active=active,
@@ -828,16 +858,29 @@ if CONTROLLER:
         key_mismatches=key_mismatches,
         consumption=consumption,
         consumption_all_zero=zeroed,
-        note="Initial activation requires a PAUSED, never-active controller at epoch 0 with "
+        mode=MODE,
+        note=("HANDOVER MODE: this controller is expected to have run. Its bindings, keys, "
+              "market and lineage are checked; its epoch and consumption are read, not "
+              "required to be zero. " if not INITIAL else "")
+             + "Initial activation requires a PAUSED, never-active controller at epoch 0 with "
              "zero consumption across ALL FIVE dimensions, immutable bindings pointing at "
              "this installation, and the market and lineage the installation declared "
              "(V4 §6). The controller's seven key immutables are compared with the declared "
              "keys: a controller bound to budget keys the Roles side never configured would "
              "read zero everywhere and look clean.",
     )
-    clause("The controller is paused at epoch 0 with zero consumption in all five dimensions",
-           section_name="held_controller", satisfied=active is False and epoch == 0 and zeroed,
-           evidence=f"active={active}, epoch={epoch}, consumption={consumption}")
+    if INITIAL:
+        clause("The controller is paused at epoch 0 with zero consumption in all five dimensions",
+               section_name="held_controller",
+               satisfied=active is False and epoch == 0 and zeroed,
+               evidence=f"active={active}, epoch={epoch}, consumption={consumption}")
+    else:
+        clause("The controller's epoch and consumption in all five dimensions are readable",
+               section_name="held_controller",
+               satisfied=epoch is not None and consumption_readable,
+               evidence=f"active={active}, epoch={epoch}, consumption={consumption} "
+                        "(HANDOVER mode: a controller mid-life has spent budget, and that "
+                        "is the history the handover must carry, not a defect)")
     clause("The controller inspected IS the declared one, owned by this Safe",
            section_name="held_controller", satisfied=is_declared_controller and owner_ok,
            evidence=f"declared {manifest.get('controller')}, inspected {CONTROLLER}, "

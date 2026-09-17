@@ -52,6 +52,9 @@ class ControllerReading:
     chain_id: int | None
     controller: str | None
     block_number: int | None
+    block_hash: str | None
+    lineage: str | None
+    policy_raw: str | None
     finalized: bool
     adapter_dispatching: bool
     reason: str = ""
@@ -66,7 +69,8 @@ class ControllerReading:
             "runner": self.runner, "executor": self.executor,
             "policyVersion": self.policy_version, "used": self.used,
             "chainId": self.chain_id, "controller": self.controller,
-            "blockNumber": self.block_number, "finalized": self.finalized,
+            "blockNumber": self.block_number, "blockHash": self.block_hash,
+            "lineage": self.lineage, "finalized": self.finalized,
             "adapterDispatching": self.adapter_dispatching, "reason": self.reason,
             "evidenceGrade": "REAL LOCAL FORK" if self.chain_id == 8453 and not self.finalized
                              else "PUBLIC CHAIN" if self.finalized else "UNKNOWN",
@@ -95,6 +99,7 @@ def read_controller_state(
     """
     blank = dict(active=None, epoch=None, runner=None, executor=None, policy_version=None,
                  used={}, chain_id=None, controller=controller, block_number=None,
+                 block_hash=None, lineage=None, policy_raw=None,
                  finalized=False, adapter_dispatching=adapter_dispatching)
 
     try:
@@ -151,8 +156,9 @@ def read_controller_state(
     common = dict(active=active, epoch=epoch, runner=raw.get("runner"),
                   executor=raw.get("executor"), policy_version=raw.get("policyVersion"),
                   used=used, chain_id=chain_id, controller=controller,
-                  block_number=raw.get("blockNumber"), finalized=finalized,
-                  adapter_dispatching=adapter_dispatching)
+                  block_number=raw.get("blockNumber"), block_hash=raw.get("blockHash"),
+                  lineage=raw.get("lineage"), policy_raw=raw.get("policyRaw"),
+                  finalized=finalized, adapter_dispatching=adapter_dispatching)
 
     if not active:
         return ControllerReading(
