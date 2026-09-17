@@ -1,0 +1,53 @@
+{
+  "record": "held.pre-release-candidate.v1",
+  "_status": "PRE-RELEASE. This is NOT a final submission candidate: the mandatory KeeperHub execution (M1) does not exist, so no final candidate can honestly be frozen. Named and digested so evidence cannot drift against a changed source tree.",
+  "sha": "7afbd4c1fd822688c212a1f7f6013c0ae4917da8",
+  "branch": "main",
+  "tree_clean": true,
+  "created_utc": "2026-09-17T21:25:45Z",
+  "gates": {
+    "check-phase-02": "PASS \u2014 50 tests, three stages",
+    "check-phase-03-local": "PASS \u2014 172 tests in eight suites",
+    "check-phase-03-composed": "PASS \u2014 16 checks",
+    "check-phase-03": "INCOMPLETE BY DESIGN \u2014 L10",
+    "check-bootstrap-rehearsal": "PASS \u2014 9 sections, 14/14 obligations",
+    "check-phase-04": "PASS \u2014 7 + 36 + 10",
+    "check-phase-05": "PASS \u2014 30 + 14",
+    "hero-demo": "PASS \u2014 12 steps",
+    "p06-comparison": "PASS \u2014 measured",
+    "console-live": "PASS",
+    "clean-install": "PASS",
+    "submission-gate": "BLOCKED \u2014 M1, M2, M3, M4"
+  },
+  "evidence_digests": {
+    "evidence/P04/hero-demo-trace.json": "cedf237ed590b3d3fc415b9a031843ad0b291ab67afde898563fe40e38a5c43c",
+    "evidence/P04/hero-demo-replacement-export.json": "eeb53f9553129c332a60b1dedc7655e1111f45d9d09da55dfacbbdbae6e4f9c5",
+    "evidence/P06/comparison.json": "406939a0c4516f0a6756f4c68a1c25e80085b9750ff583dfcf1c3a3d003a2bed",
+    "evidence/P06/acceptance.json": "fcb5716534a31581e6c3ec85d94abfd33a80e62253914c5487a12f0221a77371",
+    "evidence/P03/acceptance.json": "a1f91464c01c89b6df995b874a0ac1de83bd2faab68a286cfbb51e0b6d325e07",
+    "evidence/P03/bootstrap-rehearsal.json": "1b417c09a57acc60b6516eebe91a0e3abd74a514c418f0bf4e1479e3ae4a0e3e",
+    "docs/baseline/native-measurements.json": "10262eaff6bab5b167621d496b54887af9531fcb01102c6ff6c52efc7bdd108e"
+  },
+  "pinned": {
+    "almanak_sdk": "6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938",
+    "fork_block": 51353212,
+    "chain_id": 8453,
+    "solc": "0.8.28 via_ir, optimizer 200"
+  },
+  "public_evidence": {
+    "keeperhub_execution_id": null,
+    "transaction_hash": null,
+    "chain": null,
+    "status": "NOT YET ESTABLISHED \u2014 no organisation credential exists in this environment"
+  },
+  "known_limitations": [
+    "No public-chain execution and no authenticated KeeperHub call.",
+    "Native tooling is cheaper on operator work; C1 withdrawn as measured false.",
+    "Authority discovery is bounded, not universal.",
+    "One adversarial case unestablished for an external reason (public broadcast receipt).",
+    "A genuine chain reorganisation is not simulated.",
+    "Console HTML rendering is prototype; live mode reads real sources.",
+    "No repository-level LICENSE file.",
+    "Not audited. Not production ready."
+  ]
+}
