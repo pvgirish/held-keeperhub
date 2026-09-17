@@ -48,7 +48,7 @@ rm -f fixtures/generated/composed-call.json \
   [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
 
   echo "=== pass 2: build Held'"'"'s request from the admitted action ==="
-  '"$PY"' tests/integration/test_p03_composed.py 2>&1 | grep -E "^ok |^FAIL |compiler produced|wrote composed|^all " || true
+  '"$PY"' tests/integration/test_p03_composed.py 2>&1 | grep -E "^ok |^FAIL |producer |wrote composed|^all " || true
   [ -f fixtures/generated/composed-call.json ] || { echo "no composed call was built"; exit 1; }
 
   echo "=== pass 3: execute those bytes against the REAL controller ==="

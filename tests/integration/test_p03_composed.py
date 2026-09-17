@@ -97,6 +97,10 @@ BUILT = None
 PROFILE = None
 NATIVE_MACHINE = None
 SOURCE_DECISION_ID = "composed-local-run"
+# The PRODUCING native decision's own id. Fixed rather than random so the second pass of
+# the composed run reopens the SAME decision instead of presenting a new one; the pinned
+# machine has no from_dict, so a stable name is the only way a restart can reopen it.
+NATIVE_DECISION_ID = "held-composed-local-run-supply-0"
 MORPHO = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
 
 
@@ -223,12 +227,53 @@ def deployment_profile(v: dict) -> Profile:
     )
 
 
-@test("the REAL pinned compiler produces the action this run admits, in ONE scope")
+def native_state_machine(v: dict, decision_id: str | None = None):
+    """The REAL pinned IntentStateMachine for this run's intent.
+
+    `decision_id` pins the native `intent_id`. The pinned intent takes it as an ordinary
+    field whose default factory is random, so passing it is not a workaround -- it is how
+    a producer names a decision it intends to be able to REOPEN. Without it, every process
+    that builds a machine gets a new identity, and "the decision that produced this
+    operation" cannot survive a restart: the second pass would present a stranger.
+
+    Left as None it keeps the SDK's random default, which is what the
+    different-decision regressions need.
+    """
+    from decimal import Decimal
+
+    from almanak.framework.intents import SupplyIntent
+    from almanak.framework.intents.compiler import IntentCompiler
+    from almanak.framework.intents.state_machine import IntentStateMachine
+
+    kwargs = dict(chain="base", wallet_address=v["safe"], default_protocol="morpho_blue",
+                  rpc_url=os.environ.get("HELD_BASE_RPC"), rpc_timeout=30.0)
+    if os.environ.get("HELD_PRICE_MODE") == "testing-only":
+        kwargs["price_oracle"] = {"USDC": Decimal("1")}  # TESTING-ONLY, never runtime evidence
+    intent_kwargs = dict(protocol="morpho_blue", chain="base", token="USDC",
+                         amount=Decimal("100"),
+                         market_id=hex32(PROFILE.market_id()), use_as_collateral=False)
+    if decision_id is not None:
+        intent_kwargs["intent_id"] = decision_id
+    intent = SupplyIntent(**intent_kwargs)
+    return IntentStateMachine(intent, IntentCompiler(**kwargs))
+
+
+@test("the PRODUCER decides, is bound, and only then is its work admitted")
 def _():
-    """No pre-baked vector, and no borrowed profile: both come from this deployment."""
-    global ADMITTED, NATIVE_CALLS, PROFILE
-    sys.path.insert(0, HERE)
-    from test_p03_native_bundle import compile_real_supply
+    """The native decision comes FIRST, and the binding predates any claim.
+
+    This used to be two disconnected things. The action was produced by calling the
+    compiler directly, while the native machine was built much later -- after the
+    Submitter had already claimed and dispatched, and after reconciliation. The test that
+    performed the binding was *named* as though it happened at admission time, but
+    execution order is set by where the call is, not by what the docstring says. A binding
+    written after dispatch cannot have protected the dispatch.
+
+    So the real producer runs here: one machine, one stable decision id, stepped to get
+    the bundle that is actually admitted, and bound to the operation while the journal
+    still shows no claim. ORDER IS THE ASSERTION.
+    """
+    global ADMITTED, NATIVE_CALLS, PROFILE, NATIVE_MACHINE
 
     v = load_vector()
     PROFILE = deployment_profile(v)
@@ -236,8 +281,39 @@ def _():
         chain_id=PROFILE.chain_id, safe=PROFILE.safe,
         source_decision_id=SOURCE_DECISION_ID, action_index=0)
 
-    result = compile_real_supply()
-    record, admitted = admit_native_bundle(result, ctx, PROFILE)
+    # 1. The producing decision, named so a second pass REOPENS it rather than replacing it.
+    NATIVE_MACHINE = native_state_machine(v, decision_id=NATIVE_DECISION_ID)
+    assert NATIVE_MACHINE.intent.intent_id == NATIVE_DECISION_ID
+
+    # 2. Its own step offers the work. This is the bundle that gets admitted -- not a
+    #    separately compiled one that merely happens to describe the same action.
+    step = NATIVE_MACHINE.step()
+    assert step.needs_execution and step.action_bundle is not None, (
+        f"the producer is not offering work to execute (state {NATIVE_MACHINE.state})")
+
+    # The bundle hanging off the step is BARE: it carries no compilation status, so on its
+    # own it is no evidence that compilation and native risk checks succeeded. Held's
+    # admission boundary refuses such an object, and should -- admitting it would assume
+    # the verdict rather than read it.
+    #
+    # OBSERVED PROPERTY OF THE PIN, recorded rather than worked around: the pinned
+    # IntentStateMachine does not publicly expose the CompilationResult it produced. Its
+    # public surface offers `action_bundle` (bare) and a `compilation_evidence` PROPERTY
+    # that returns `_compilation_result.compilation_evidence` -- an inner dict, which is
+    # None here. The verdict object itself is only reachable as `_compilation_result`.
+    # Reaching for it is therefore not a shortcut past a public API; there is no public
+    # API, and the alternative is to admit an unverdicted bundle.
+    produced = NATIVE_MACHINE._compilation_result  # noqa: SLF001 - see above
+    assert produced is not None, (
+        "the producer offered work but holds no compilation result, so there is no "
+        "verdict to check")
+    assert produced.action_bundle is step.action_bundle, (
+        "the compilation result describes a different bundle than the step offered; the "
+        "verdict and the work must be about the same object")
+    assert produced.status.name == "SUCCESS", (
+        f"the producer's own verdict is {produced.status}, not SUCCESS")
+
+    record, admitted = admit_native_bundle(produced, ctx, PROFILE)
     ADMITTED, NATIVE_CALLS = admitted, record.calls
 
     # The admitted id must derive from THIS deployment's scope, not from any other.
@@ -255,8 +331,39 @@ def _():
     v = load_vector()
     assert hex32(admitted.payload_hash).lower() == v["payloadHash"].lower(), (
         "the compiler-derived action hash and the fork's actionHash disagree")
-    print(f"      compiler produced {len(record.calls)} native call(s), "
-          f"action hash {hex32(admitted.payload_hash)[:18]}...")
+
+    # 3. Bind the producing decision to the operation BEFORE anything can claim it.
+    #    create_or_reopen is idempotent for an identical payload and is what submit()
+    #    itself calls, so doing it here does not fabricate a row the Submitter would not
+    #    have made -- it only makes sure the durable operation exists to bind against.
+    #    (restore() treats a binding with no operation row as an evidence gap, which is
+    #    precisely the ordering this enforces.)
+    journal = Journal(JOURNAL_PATH)
+    oid = hex32(admitted.operation_id)
+    journal.create_or_reopen(oid, hex32(admitted.payload_hash), SOURCE_DECISION_ID,
+                             admitted.action_index, int(v["epoch"]))
+
+    claimed_before_binding = journal.unresolved_attempt(oid)
+    state_before_binding = journal.get(oid).state
+
+    bind_native_decision(journal, oid, NATIVE_MACHINE.intent.intent_id,
+                         NATIVE_MACHINE.intent.intent_type.value)
+    bound = bound_native_decision(journal, oid)
+    journal.close()
+
+    # THE ORDERING ASSERTION. On the first pass nothing has claimed yet; on the verify
+    # pass the binding already exists from pass 1 and must be the SAME decision. Either
+    # way the binding cannot have been written after the dispatch it is supposed to cover.
+    assert bound == {"intent_id": NATIVE_DECISION_ID, "intent_type": "SUPPLY"}, bound
+    if state_before_binding is OperationState.CREATED:
+        assert claimed_before_binding is None, (
+            "the operation was already claimed when the producing decision was bound; "
+            "the binding cannot protect a dispatch that preceded it")
+
+    print(f"      producer {NATIVE_DECISION_ID} -> operation {oid[:18]}... "
+          f"({len(record.calls)} native call(s), "
+          f"action hash {hex32(admitted.payload_hash)[:18]}...) bound at "
+          f"{state_before_binding.value}")
 
 
 @test("the REAL Submitter claims, builds and persists the request before any I/O")
@@ -459,59 +566,46 @@ def _receipt() -> str:
                        "block_number": 51353228, "gas_used": 210000})
 
 
-def native_state_machine(v: dict):
-    """The REAL pinned IntentStateMachine for this run's intent."""
-    from decimal import Decimal
-
-    from almanak.framework.intents import SupplyIntent
-    from almanak.framework.intents.compiler import IntentCompiler
-    from almanak.framework.intents.state_machine import IntentStateMachine
-
-    kwargs = dict(chain="base", wallet_address=v["safe"], default_protocol="morpho_blue",
-                  rpc_url=os.environ.get("HELD_BASE_RPC"), rpc_timeout=30.0)
-    if os.environ.get("HELD_PRICE_MODE") == "testing-only":
-        kwargs["price_oracle"] = {"USDC": Decimal("1")}  # TESTING-ONLY, never runtime evidence
-    intent = SupplyIntent(protocol="morpho_blue", chain="base", token="USDC",
-                          amount=Decimal("100"),
-                          market_id=hex32(PROFILE.market_id()), use_as_collateral=False)
-    return IntentStateMachine(intent, IntentCompiler(**kwargs))
-
-
-@test("the producing native decision is BOUND to the composed operation")
+@test("the binding made by the producer SURVIVES dispatch and refuses a stranger")
 def _():
-    """Which decision produced this operation, recorded durably at admission time.
+    """The producer already bound this decision; this checks the binding held.
 
-    Without the binding, an acknowledgement could be applied to any machine that happens
-    to be in the right state, and a restart could not identify the original decision --
-    only reconstruct one by coincidence.
+    Note what this test no longer does: it does not create a machine and bind it. That
+    happened in the producer test above, before the Submitter claimed. Binding here would
+    be writing the record after the event it is supposed to govern, which is exactly the
+    ordering defect this file used to have.
     """
-    global NATIVE_MACHINE
     v = load_vector()
-    NATIVE_MACHINE = native_state_machine(v)
-    step = NATIVE_MACHINE.step()
-    assert step.needs_execution and step.action_bundle is not None, (
-        f"the machine is not offering work to execute (state {NATIVE_MACHINE.state})")
-
     journal = Journal(JOURNAL_PATH)
     oid = hex32(ADMITTED.operation_id)
-    existing = bound_native_decision(journal, oid)
-    if existing is None:
-        bind_native_decision(journal, oid, NATIVE_MACHINE.intent.intent_id,
-                             NATIVE_MACHINE.intent.intent_type.value)
-        bound = bound_native_decision(journal, oid)
-        assert bound["intent_id"] == NATIVE_MACHINE.intent.intent_id
-    else:
-        # Verify phase: pass 2 bound the producing decision and the binding is WRITE-ONCE,
-        # so a fresh machine here must NOT be able to take its place.
-        bound = existing
-        assert bound["intent_id"] != NATIVE_MACHINE.intent.intent_id, (
-            "a new machine coincidentally shares the bound intent id")
+
+    bound = bound_native_decision(journal, oid)
+    assert bound == {"intent_id": NATIVE_DECISION_ID, "intent_type": "SUPPLY"}, (
+        f"the producer's binding is not what the journal holds: {bound}")
+
+    # The operation has been claimed and dispatched by now. The binding predates that and
+    # is unchanged by it.
+    state = journal.get(oid).state
+    assert state is not OperationState.CREATED, (
+        "this check is meant to run after the submitter claimed; nothing dispatched")
+
+    # Reopening the SAME producing decision is idempotent -- that is what makes a restart
+    # able to re-assert what it already recorded.
+    bind_native_decision(journal, oid, NATIVE_DECISION_ID, "SUPPLY")
+    assert bound_native_decision(journal, oid) == bound
+
+    # A DIFFERENT decision cannot take its place, whatever it claims to be. This machine
+    # gets the SDK's random default id, so it is a genuine stranger.
+    stranger = native_state_machine(v)
+    assert stranger.intent.intent_id != NATIVE_DECISION_ID
+    for intent_id, intent_type in ((stranger.intent.intent_id, "SUPPLY"),
+                                   (NATIVE_DECISION_ID, "WITHDRAW")):
         try:
-            bind_native_decision(journal, oid, NATIVE_MACHINE.intent.intent_id, "SUPPLY")
-            raise AssertionError("a later run replaced the producing decision")
+            bind_native_decision(journal, oid, intent_id, intent_type)
+            raise AssertionError(
+                f"the producing decision was replaced by {intent_id}/{intent_type}")
         except NativeDecisionConflict:
             pass
-    assert bound["intent_type"] == "SUPPLY"
     journal.close()
 
 

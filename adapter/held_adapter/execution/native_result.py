@@ -56,6 +56,21 @@ paper over:
    `verify_committed()` is the check. A mutated-but-uncommitted machine must never be
    treated as the truth.
 
+   That rule is now ENFORCED at `needs_execution()`, the entry point the running adapter
+   actually calls, rather than left to a check callers had to remember. The distinction
+   that matters is clean vs dirty, not applied vs unapplied: a machine that has never
+   been applied to is still in its own pre-dispatch lifecycle and must stay usable, so
+   `require_clean()` refuses only a machine mutated by an apply that did not reach disk.
+
+## `restore()` validates the RELATIONSHIP, not just the labels
+
+A durable record is coherent only if the operation, the bound decision, the snapshot's
+stamped identity and the acknowledgement all describe the same decision. Checking that a
+terminal snapshot merely HAS some acknowledgement and some binding let a snapshot for
+decision B satisfy an operation bound to decision A. And a binding or snapshot with no
+durable operation row behind it is an evidence gap: `restore()` blocks there instead of
+building a machine that would cheerfully ask for the work to be done a second time.
+
 ## What this still does not do
 
 It does not run a full native strategy loop, and the receipt is constructed from Held's
@@ -198,7 +213,8 @@ def restore(journal, operation_id: str, build_machine=None) -> RestoredDecision:
     """
     decision = bound_native_decision(journal, operation_id) or {}
     snapshot = native_state_after(journal, operation_id)
-    acked = native_ack_state(journal, operation_id) is not None
+    ack_state = native_ack_state(journal, operation_id)
+    acked = ack_state is not None
     state = (snapshot or {}).get("state")
 
     op = journal.get(operation_id)
@@ -211,10 +227,61 @@ def restore(journal, operation_id: str, build_machine=None) -> RestoredDecision:
     if state in TERMINAL_NATIVE_STATES and not decision:
         inconsistent.append("a terminal native snapshot exists with no bound decision")
 
+    # The snapshot must be the SAME DECISION the operation is bound to. Comparing only
+    # state labels was the defect: a committed snapshot for decision B satisfied an
+    # operation bound to decision A, and `restore()` reported complete with nothing
+    # inconsistent. `apply()` stamps `held_bound_decision` into every snapshot it writes,
+    # so a terminal snapshot that cannot produce one cannot be identified at all.
+    if snapshot is not None and decision:
+        stamped = snapshot.get("held_bound_decision")
+        if stamped is None:
+            if state in TERMINAL_NATIVE_STATES:
+                inconsistent.append(
+                    "the native snapshot carries no bound-decision stamp, so the decision "
+                    "it belongs to cannot be identified")
+        elif stamped != decision:
+            inconsistent.append(
+                f"the native snapshot belongs to decision {stamped} but the operation is "
+                f"bound to {decision}")
+        snap_intent = snapshot.get("intent_id")
+        if snap_intent is not None and snap_intent != decision.get("intent_id"):
+            inconsistent.append(
+                f"the native snapshot's intent_id {snap_intent!r} is not the bound "
+                f"decision's {decision.get('intent_id')!r}")
+
+    # The acknowledgement records the state it acknowledged. One that names a different
+    # state than the snapshot is not evidence for that snapshot.
+    if acked and state is not None and ack_state != state:
+        inconsistent.append(
+            f"the acknowledgement records {ack_state!r} but the native snapshot is at "
+            f"{state!r}")
+
+    # Lost local history must never read as permission for fresh work. A native binding,
+    # snapshot or acknowledgement is a record that this operation EXISTED, so the absence
+    # of the durable operation row is an evidence gap to block on -- not an invitation to
+    # invent an operation and let a newly built machine decide to work again.
+    if op is None and (decision or snapshot is not None or acked):
+        have = ", ".join(n for n, p in (("a bound native decision", bool(decision)),
+                                        ("a native snapshot", snapshot is not None),
+                                        ("an acknowledgement", acked)) if p)
+        inconsistent.append(
+            f"there is no durable operation record, but {have} exists for it; the local "
+            "history is incomplete")
+
+    # A complete native decision has to correspond to an operation whose economic outcome
+    # is actually settled. A terminal, acknowledged snapshot sitting on an operation that
+    # never confirmed is incoherent, and saying "complete" there would hide it.
+    if state in TERMINAL_NATIVE_STATES and acked and op is not None and op_state != "CONFIRMED":
+        inconsistent.append(
+            f"the native decision is {state} and acknowledged, but its operation is "
+            f"{op_state}, not CONFIRMED")
+
     machine = None
     if state not in TERMINAL_NATIVE_STATES and build_machine is not None:
-        # Only build when the durable operation state permits a fresh work decision.
-        if op_state not in _NO_FRESH_WORK:
+        # Only build when the durable operation state permits a fresh work decision AND
+        # the record is coherent. Building under an inconsistent record is exactly how a
+        # gap in the evidence turns into a second execution.
+        if op_state not in _NO_FRESH_WORK and not inconsistent:
             machine = build_machine()
 
     return RestoredDecision(
@@ -266,10 +333,40 @@ class NativeStateMachineConsumer:
         # The live machine is NOT authoritative until its snapshot is confirmed durable.
         # apply() mutates it before the commit, and SQL rollback cannot undo that.
         self._authoritative = False
+        # Whether apply() has mutated the machine. A machine that has never been applied
+        # to is CLEAN: it is in its own pre-dispatch lifecycle (PREPARING/VALIDATING_*)
+        # and asking it whether work is needed is exactly what it is for. Once apply()
+        # has touched it the answer is only trustworthy if the advance reached disk.
+        self._mutated = False
 
     @property
     def authoritative(self) -> bool:
         return self._authoritative
+
+    @property
+    def dirty(self) -> bool:
+        """Mutated by an apply whose durability is not confirmed. Unusable as truth."""
+        return self._mutated and not self._authoritative
+
+    def require_clean(self) -> None:
+        """Refuse a machine mutated by an apply that never reached disk.
+
+        `set_receipt()`/`step()` mutate in memory and SQL rollback cannot undo them, and
+        the pinned `IntentStateMachine` has no `from_dict` and no state setter, so the
+        object cannot be wound back either. That leaves exactly one honest move: discard
+        it and recover from the durable record.
+
+        This deliberately does NOT demand a committed terminal snapshot before every
+        call. A clean machine that has never been applied to is usable under its own
+        pre-dispatch lifecycle; only a dirty one is refused.
+        """
+        if self.dirty:
+            raise NativeStateNotAuthoritative(
+                f"this native machine was advanced to {self.state} by an apply whose "
+                "snapshot is NOT confirmed durable, so its in-memory state may describe "
+                "work the durable record never recorded. It cannot be wound back and "
+                "must not be reused. Discard this consumer and recover from the durable "
+                "record with restore().")
 
     def verify_committed(self, journal, operation_id: str) -> bool:
         """Confirm the durable snapshot matches this machine, AFTER the commit.
@@ -323,7 +420,15 @@ class NativeStateMachineConsumer:
         return str(getattr(self.machine.state, "name", self.machine.state))
 
     def needs_execution(self) -> bool:
-        """True while the native machine is still asking to be executed."""
+        """True while the native machine is still asking to be executed.
+
+        This is the entry point the running adapter uses to decide whether to do economic
+        work, so the dirty-object rule is enforced HERE rather than in an optional check
+        a caller has to remember. Previously it called `step()` straight through: after an
+        apply whose transaction rolled back, a machine reporting COMPLETED with no durable
+        snapshot still answered, and the caller could not tell.
+        """
+        self.require_clean()
         result = self.machine.step()
         self.step_results.append(result)
         return bool(getattr(result, "needs_execution", False))
@@ -359,6 +464,10 @@ class NativeStateMachineConsumer:
         before = self.state
         self.state_before_apply = before
         self._authoritative = False
+        # From here the machine is DIRTY: the next two lines mutate it in memory, and
+        # neither a rollback nor any setter can undo that. `dirty` stays true until
+        # verify_committed() finds the snapshot on a separate connection.
+        self._mutated = True
         self.machine.set_receipt(receipt)
         result = self.machine.step()
         self.step_results.append(result)
