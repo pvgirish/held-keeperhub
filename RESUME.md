@@ -79,8 +79,8 @@ changed value.** The fixes the review explicitly confirms — 9 native and 8 col
 controls — were preserved, not redone; they are kept as an explicit `PRESERVED` group in
 `tests/integration/test_p03_native_checkpoint.py`.
 
-Commits: `1f912de` (N1–N3), `05197d0` (B1), and the B2–B4 commit that follows this file.
-Per-finding detail is in `evidence/P03/acceptance.json` under `review_67eed71`.
+Commits: `1f912de` (N1–N3), `05197d0` (B1), `1639397` (B2–B4). Per-finding detail is in
+`evidence/P03/acceptance.json` under `review_67eed71`.
 
 **Closing these is not acceptance.** Claude authored and ran this work too. The catalogue
 is kept below in full because it says what was wrong and why, which is what a later
