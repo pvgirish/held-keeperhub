@@ -1,0 +1,171 @@
+{
+  "phase": "P06",
+  "title": "Adversarial composed verification and the native comparison",
+  "implementation_status": "PARTIAL \u2014 adversarial coverage mapped and largely present; the fair native comparison over the HANDOVER workflow is NOT measured",
+  "independent_review_status": "pending",
+  "accepted": false,
+  "phase_complete": false,
+  "accepted_note": "Claude authored and ran this. Self-testing is not independent acceptance.",
+  "method": "This record MAPS each adversarial case P06 requires to the test that actually covers it, rather than asserting coverage. Where nothing covers it, it says NOT COVERED.",
+  "summary": {
+    "required_cases": 24,
+    "covered": 21,
+    "partial": 2,
+    "not_covered": 1
+  },
+  "cases": [
+    {
+      "case": "identical operation retry",
+      "status": "COVERED",
+      "where": "test_p03_recovery.py",
+      "note": "resume resends the IDENTICAL body under the IDENTICAL key"
+    },
+    {
+      "case": "same ID / changed payload",
+      "status": "COVERED",
+      "where": "test_p03_submit.py",
+      "note": "C4: an id consumed by a DIFFERENT payload is not success; journal create_or_reopen raises IdentityConflict"
+    },
+    {
+      "case": "domain replay",
+      "status": "COVERED",
+      "where": "test_p03_signing.py + HeldController.t.sol",
+      "note": "the EIP-712 domain commits to the controller address; WrongScope on a foreign scope"
+    },
+    {
+      "case": "old epoch",
+      "status": "COVERED",
+      "where": "hero-demo step 11",
+      "note": "BEHAVIOURAL: runner A signs under its retired epoch and the controller reverts WrongEpoch(2,1) / 0x2b9264ec"
+    },
+    {
+      "case": "concurrent attempts",
+      "status": "COVERED",
+      "where": "test_p03_recovery.py",
+      "note": "two concurrent submitters cannot both claim the same operation (UNIQUE PARTIAL INDEX)"
+    },
+    {
+      "case": "crash before durable write",
+      "status": "COVERED",
+      "where": "test_p03_recovery.py",
+      "note": "the operation is DISPATCHED on disk BEFORE the request leaves the process"
+    },
+    {
+      "case": "crash before send",
+      "status": "COVERED",
+      "where": "test_p03_recovery.py",
+      "note": "a real child process SIGKILLed mid-send leaves a resumable claim; zero duplicate network calls"
+    },
+    {
+      "case": "crash after server acceptance",
+      "status": "COVERED",
+      "where": "test_p03_recovery.py",
+      "note": "an ACCEPTED or IN_PROGRESS attempt is polled, never resent"
+    },
+    {
+      "case": "crash after broadcast",
+      "status": "PARTIAL",
+      "where": "test_p03_recovery.py",
+      "note": "beyond the idempotency window a resend requires chain evidence first, and a ZERO marker alone must not resend. NOT covered: a broadcast whose tx hash is known but whose receipt never arrives on a public chain -- that needs L10"
+    },
+    {
+      "case": "crash after chain success",
+      "status": "COVERED",
+      "where": "test_p03_recovery.py + composed pass 4",
+      "note": "a CONFIRMED operation never submits through resume(); the composed run proves it on the fork"
+    },
+    {
+      "case": "crash around native result delivery",
+      "status": "COVERED",
+      "where": "test_p03_native_checkpoint.py",
+      "note": "a rolled-back apply leaves the machine dirty and needs_execution() refuses; C1 torn-ack record blocks"
+    },
+    {
+      "case": "beyond-cache retry",
+      "status": "COVERED",
+      "where": "test_p03_recovery.py",
+      "note": "the exact idempotency-window boundary counts as expired"
+    },
+    {
+      "case": "replacement transaction",
+      "status": "COVERED",
+      "where": "journal schema + test_p03_recovery.py",
+      "note": "attempts carry replaces_attempt_id so a replacement never looks like a fresh business operation"
+    },
+    {
+      "case": "receipt unavailable",
+      "status": "COVERED",
+      "where": "test_p03_submit.py",
+      "note": "without a chain reader there is no verdict at all"
+    },
+    {
+      "case": "finality / reorg disagreement",
+      "status": "PARTIAL",
+      "where": "test_p03_submit.py + sources.py",
+      "note": "an unfinalized reading is not a verdict, and finality is established rather than asserted (R4). A real reorg is NOT simulated -- an anvil fork has no finality to disagree about, and this is labelled rather than claimed"
+    },
+    {
+      "case": "fence ordering",
+      "status": "COVERED",
+      "where": "test_handover_machine.py",
+      "note": "an adapter stop is not a fence; the controller must stay PAUSED throughout preparation"
+    },
+    {
+      "case": "stale activation snapshot",
+      "status": "COVERED",
+      "where": "test_handover_machine.py + HeldAuthority.t.sol",
+      "note": "STALE_CANDIDATE off chain; the contract reverts StaleActivation on chain"
+    },
+    {
+      "case": "unavailable / incomplete history",
+      "status": "COVERED",
+      "where": "test_p03_bootstrap_collector.py",
+      "note": "garbled logs, truncated module pages, malformed allowances and an unusable fork base all block"
+    },
+    {
+      "case": "unresolved external grant",
+      "status": "COVERED",
+      "where": "test_handover_machine.py + collector",
+      "note": "an external Morpho delegate blocks the handover and is NOT revoked automatically"
+    },
+    {
+      "case": "failed revocation",
+      "status": "NOT COVERED",
+      "where": null,
+      "note": "GAP. Held never revokes -- an external delegate is surfaced for the owner to decide on -- so there is no revocation path to fail. If a future version revokes, this case must be added"
+    },
+    {
+      "case": "missing Runner B input",
+      "status": "COVERED",
+      "where": "test_handover_machine.py",
+      "note": "R7: missing checkpoints, settled history, a placeholder digest or a wrong active state each set usable=false"
+    },
+    {
+      "case": "client vs chain disagreement",
+      "status": "COVERED",
+      "where": "test_p03_submit.py",
+      "note": "C4: a caller-supplied hash that disagrees with the journal is refused; the journal's binding is authoritative"
+    },
+    {
+      "case": "malformed authority observations",
+      "status": "COVERED",
+      "where": "test_p03_bootstrap_collector.py",
+      "note": "43 decision tests; typed parsing, decoded events, scoped inventories"
+    },
+    {
+      "case": "privacy / access / redaction",
+      "status": "COVERED",
+      "where": "test_p05_console.py + test_p03_keeperhub.py",
+      "note": "the credential is a reference and never appears in a repr or log line; console authentication and redaction"
+    }
+  ],
+  "native_comparison": {
+    "status": "NOT MEASURED",
+    "why": "The P00 baseline measured nine declared scenarios for the EXECUTION workflow, with competent-native controls for I2 and I6. The comparison P06 asks for is over the HANDOVER workflow, and it has not been run.",
+    "what_would_be_required": "A competent native operator performing the same runner replacement with Safe batching, Zodiac Roles, Morpho's own authorization history and Almanak recovery -- counting ceremonies, signatures, transactions, manual steps, correlated state stores and recovery effort, against the same scenarios.",
+    "claims_affected": "CLAIM-LEDGER C1 and C2 remain NOT YET ESTABLISHED. No advantage over competent native tooling is claimed anywhere.",
+    "honest_position": "The conclusion is permitted to be a tie or a tradeoff. Manufacturing a win would be the exact failure this project has been correcting for."
+  },
+  "not_an_audit": "Finite adversarial testing is not an audit and is not presented as one.",
+  "next": "Measure the native handover comparison, or leave C1/C2 unclaimed. Then Review 2."
+}
