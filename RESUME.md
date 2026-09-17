@@ -1,28 +1,179 @@
 # Held V4 — resume here
 
-Handoff 2026-09-16 (post competent-native correction pass). Claude is sole implementation writer. **Independent review is
+Handoff **2026-09-17**. Claude is sole implementation writer. **Independent review is
 pending for everything in this tree — nothing here is accepted.**
 
-Read in this order: `evidence/continuous-run.md` (state + resume command) →
-`docs/decisions/advantage-review.md` (the V4 §9 decision that gates P01) →
-`evidence/P00/report.md` (full history) → `docs/decisions/route-evidence.json` (route layers).
+> **Read this box before anything else.** Two earlier "Next:" lines in this file and in
+> `CHECKPOINT.md` were stale and pointed at already-finished phases. They are corrected
+> below. Do not resume from a phase heading; resume from **Next task**, below.
 
-## State
+Read in this order: this file's **Status** and **Next task** → `evidence/P03/acceptance.json`
+(authoritative P03 record) → `evidence/continuous-run.md` → `docs/decisions/advantage-review.md`
+(the V4 §9 decision that gates P01) → `evidence/P00/report.md` (full history) →
+`docs/decisions/route-evidence.json` (route layers).
 
-**P00 complete** — `HELD_PRICE_MODE=testing-only make check-phase-00` → **PASS**
-(gate-tests 21/21, manifests, probe, **native-workflow**, baseline). Six gates green,
-including required work 6: real in-process SDK reconfiguration + recovery.
+## Who executed this, and on what evidence
 
-**P01 implemented** — `make check-phase-01` → **31/31**. See `evidence/P01/report.md`.
+**Claude Code is the sole executor.** The implementation session ran **2026-09-15 19:07 →
+2026-09-16 11:31 UTC** and every assistant entry in it records model `claude-opus-5`. That
+attribution comes from the **session transcript's own runtime metadata**, not from the
+`Co-Authored-By` trailer on the commits — a commit label is not evidence of which model
+served a session. No other agent contributed: `~/.glm` holds configuration only, with no
+session history and no reference to this tree, and the Codex sessions that touch this
+worktree all predate the work described here.
 
-The nine declared cases ran on the pinned Base-mainnet fork, plus the **competent-native
-controls** for I2 and I6 required by V4 §9 / A1. Each case separates `experiment_result` from
-`workflow_outcome`: **9 experiments PASS**, but workflow outcomes are 6 ACHIEVED, 1
-ACHIEVED-AFTER-RECOVERY, **2 NOT ACHIEVED** (I2, I6 naive — both closed by the competent
-controls) and 1 PARTIAL (I9, L10).
+## Status at 2026-09-17
 
-**Next: P02** — typed controller, real Roles enforcement, atomic approval/action/cleanup on
-the pinned fork. Read `docs/decisions/advantage-review.md` rev 2 first: the I6 advantage claim
+**Implementation checkpoint: `67eed7193f5fe9472d8c2f1876dfb10c7e400f9a`** on `main`, pushed.
+Working tree clean; nothing uncommitted, nothing unpushed, no stashes.
+
+| Phase | Status |
+|---|---|
+| **P00** | Local gates reported passing. Independent acceptance pending. |
+| **P01** | Local gates reported passing (31 tests). Independent acceptance pending. |
+| **P02** | Local gates reported passing (50 tests, three stages). Independent acceptance pending. |
+| **P03** | **PARTIAL.** Local corrections outstanding **and** L10 outstanding — see below. |
+| **P04** | **PARTIAL PREPARATION** — fork contract tests only; the runtime inventory/handover service does not exist. |
+| **P05** | **PARTIAL PREPARATION** — interface prototype, not connected to real service state. |
+
+P04 and P05 are *preparation*, not completed dependent phases. Do not read their commits as
+phase completion.
+
+### Reported test counts — not independently rerun
+
+`evidence/P03/acceptance.json` records **130 local** and **16 composed**. Those are the
+executor's own recorded results. The 2026-09-17 status pass **did not rerun them**, and
+`CHECKPOINT.md`'s older figure of 89 is superseded. Self-testing is not acceptance.
+
+## Review history — two distinct reviews, do not conflate
+
+1. **Review of `1b07557`** — found replaceable native bindings, wrong-machine acceptance,
+   uncommitted-state verification and false bootstrap verdicts.
+2. **Commit `67eed71`** — implemented that review. Those specific fixes are **done**; the
+   subsequent review credited them. **Do not redo them.**
+3. **Review of `67eed71` itself** — examined the updated code and identified *remaining*
+   native-recovery and installation/checklist gaps, catalogued as **N1–N3** and **B1–B4**.
+
+**Item 3 arrived on 2026-09-17 and is now stored in this repository**: the review text is
+`docs/plan/REVIEW-67eed71.md`, and its packet — digests, the reviewer's two runnable probes
+and the reviewer's own recorded results — is `docs/plan/review-67eed71/`, with provenance in
+`docs/plan/review-67eed71/PROVENANCE.md`. It had been sitting outside this tree, which is the
+whole reason the handover drifted. **It is not Claude's own work; it is the external
+reviewer's.**
+
+The packet carries the two source files it executed, with Git blob hashes. Both match this
+repository at `67eed71` exactly and are byte-identical to the working tree, so the findings
+are against current code, not a stale snapshot.
+
+**Both probes were rerun in this tree on 2026-09-17. Every finding reproduced; every
+confirmed-fixed control still passed.** Details and the case-by-case table are in
+`PROVENANCE.md`. Note the reviewer's own limit: these probes use a synthetic journal and
+machine and scripted `cast` responses, run no SDK/Forge/fork/RPC, and **their exit status is
+not a phase gate**. Closing the findings needs the real entry points and live fork readbacks.
+
+### Open work — the review's own catalogue
+
+**N — finish the native recovery contract**
+
+- **N1.** `NativeStateMachineConsumer.needs_execution()` calls `self.machine.step()` directly,
+  with neither `require_authoritative()` nor any lifecycle distinction for an object mutated
+  by a failed apply. Reproduced: after a valid apply whose SQL transaction rolls back there is
+  no durable snapshot and `_authoritative` is false, yet `needs_execution()` still returns a
+  decision. **Do not** simply demand a committed COMPLETED snapshot before every initial call —
+  a clean PREPARING/VALIDATING machine must stay usable under its bound pre-dispatch
+  lifecycle. Distinguish clean initial work from dirty post-apply state, enforce it
+  unavoidably at the entry point the running adapter uses, and after a persistence failure
+  discard/restore from durable state rather than letting a caller reuse the mutated machine.
+- **N2.** `restore()` checks only that a terminal snapshot has *some* acknowledgement and
+  *some* binding. Reproduced: operation O is CONFIRMED and bound to A while a committed
+  snapshot holds B plus a COMPLETED ack — `restore()` reports `intent_id=A`, `complete=True`,
+  `inconsistent=[]`, no work required. Also reproduced: with a binding but no durable
+  operation row, `restore(..., build_machine=...)` builds a machine and returns work-needed —
+  lost local history must not become permission for fresh work. Validate operation, bound
+  decision identity/type, snapshot identity, actual ack/result identity and any permitted
+  terminal/tombstone case coherently. Do not smooth an inconsistent record into a completed
+  marker.
+- **N3.** In `tests/integration/test_p03_composed.py` a new native machine is still created in
+  the later test named "the producing native decision is BOUND…", after request construction
+  and reconciliation. A requirement in a docstring does not change execution order. The
+  original producer must create or reopen **one stable decision before its work is
+  admitted/claimed**, carried through the same operation and durable journal to delivery, with
+  a fresh execution context for restart. Preserve the economic bytes and the EIP-712 scope
+  checks.
+
+**B — finish the initial-activation rehearsal**
+
+- **B1.** `fixtures/scripts/03d_deploy_paused_controller.sh` constructs the controller then
+  sends `enableModule(controller)` straight to the Safe. It assigns **neither Zodiac Role**,
+  configures **no** restoration/normal condition trees, sets **none** of the five native
+  budgets and does not retire the legacy native role member. The already-tested
+  `HeldForkHarness.setUp()` does all of that. Enabling a contract as a Safe module is not
+  membership in the intended restricted Roles. The review does **not** demonstrate an
+  arbitrary-call bypass — the controller's entry points are typed — but it does establish that
+  this is not the controller-only Roles route and that the checklist never verified that
+  route. Reuse/export the tested installation into a local pre-activation path, keep the
+  controller paused, record declared candidate terms separately from zero/default policy, copy
+  no native historical consumption into Held, and leave the P00 native baseline untouched.
+- **B2.** The collector reads only the environment `ALLOW_KEY`. It does not read the
+  controller's role/allowance keys, discover or verify both Roles' members and conditions,
+  inspect all five native remaining budgets, or compare the intended market ID and lineage.
+  Five zeroed controller counters are not five native allowance checks. The generated
+  seven-section COMPLETE artifact still shows only `held-supply-cap` with 20,000 remaining
+  from old native history while Held's counters are zero, and its identities section records
+  Safe/Roles owners rather than the selected runner/executor identities. Build a
+  clause-to-evidence table over **all** V4 §6 / P03 item 6 obligations at once. Missing
+  required configuration is INCOMPLETE, never inferred. A field appearing in a report is not
+  proof it is checked. This does not mean building the full P04 service.
+- **B3.** The unchanged collector returned `PERMITTED BY THIS CHECKLIST` for four inputs:
+  an unreviewed nonzero Safe fallback handler; a readable unsupported Safe version
+  (`0.0.0-unsupported`); a successful `cast` returning `not-a-valid-log-response`; and an
+  allowance tuple whose balance is `not-a-number`. Validate typed decoded values against
+  supported implementations, not merely non-`None` output. Preserve legitimate empty history
+  while distinguishing it from malformed, incomplete or truncated log data.
+- **B4.** The collector requests all Morpho logs and regex-extracts the last 20 bytes of every
+  32-byte word; the declared `SET_AUTH_TOPIC` is unused. The committed artifact accordingly
+  contains truncated market IDs and unrelated hashes as "candidates". Switch to the pinned
+  event ABI/topic, structured logs, a real Safe authorizer check, creation-to-observation
+  coverage and per-candidate mapping readback at the same block. Keep provenance per
+  candidate, separate history success from completeness from compatible live grants, and add
+  genuine grant/revoke and unrelated-event controls.
+
+**Consequence for the handover: "L10 is the only blocker" and "P03-local is finished" are
+both wrong.** N1–N3 and B1–B4 are local corrections open *in addition to* L10, which is a
+separate external-access dependency.
+
+## Next task
+
+Execute **N1–N3** and **B1–B4** above, in the review's stated order: close N with the actual
+production entry points, journal and pinned native consumer; then correct the paused
+deployment wiring and complete B with original-checklist coverage, live fork readbacks, typed
+history tests and positive controls. Use the packet's probes to reproduce and localize, never
+as a substitute for integration evidence. Preserve the fixes the review explicitly confirms —
+9 native and 8 collector controls — and do not redo them. Keep positive controls and evidence
+labels.
+
+Not authorized by that review: full P04 early, reopening P00's native comparison, public
+deployment, funding, broadcast, publication, billing or routing-hook changes, blanket
+credential use, or a deadline-driven product cut. Request A remains a single separately
+owner-authorized read-only credential check, which is **not** L10 satisfaction.
+
+Do not restart P00/P01, redesign the product, or rewrite the locked V4/A1 plan. Do not mark a
+finding resolved because a gate passes.
+
+## History — superseded, kept for the record
+
+The previous handoff's "Next: P02" line was written on 2026-09-16 before P02 and the P03
+local work landed, and is **superseded**. Its substantive observations remain valid and are
+retained here:
+
+P00's six gates were green including required work 6 (real in-process SDK reconfiguration +
+recovery). P01's nine declared cases ran on the pinned Base-mainnet fork, plus the
+**competent-native controls** for I2 and I6 required by V4 §9 / A1. Each case separates
+`experiment_result` from `workflow_outcome`: **9 experiments PASS**, but workflow outcomes are
+6 ACHIEVED, 1 ACHIEVED-AFTER-RECOVERY, **2 NOT ACHIEVED** (I2, I6 naive — both closed by the
+competent controls) and 1 PARTIAL (I9, L10).
+
+Read `docs/decisions/advantage-review.md` rev 2 before controller work: the I6 advantage claim
 is **withdrawn**, and no ceremony or signature saving is claimed anywhere. The surviving
 hypothesis is the activation-time consistency guard, specified in
 `docs/contracts/controller-interface.md` and still **unproven**.

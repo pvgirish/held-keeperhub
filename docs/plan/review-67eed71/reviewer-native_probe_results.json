@@ -1,0 +1,101 @@
+{
+  "commit": "67eed7193f5fe9472d8c2f1876dfb10c7e400f9a",
+  "source_git_blob": "6b3299a0de956e076b59183c9a570105a2a34310",
+  "method": "Exact complete adapter source, Git-blob verified. SQLiteHarness and Machine are synthetic dependencies; actual sqlite transactions and close/reopen, no real Held Journal or SDK. No network/signing/transactions.",
+  "case_count": 12,
+  "cases": [
+    {
+      "case": "identical binding reopens",
+      "fixed_control": true,
+      "stored": {
+        "intent_id": "decision-A",
+        "intent_type": "SUPPLY"
+      }
+    },
+    {
+      "case": "changed decision/type rejected",
+      "fixed_control": true,
+      "refused": true
+    },
+    {
+      "case": "wrong-machine application blocked before mutation",
+      "fixed_control": true,
+      "refused": true,
+      "machine_steps": 0
+    },
+    {
+      "case": "CONFIRMED without native snapshot",
+      "fixed_control": true,
+      "machines_built": 0,
+      "refused": true,
+      "error": "operation 0x1111111111111111111111111111111111111111111111111111111111111111 is CONFIRMED on chain but its native acknowledgement is missing. Recover and DELIVER the existing result; this is not a request for fresh economic work."
+    },
+    {
+      "case": "UNKNOWN without native snapshot",
+      "fixed_control": true,
+      "machines_built": 0,
+      "refused": true,
+      "error": "operation 0x1111111111111111111111111111111111111111111111111111111111111111 is UNKNOWN: its outcome is not settled, so no fresh work decision may be derived. Reconcile against the chain first."
+    },
+    {
+      "case": "DISPATCHED without native snapshot",
+      "fixed_control": true,
+      "machines_built": 0,
+      "refused": true,
+      "error": "operation 0x1111111111111111111111111111111111111111111111111111111111111111 is DISPATCHED: its outcome is not settled, so no fresh work decision may be derived. Reconcile against the chain first."
+    },
+    {
+      "case": "matching committed checkpoint reopens",
+      "fixed_control": true,
+      "verified": true,
+      "complete": true,
+      "machines_built": 0,
+      "needs_execution": false,
+      "refused": false
+    },
+    {
+      "case": "separate-connection verification cannot see uncommitted snapshot",
+      "fixed_control": true,
+      "verified_before_commit": false,
+      "snapshot_after_rollback": null
+    },
+    {
+      "case": "public needs_execution still consults dirty uncommitted machine",
+      "remaining_finding": true,
+      "authoritative": false,
+      "native_state": "COMPLETED",
+      "needs_execution": false,
+      "refused": false,
+      "expected": "refuse reuse pending restoration"
+    },
+    {
+      "case": "restore accepts snapshot B under binding A",
+      "remaining_finding": true,
+      "manufactured_inconsistent_checkpoint": true,
+      "bound_intent": "decision-A",
+      "snapshot_intent": "decision-B",
+      "complete": true,
+      "inconsistent": [],
+      "needs_execution": false,
+      "refused": false,
+      "expected": "report mismatch and block"
+    },
+    {
+      "case": "restore builds work with no durable operation",
+      "remaining_finding": true,
+      "manufactured_missing_history": true,
+      "operation_state": null,
+      "machines_built": 1,
+      "needs_execution": true,
+      "refused": false,
+      "expected": "fail closed on missing operation/recovery evidence"
+    },
+    {
+      "case": "terminal snapshot without acknowledgement blocked",
+      "fixed_control": true,
+      "complete": false,
+      "refused": true,
+      "error": "operation 0x1111111111111111111111111111111111111111111111111111111111111111 has an inconsistent durable record (a terminal native snapshot exists with no acknowledgement). Resolve it before deciding whether work is needed."
+    }
+  ]
+}
