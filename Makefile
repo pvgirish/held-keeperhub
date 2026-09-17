@@ -5,7 +5,7 @@ export PY
 export SDK
 
 .PHONY: check-plan-digests check-phase-00 check-phase-01 check-phase-02 check-phase-03-local check-phase-03 check-phase-03-composed check-bootstrap-rehearsal check-phase-04 check-phase-05 check-manifests check-probe \
-        check-baseline check-native-workflow gate-tests hero-demo
+        check-baseline check-native-workflow gate-tests hero-demo clean-install submission-gate
 
 check-phase-00:
 	@rc=0; \
@@ -65,6 +65,18 @@ check-phase-04:
 ## REAL LOCAL FORK evidence. Not public-chain evidence.
 hero-demo:
 	@./script/run_hero_demo.sh
+
+## P07: can somebody else pick this up? Clones into an isolated directory and checks
+## submodules, portability, committed secrets, documented environment and the gates that
+## need no fork. External prerequisites (Foundry, CPython 3.12, the pinned SDK) are
+## documented, not verified here.
+clean-install:
+	@$(PY) script/clean_install_check.py
+
+## P08: the deterministic submission gate. Mandatory items are not waived by strong
+## engineering, and readiness is not authorization.
+submission-gate:
+	@$(PY) script/submission_gate.py
 
 ## P05: the private operator console -- the four operator jobs, authentication and
 ## privacy, understandable owner approval, and the recovery export.

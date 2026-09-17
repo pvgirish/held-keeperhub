@@ -108,7 +108,8 @@ as hosted evidence.
 
 ## Run it locally
 
-Needs Python 3.12, Foundry, and the pinned Almanak SDK. See
+Needs Python 3.12, Foundry, and the pinned Almanak SDK. Every environment variable is
+documented in [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md); setup is in
 [`docs/decisions/environment-setup.md`](docs/decisions/environment-setup.md).
 
 ```bash
