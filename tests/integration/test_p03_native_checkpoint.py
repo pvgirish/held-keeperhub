@@ -416,6 +416,95 @@ def _():
 
 
 # --------------------------------------------------------------------------------------
+# SECOND PASS: gaps an independent review of the N1/N2 fixes found in them.
+# --------------------------------------------------------------------------------------
+
+@test("C1: an acknowledgement with NO snapshot is a torn record, not a work order")
+def _():
+    # The mirror of "terminal snapshot with no acknowledgement", which was guarded while
+    # this was not. apply() writes both in one transaction, so an ack alone cannot happen
+    # cleanly -- and unflagged it read as permission to do the work again.
+    j = fresh("c1-ack-without-snapshot")
+    j.set_state(OID, "FAILED")
+    bind_native_decision(j, OID, "decision-A", "SUPPLY")
+    with j.transaction() as conn:
+        conn.execute("INSERT OR REPLACE INTO meta VALUES(?,?)",
+                     (NATIVE_ACK_KEY.format(operation_id=OID), "COMPLETED"))
+    built = []
+
+    decision = restore(j, OID, build_machine=lambda: built.append(1) or Machine())
+    assert decision.inconsistent, "an acknowledgement with no snapshot was not reported"
+    assert not built, "a machine was built for an operation the native side already acked"
+    refuses(decision.needs_execution, contains="torn")
+    j.close()
+
+
+@test("C2: an UNSTAMPED snapshot blocks at any state, not only a terminal one")
+def _():
+    # Gating the stamp requirement on TERMINAL let a mid-lifecycle snapshot that belongs
+    # to nobody sit under an operation that then asked to work again.
+    j = fresh("c2-unstamped-midlifecycle")
+    j.set_state(OID, "AUTHORIZED")
+    bind_native_decision(j, OID, "decision-A", "SUPPLY")
+    write_snapshot(j, state="SADFLOW_SUPPLY", ack=True, stamp=False,
+                   ack_state="SADFLOW_SUPPLY")
+    built = []
+
+    decision = restore(j, OID, build_machine=lambda: built.append(1) or Machine())
+    assert decision.inconsistent, "an unattributable snapshot was accepted"
+    assert not built, "a machine was built under an unattributable snapshot"
+    refuses(decision.needs_execution, contains="bound-decision stamp")
+    j.close()
+
+
+@test("B1: a step that MOVES the machine invalidates a prior verification")
+def _():
+    # step() is an in-memory advance like any other. Previously needs_execution() could
+    # walk the object off the state its snapshot described while `authoritative` stayed
+    # True, so require_authoritative() kept passing for a state never committed.
+    j = fresh("b1-drift")
+    j.set_state(OID, "CONFIRMED")
+    bind_native_decision(j, OID, "decision-A", "SUPPLY")
+    machine = Machine()
+    consumer = applied(j, machine)
+    assert consumer.verify_committed(j, OID) is True
+    assert consumer.authoritative is True
+
+    # Make the NEXT step move the machine off the verified COMPLETED state: this model
+    # recomputes its state from the receipt, so a failing one drives COMPLETED ->
+    # SADFLOW_SUPPLY. The drift has to happen inside step(), not be written around it.
+    machine.receipt = SimpleNamespace(success=False)
+    assert consumer.needs_execution() is True
+    assert consumer.state == "SADFLOW_SUPPLY", consumer.state
+    assert consumer.authoritative is False, (
+        "the machine advanced off its committed snapshot but stayed authoritative")
+    assert consumer.dirty is True
+    refuses(consumer.require_authoritative, contains="cannot be moved back")
+    j.close()
+
+
+@test("B1 CONTROL: a poll that does NOT move the machine changes nothing")
+def _():
+    # The counterpart. A clean pre-dispatch machine must stay pollable, so a step that
+    # leaves the state alone must not mark it dirty.
+    consumer = NativeStateMachineConsumer(Machine(state="VALIDATING_SUPPLY"))
+    for _i in range(3):
+        assert consumer.needs_execution() is True
+    assert consumer.dirty is False, "repeated polling of a clean machine made it dirty"
+
+    j = fresh("b1-control-verified")
+    j.set_state(OID, "CONFIRMED")
+    bind_native_decision(j, OID, "decision-A", "SUPPLY")
+    committed = applied(j, Machine())
+    assert committed.verify_committed(j, OID) is True
+    # At COMPLETED the pinned machine does not move, so authority survives the poll.
+    assert committed.needs_execution() is False
+    assert committed.authoritative is True, (
+        "an inert poll revoked authority that was legitimately established")
+    j.close()
+
+
+# --------------------------------------------------------------------------------------
 # POSITIVE: the controls above must not be blocking everything.
 # --------------------------------------------------------------------------------------
 

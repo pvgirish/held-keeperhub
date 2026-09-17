@@ -5,7 +5,7 @@
     "compatible": true,
     "verdict": "COMPLETE",
     "block_number": 51353229,
-    "block_hash": "0x3c751c08539f6ff76244e9d084a1c4a3955eadc9c51198cb05950d705d2d03fe",
+    "block_hash": "0x5e5bc25ac18f884bcb1db2db7836146d12544405a6b2b5f24d061016767876e5",
     "chain_id": 8453,
     "expected_chain_id": 8453,
     "all_state_reads_pinned_to_block": true,
@@ -69,6 +69,10 @@
       "0x0620c56E23743ab7927Fc9A8d97ae777343C33db",
       "0x3875311CC0D4017A033893a9653A0725378acA1C"
     ],
+    "owners_wellformed": true,
+    "modules_wellformed": true,
+    "module_page_cursor": "0x0000000000000000000000000000000000000001",
+    "module_list_exhausted": true,
     "roles_module_enabled": true,
     "unrecognised_modules": [],
     "guard": "0x0000000000000000000000000000000000000000",
@@ -78,7 +82,7 @@
     "supported_fallback_handlers": [
       "0x0000000000000000000000000000000000000000"
     ],
-    "note": "An UNREADABLE guard or fallback is INCOMPLETE, not 'absent'. A readable one is not thereby approved: an unreviewed fallback handler extends the Safe's call surface and an unsupported implementation version is outside the profile this checklist was written against. Both block (V4 \u00a76)."
+    "note": "The module page CURSOR must come back as the sentinel, or the enumeration is truncated and an unrecognised module could be sitting on a page nobody read. An address list with a member that does not parse is UNREADABLE, not a shorter list. An UNREADABLE guard or fallback is INCOMPLETE, not 'absent'. A readable one is not thereby approved: an unreviewed fallback handler extends the Safe's call surface and an unsupported implementation version is outside the profile this checklist was written against. Both block (V4 \u00a76)."
   },
   "roles": {
     "read": true,
@@ -102,7 +106,7 @@
         "maxRefill": 50000000000,
         "period": 0,
         "balance": 50000000000,
-        "timestamp": 1789495787,
+        "timestamp": 1789495786,
         "non_refilling": true,
         "declared_limit": 50000000000,
         "matches_declared": true
@@ -114,7 +118,7 @@
         "maxRefill": 50000000000,
         "period": 0,
         "balance": 50000000000,
-        "timestamp": 1789495787,
+        "timestamp": 1789495786,
         "non_refilling": true,
         "declared_limit": 50000000000,
         "matches_declared": true
@@ -126,7 +130,7 @@
         "maxRefill": 10000000000,
         "period": 0,
         "balance": 10000000000,
-        "timestamp": 1789495787,
+        "timestamp": 1789495786,
         "non_refilling": true,
         "declared_limit": 10000000000,
         "matches_declared": true
@@ -138,7 +142,7 @@
         "maxRefill": 10,
         "period": 0,
         "balance": 10,
-        "timestamp": 1789495787,
+        "timestamp": 1789495786,
         "non_refilling": true,
         "declared_limit": 10,
         "matches_declared": true
@@ -150,7 +154,7 @@
         "maxRefill": 5,
         "period": 0,
         "balance": 5,
-        "timestamp": 1789495787,
+        "timestamp": 1789495786,
         "non_refilling": true,
         "declared_limit": 5,
         "matches_declared": true
@@ -217,7 +221,9 @@
       "from_block": 51353212,
       "to_block": 51353229,
       "readable": true,
-      "wellformed": true
+      "wellformed": true,
+      "base_from_env": null,
+      "base_usable": true
     },
     "topic": "0xd5e969f01efe921d3f766bdebad25f0a05e3f237311f56482bf132d0326309c0",
     "decoded_events": [],
@@ -288,6 +294,8 @@
     },
     "market_matches_declared": true,
     "lineage_matches_declared": true,
+    "is_the_declared_controller": true,
+    "owner_is_safe": true,
     "controller_keys": {
       "normalRoleKey": "0x68656c642d6f70657261746f722d763100000000000000000000000000000000",
       "restorationRoleKey": "0xad5e119df756c7a61cf7391a44f6005729ca211e9d19d7c2d5e4b143cab049c9",
@@ -402,6 +410,12 @@
       "evidence": "active=False, epoch=0, consumption={'usedSupply': 0, 'usedNormalWithdraw': 0, 'usedRestoration': 0, 'normalCount': 0, 'restorationCount': 0}"
     },
     {
+      "obligation": "The controller inspected IS the declared one, owned by this Safe",
+      "section": "held_controller",
+      "satisfied": true,
+      "evidence": "declared 0x0620c56E23743ab7927Fc9A8d97ae777343C33db, inspected 0x0620c56E23743ab7927Fc9A8d97ae777343C33db, owner 0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180"
+    },
+    {
       "obligation": "Controller scope, market, lineage and all seven budget keys match the declaration",
       "section": "held_controller",
       "satisfied": true,
@@ -417,8 +431,8 @@
   "verdict": {
     "all_sections_complete": true,
     "incomplete_sections": [],
-    "obligations_total": 13,
-    "obligations_satisfied": 13,
+    "obligations_total": 14,
+    "obligations_satisfied": 14,
     "obligations_unsatisfied": [],
     "activation_would_be": "PERMITTED BY THIS CHECKLIST",
     "important": "'PERMITTED BY THIS CHECKLIST' means the declared sections read clean at this observation point on a FORK, within the declared history range. It is not authorization, not finality, and not evidence about the public installation."

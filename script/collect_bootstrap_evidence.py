@@ -200,6 +200,32 @@ def parse_b32(raw: str | None) -> str | None:
     return head.lower() if _B32.match(head) else None
 
 
+def addr_list(raw: str | None) -> tuple[list[str], bool]:
+    """Parse an address[] STRICTLY. Returns (addresses, wellformed).
+
+    Filtering out what does not parse was a fail-open hole: a fourth owner that came back
+    garbled simply vanished, and the resulting three-owner list then satisfied a declared
+    three-owner profile. A list with an unparseable member is not a shorter list, it is an
+    unreadable one.
+    """
+    if raw is None:
+        return [], False
+    body = raw.strip()
+    if not (body.startswith("[") and body.endswith("]")):
+        return [], False
+    inner = body[1:-1].strip()
+    if not inner:
+        return [], True                      # genuinely empty is a real answer
+    out, ok = [], True
+    for tok in inner.replace("\n", " ").split(","):
+        tok = tok.strip()
+        if _ADDR.match(tok):
+            out.append(tok)
+        else:
+            ok = False
+    return out, ok
+
+
 def addr_from_word(word: str | None) -> str | None:
     if not word or not _B32.match(word.strip().split()[0] if word.strip() else ""):
         return None
@@ -292,7 +318,7 @@ section(
     block_hash=block_hash,
     chain_id=uint(chain_id),
     expected_chain_id=EXPECTED_CHAIN_ID,
-    all_state_reads_pinned_to_block=True,
+    all_state_reads_pinned_to_block=BLOCK is not None,
     finality="NONE — anvil fork. This is the observation point, not finalized evidence.",
     scope="FORK REHEARSAL. Not the public installation, not the P04 automated service.",
 )
@@ -354,10 +380,14 @@ modules_raw = cast("call", SAFE, "getModulesPaginated(address,uint256)(address[]
 guard_word = cast("storage", SAFE, GUARD_SLOT)
 fallback_word = cast("storage", SAFE, FALLBACK_SLOT)
 
-owners = [o.strip() for o in (owners_raw or "").strip("[]").replace("\n", "").split(",")
-          if _ADDR.match(o.strip())]
-modules = [m.strip() for m in (modules_raw or "").split("\n")[0].strip("[]").split(",")
-           if _ADDR.match(m.strip())]
+owners, owners_wellformed = addr_list(owners_raw)
+# getModulesPaginated returns (address[] page, address next). The CURSOR was discarded, so
+# "that is all the modules" and "there are more beyond this page" were indistinguishable
+# and an unreviewed 21st module was invisible to the unrecognised-module check.
+module_lines = (modules_raw or "").split("\n")
+modules, modules_wellformed = addr_list(module_lines[0] if module_lines else None)
+module_cursor = parse_addr(module_lines[1]) if len(module_lines) > 1 else None
+modules_exhausted = same(module_cursor, SENTINEL)
 threshold = uint(threshold_raw)
 version = version_raw.strip().strip('"') if version_raw else None
 guard = addr_from_word(guard_word)
@@ -371,13 +401,14 @@ roles_enabled = any(same(m, ROLES) for m in modules)
 version_supported = version in SUPPORTED_SAFE_VERSIONS
 fallback_supported = fallback is not None and fallback.lower() in SUPPORTED_FALLBACK_HANDLERS
 
-safe_read = all(x is not None for x in
-                (owners_raw, threshold_raw, version_raw, modules_raw, guard_word, fallback_word))
+safe_read = (all(x is not None for x in
+                 (owners_raw, threshold_raw, version_raw, modules_raw, guard_word, fallback_word))
+             and owners_wellformed and modules_wellformed and module_cursor is not None)
 section(
     "safe",
     read=safe_read,
-    complete=bool(owners) and threshold is not None and guard is not None
-    and fallback is not None and version is not None,
+    complete=(bool(owners) and threshold is not None and guard is not None
+              and fallback is not None and version is not None and modules_exhausted),
     compatible=(
         not unrecognised_modules
         and roles_enabled
@@ -396,6 +427,10 @@ section(
     implementation_supported=version_supported,
     supported_versions=sorted(SUPPORTED_SAFE_VERSIONS),
     enabled_modules=modules,
+    owners_wellformed=owners_wellformed,
+    modules_wellformed=modules_wellformed,
+    module_page_cursor=module_cursor,
+    module_list_exhausted=modules_exhausted,
     roles_module_enabled=roles_enabled,
     unrecognised_modules=unrecognised_modules,
     guard=guard,
@@ -403,7 +438,10 @@ section(
     fallback_handler=fallback,
     fallback_supported=fallback_supported,
     supported_fallback_handlers=sorted(SUPPORTED_FALLBACK_HANDLERS),
-    note="An UNREADABLE guard or fallback is INCOMPLETE, not 'absent'. A readable one is "
+    note="The module page CURSOR must come back as the sentinel, or the enumeration is "
+         "truncated and an unrecognised module could be sitting on a page nobody read. An "
+         "address list with a member that does not parse is UNREADABLE, not a shorter list. "
+         "An UNREADABLE guard or fallback is INCOMPLETE, not 'absent'. A readable one is "
          "not thereby approved: an unreviewed fallback handler extends the Safe's call "
          "surface and an unsupported implementation version is outside the profile this "
          "checklist was written against. Both block (V4 §6).",
@@ -573,31 +611,53 @@ clause("Both Zodiac roles have the intended member, and the condition trees bind
 # range and regex-extracted the last 20 bytes of every 32-byte word, which yielded
 # truncated market ids and unrelated hashes as "candidates" -- broad over-collection is not
 # a validated interpretation of authorization history.
-FORK_BASE = uint(os.environ.get("HELD_FORK_BLOCK")) or 51353212
-history_from = FORK_BASE
+# A malformed or absent override must not collapse into a constant: `uint() or DEFAULT`
+# turned "unreadable" straight back into a benign value, and the bounded-history clause
+# would then be satisfied by a window nobody validated.
+_fork_env = os.environ.get("HELD_FORK_BLOCK")
+FORK_BASE = uint(_fork_env) if _fork_env is not None else 51353212
+fork_base_usable = FORK_BASE is not None and FORK_BASE > 0
+history_from = FORK_BASE if fork_base_usable else 0
 safe_topic = "0x" + "0" * 24 + SAFE[2:].lower()
 
 # Filter on the real event topic AND on the authorizer being this Safe (topic2).
 logs_raw = cast("logs", "--from-block", str(history_from), "--to-block", str(block or "latest"),
                 "--address", MORPHO, SET_AUTH_TOPIC, pin=False, allow_empty=True)
 
-history_read = logs_raw is not None
+history_read = logs_raw is not None and fork_base_usable
 history_wellformed = True
 history_events: list[dict[str, Any]] = []
 history_malformed: list[str] = []
 
+def topics_of(entry: str) -> list[str] | None:
+    """Extract ONLY the `topics: [ ... ]` words from one `cast logs` entry.
+
+    Scanning the whole entry for 32-byte words was wrong against real output. `cast logs`
+    serialises fields in the order address, blockHash, blockNumber, data, logIndex,
+    removed, topics, transactionHash, transactionIndex -- so the FIRST 32-byte word in an
+    entry is the block hash, and the `data` field contributes more before `topics` is
+    reached. Positional indexing over all of them read the block hash as the event
+    signature, which would classify every real entry as malformed.
+    """
+    m = re.search(r"topics:\s*\[(.*?)\]", entry, re.DOTALL)
+    if m is None:
+        return None
+    return re.findall(r"0x[0-9a-fA-F]{64}", m.group(1))
+
+
 if logs_raw:
-    # `cast logs` prints blocks of "key: value" lines per event. Parse structurally: an
-    # event we cannot decode is MALFORMED, not something to scrape words out of.
+    # `cast logs` prints one "- address: ..." block per event. Parse structurally: an
+    # entry we cannot decode is MALFORMED, not something to scrape words out of.
     for blob in re.split(r"\n(?=- address:|address:)", logs_raw):
         if not blob.strip():
             continue
-        topics = re.findall(r"0x[0-9a-fA-F]{64}", blob)
-        if len(topics) < 4 or topics[0].lower() != SET_AUTH_TOPIC:
+        topics = topics_of(blob)
+        # SetAuthorization has three indexed parameters, so exactly four topics.
+        if topics is None or len(topics) != 4 or topics[0].lower() != SET_AUTH_TOPIC:
             history_malformed.append(blob.strip()[:160])
             history_wellformed = False
             continue
-        _, _caller, authorizer, authorized = topics[0], topics[1], topics[2], topics[3]
+        _sig, _caller, authorizer, authorized = topics
         history_events.append({
             "authorizer": "0x" + authorizer[-40:],
             "authorized": "0x" + authorized[-40:],
@@ -641,7 +701,8 @@ section(
     complete=history_read and history_wellformed,
     compatible=not external,
     history_range={"from_block": history_from, "to_block": uint(block),
-                   "readable": history_read, "wellformed": history_wellformed},
+                   "readable": history_read, "wellformed": history_wellformed,
+                   "base_from_env": _fork_env, "base_usable": fork_base_usable},
     topic=SET_AUTH_TOPIC,
     decoded_events=history_events,
     events_for_this_safe=sum(1 for e in history_events if e["is_this_safe"]),
@@ -727,6 +788,15 @@ if CONTROLLER:
 
     market_ok = same(scope.get("marketId"), parse_b32(manifest.get("marketId")))
     lineage_ok = same(scope.get("lineage"), parse_b32(manifest.get("lineage")))
+    # The manifest's `controller` was required and then never used -- the one declared term
+    # not checked, in a file whose thesis is "against the DECLARED installation". The seven
+    # key immutables do not close this: five are keccak constants and two come from the
+    # environment, so they are identical across deployments and cannot tell two controllers
+    # apart.
+    is_declared_controller = same(CONTROLLER, parse_addr(manifest.get("controller")))
+    # ...and the controller's OWNER is the Safe's authority over it. It was read, made
+    # mandatory, and then left out of the comparison.
+    owner_ok = same(bound.get("owner"), SAFE)
 
     reads = [active, epoch, *bound.values(), *scope.values(), *ckeys.values(),
              *consumption.values()]
@@ -739,6 +809,8 @@ if CONTROLLER:
             and epoch == 0
             and same(bound["safe"], SAFE) and same(bound["roles"], ROLES)
             and same(bound["morpho"], MORPHO) and same(bound["token"], USDC)
+            and owner_ok
+            and is_declared_controller
             and market_ok and lineage_ok
             and not key_mismatches
             and zeroed
@@ -750,6 +822,8 @@ if CONTROLLER:
         scope=scope,
         market_matches_declared=market_ok,
         lineage_matches_declared=lineage_ok,
+        is_the_declared_controller=is_declared_controller,
+        owner_is_safe=owner_ok,
         controller_keys=ckeys,
         key_mismatches=key_mismatches,
         consumption=consumption,
@@ -764,6 +838,10 @@ if CONTROLLER:
     clause("The controller is paused at epoch 0 with zero consumption in all five dimensions",
            section_name="held_controller", satisfied=active is False and epoch == 0 and zeroed,
            evidence=f"active={active}, epoch={epoch}, consumption={consumption}")
+    clause("The controller inspected IS the declared one, owned by this Safe",
+           section_name="held_controller", satisfied=is_declared_controller and owner_ok,
+           evidence=f"declared {manifest.get('controller')}, inspected {CONTROLLER}, "
+                    f"owner {bound.get('owner')}")
     clause("Controller scope, market, lineage and all seven budget keys match the declaration",
            section_name="held_controller",
            satisfied=market_ok and lineage_ok and not key_mismatches,
@@ -779,6 +857,8 @@ else:
     )
     clause("The controller is paused at epoch 0 with zero consumption in all five dimensions",
            section_name="held_controller", satisfied=False, evidence="no controller supplied")
+    clause("The controller inspected IS the declared one, owned by this Safe",
+           section_name="held_controller", satisfied=False, evidence="no controller supplied")
     clause("Controller scope, market, lineage and all seven budget keys match the declaration",
            section_name="held_controller", satisfied=False, evidence="no controller supplied")
 
@@ -787,7 +867,8 @@ else:
 # calling it complete was the defect: owners are a different clause, already covered above.
 selected = {name: os.environ.get(f"HELD_{name.upper()}")
             for name in ("runner", "executor")}
-missing_identities = [k for k, v in selected.items() if not v]
+# An identity that is not even address-shaped has not been selected, it has been typo'd.
+missing_identities = [k for k, v in selected.items() if not v or not _ADDR.match(v)]
 section(
     "identities",
     read=safe_read,

@@ -28,7 +28,7 @@ reviewed by anyone but their author.
 | **P00** — route evidence + measured native baseline | Local gates reported passing. **Independent acceptance pending.** |
 | **P01** — types, identity, journal, result/ack | Local gates reported passing (31 tests). **Independent acceptance pending.** |
 | **P02** — typed controller + native Roles enforcement | Local gates reported passing (50 tests in three stages), including property/fuzz coverage and the exact Morpho rounding/share-effect contract. **Independent acceptance pending.** |
-| **P03** — native interception → signing → KeeperHub → reconciliation | **PARTIAL.** 163 local tests + 16 composed checks. The 67eed71 review's local findings **N1–N3 and B1–B4 are closed and regressed** (2026-09-17); the composed PUBLIC execution remains blocked on **L10**. Neither stubbed nor simulated. **Independent acceptance pending for everything, including the corrections.** |
+| **P03** — native interception → signing → KeeperHub → reconciliation | **PARTIAL.** 172 local tests + 16 composed checks. The 67eed71 review's local findings **N1–N3 and B1–B4 are closed and regressed** (2026-09-17); the composed PUBLIC execution remains blocked on **L10**. Neither stubbed nor simulated. **Independent acceptance pending for everything, including the corrections.** |
 | **P04** — authority inventory, owner fencing, change, handover | **PARTIAL PREPARATION** — fork contract tests only; the required runtime service does not exist. |
 | **P05** — the private operator console | **PARTIAL PREPARATION** — interface prototype, not connected to real service state. |
 
@@ -37,14 +37,18 @@ This is a checkpoint, not a claim of phase completion.
 **Corrected 2026-09-17.** An earlier version of this table said P03's local half was
 *finished* and that P04 was the next task. Both were wrong, in two separate ways:
 
-1. **The test count was stale** (89). It was **130** at `67eed71`, and is **163** now that
-   the review's regressions are in. All counts in this file were re-run on 2026-09-17.
+1. **The test count was stale** (89). It was **130** at `67eed71`, and is **172** now that
+   the review's regressions — and a second round found by reviewing those corrections — are
+   in. All counts in this file were re-run on 2026-09-17.
 2. **The local half was not finished.** The external review of this very commit
    (`docs/plan/REVIEW-67eed71.md`) found the native recovery contract still had unenforced
    boundaries and the bootstrap rehearsal never verified the controller-only Roles
    installation. Its probes were rerun here on 2026-09-17 and **every finding reproduced**
    before anything was changed. All seven are now closed with regressions that assert the
-   refusal; see `evidence/P03/acceptance.json` under `review_67eed71`.
+   refusal. A fresh-context review of those corrections then found twelve further
+   fail-open holes in them — most seriously a log decoder that could not read real `cast`
+   output at all — which are also fixed; see `evidence/P03/acceptance.json` under
+   `review_67eed71`, including `second_pass`.
 
 So **"L10 is the only blocker" was false while those were open.** With them closed, L10 is
 again the outstanding external dependency for the hosted half — but closing them is not
@@ -78,7 +82,7 @@ been called.
 | `HELD_PRICE_MODE=testing-only make check-phase-00` | PASS (6 gates) | `evidence/P00/`, `docs/baseline/native-measurements.json` |
 | `make check-phase-01` | PASS, 31 tests | `evidence/P01/report.md`, `tests/core/run_tests.py` |
 | `make check-phase-02` | PASS, 50 tests in three stages | `evidence/P02/report.md` |
-| `make check-phase-03-local` | PASS, **163** tests in eight files | `evidence/P03/acceptance.json` |
+| `make check-phase-03-local` | PASS, **172** tests in eight files | `evidence/P03/acceptance.json` |
 | `make check-phase-03-composed` | PASS, **16** checks (3 fork tests + 5 Python), local only | `evidence/P03/acceptance.json` |
 | `make check-phase-03` | **INCOMPLETE by design** — runs every local check, then exits non-zero because the hosted execution has not been performed | `evidence/P03/acceptance.json` |
 | `docs/plan/review-67eed71/test_native_checkpoint.py` | 12 cases — 9 fixed controls pass, **3 findings reproduced** | `docs/plan/review-67eed71/PROVENANCE.md` |
@@ -100,8 +104,8 @@ conflated.
 
 `check-phase-03-local` is 17 interception + 9 native-bundle (against the REAL pinned
 compiler) + 18 signing + 28 KeeperHub client + 18 submission binding/reconciliation + 20
-crash-restart recovery + 15 native decision/recovery + 38 bootstrap-collector decisions =
-**163**. The collector suite runs the real collector as a subprocess against a scripted
+crash-restart recovery + 19 native decision/recovery + 43 bootstrap-collector decisions =
+**172**. The collector suite runs the real collector as a subprocess against a scripted
 `cast` shim and includes positive controls; the native decision/recovery suite uses a
 synthetic journal and machine and is a control-flow test, not a substitute for the composed
 run.

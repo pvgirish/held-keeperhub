@@ -24,26 +24,26 @@ worktree all predate the work described here.
 
 ## Status at 2026-09-17
 
-**Implementation checkpoint: `67eed7193f5fe9472d8c2f1876dfb10c7e400f9a`** on `main`, pushed.
-Working tree clean; nothing uncommitted, nothing unpushed, no stashes.
+**Checkpoint `67eed71` was the state this handover found.** Since then the review of that
+commit has been executed; `main` is ahead. Working tree clean, nothing unpushed.
 
 | Phase | Status |
 |---|---|
 | **P00** | Local gates reported passing. Independent acceptance pending. |
 | **P01** | Local gates reported passing (31 tests). Independent acceptance pending. |
 | **P02** | Local gates reported passing (50 tests, three stages). Independent acceptance pending. |
-| **P03** | **PARTIAL.** Local corrections outstanding **and** L10 outstanding — see below. |
+| **P03** | **PARTIAL.** The 67eed71 review's local findings are closed and regressed; **L10 outstanding**. Nothing independently accepted. |
 | **P04** | **PARTIAL PREPARATION** — fork contract tests only; the runtime inventory/handover service does not exist. |
 | **P05** | **PARTIAL PREPARATION** — interface prototype, not connected to real service state. |
 
 P04 and P05 are *preparation*, not completed dependent phases. Do not read their commits as
 phase completion.
 
-### Reported test counts — not independently rerun
+### Test counts
 
-`evidence/P03/acceptance.json` records **130 local** and **16 composed**. Those are the
-executor's own recorded results. The 2026-09-17 status pass **did not rerun them**, and
-`CHECKPOINT.md`'s older figure of 89 is superseded. Self-testing is not acceptance.
+**172 local** and **16 composed**, all re-run on 2026-09-17 — see the gate block further
+down. At `67eed71` it was 130; `CHECKPOINT.md`'s older figure of 89 was already superseded
+then. Self-testing is not acceptance, whoever runs it.
 
 ## Review history — two distinct reviews, do not conflate
 
@@ -79,8 +79,11 @@ changed value.** The fixes the review explicitly confirms — 9 native and 8 col
 controls — were preserved, not redone; they are kept as an explicit `PRESERVED` group in
 `tests/integration/test_p03_native_checkpoint.py`.
 
-Commits: `1f912de` (N1–N3), `05197d0` (B1), `1639397` (B2–B4). Per-finding detail is in
-`evidence/P03/acceptance.json` under `review_67eed71`.
+Commits: `1f912de` (N1–N3), `05197d0` (B1), `1639397` (B2–B4), and a second-pass commit
+closing twelve fail-open holes found by reviewing those corrections in a fresh context —
+including a `SetAuthorization` decoder that could not read real `cast logs` output at all,
+so the B4 discovery path was inert against live data. Per-finding detail is in
+`evidence/P03/acceptance.json` under `review_67eed71` and `review_67eed71.second_pass`.
 
 **Closing these is not acceptance.** Claude authored and ran this work too. The catalogue
 is kept below in full because it says what was wrong and why, which is what a later
@@ -161,12 +164,12 @@ been independently reviewed.
 ## Gate state after the corrections
 
 ```
-make check-phase-03-local           163 tests   (was 130)
+make check-phase-03-local           172 tests   (was 130)
   interception 17 · native-bundle 9 · signing 18 · KeeperHub 28 · submission 18
-  · crash/restart recovery 20 · native decision/recovery 15 (new)
-  · bootstrap-collector decisions 38 (was 20)
+  · crash/restart recovery 20 · native decision/recovery 19 (new)
+  · bootstrap-collector decisions 43 (was 20)
 make check-phase-03-composed        16 checks, PASS on the pinned fork
-make check-bootstrap-rehearsal      9 sections COMPLETE, 13/13 obligations (fork only)
+make check-bootstrap-rehearsal      9 sections COMPLETE, 14/14 obligations (fork only)
 make check-phase-02                 50 tests, three stages, PASS
 make check-phase-04                 10 tests, PASS
 make check-phase-03                 INCOMPLETE by design — L10

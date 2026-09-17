@@ -15,11 +15,11 @@
     "keeperhub_wire_contract": "28 passed",
     "submission_binding_and_reconciliation": "18 passed",
     "crash_restart_recovery": "20 passed",
-    "total_local": 163,
+    "total_local": 172,
     "composed": "make check-phase-03-composed \u2014 PASS, 16 checks (local only)",
-    "bootstrap_collector_decisions": "38 passed (incl. positive and empty-history controls)",
-    "native_decision_recovery": "15 passed (synthetic journal/machine; adapter control flow)",
-    "_count_note": "was 130. +15 native decision/recovery regressions, and the collector decision suite went 20 -> 38. No test was removed."
+    "bootstrap_collector_decisions": "43 passed (incl. positive and empty-history controls)",
+    "native_decision_recovery": "19 passed (synthetic journal/machine; adapter control flow)",
+    "_count_note": "was 130 at 67eed71. +19 native decision/recovery regressions, and the collector decision suite went 20 -> 43. One test was REMOVED: a history-discovery regression that scripted a zero topic and therefore blocked on the malformed-log path without ever exercising discovery. Its behaviour is covered by the B4 tests."
   },
   "what_is_established": {
     "native_connection": "CompilationResult -> action_bundle -> Held record -> admission, with economic calldata copied byte for byte. The producer verdict is strictly fail-closed: exact status set, no prefix match, no default success for a missing verdict, FAILED+is_safety_refusal preserved as a refusal, PARTIAL refused, self-contradictory SUCCESS refused, and a declared intent_type that disagrees with the family decoded from calldata refused.",
@@ -54,7 +54,7 @@
   },
   "manifest": "evidence/P03/execution-manifest.json -- the concrete public execution, written BEFORE the fact as a commitment. Executing it would require deploying a contract and spending funds on a public chain, which is not authorized.",
   "completeness": "P03 is NOT complete. The abc0fdd review rejected the earlier 'local half complete' claim and found four local implementation defects, all now repaired with regressions. The required KeeperHub public execution remains blocked on L10.",
-  "next": "Independent review of the N1-N3 / B1-B4 work. Then the bounded L10/public-action request. P04's runtime authority service and P05's connected console remain PARTIAL PREPARATION.",
+  "next": "Independent review of the N1-N3 / B1-B4 work AND of this second-pass round. Then the bounded L10/public-action request. P04's runtime authority service and P05's connected console remain PARTIAL PREPARATION.",
   "phase_complete": false,
   "review_findings_repaired": {
     "C1_wire_contract": {
@@ -283,6 +283,23 @@
     "B2": "CLOSED. The collector read one environment allowance. It now reads all five declared budgets under their own keys, the controller's seven key immutables, the market and the lineage, and verifies BOTH roles' membership and condition trees by read-only eth_call, with positive and negative probes. A clause-to-evidence table covers 13 V4 \u00a76 obligations. Missing configuration is INCOMPLETE, never inferred.",
     "B3": "CLOSED. All four inputs that were PERMITTED now block: an unreviewed nonzero fallback handler, an unsupported Safe version, a successful cast returning garbage where logs belong, and an allowance balance that is not a number. Values are typed on the way in; a readable value is not an approved one. A control keeps legitimately EMPTY history passing.",
     "B4": "CLOSED. Authorization history is decoded from the real SetAuthorization topic with the authorizer checked to be this Safe, and every candidate carries provenance. The constant the file declared (0xd4a0d2e7...) was not that event's hash and was never used; the real one is 0xd5e969f0..., confirmed with cast keccak. Controls cover a decoded outsider grant, another Safe's event, and an unrelated event that must not be scraped.",
-    "still_open": "L10, unchanged. Nothing deployed, funded, broadcast or executed publicly. accepted=false; this review covers one commit's adapter and collector and is not phase acceptance."
+    "still_open": "L10, unchanged. Nothing deployed, funded, broadcast or executed publicly. accepted=false; this review covers one commit's adapter and collector and is not phase acceptance.",
+    "second_pass": {
+      "what": "An independent review of the N1-N3 / B1-B4 work itself, in a fresh context. It found fail-open holes in the corrections. Each was reproduced, fixed and regressed.",
+      "A1": "The Safe module enumeration requested one page of 20 and discarded the pagination CURSOR, so a truncated list was indistinguishable from a complete one and an unreviewed 21st module was invisible. The cursor must now return as the sentinel.",
+      "A2": "Address lists were built with a regex FILTER, so a garbled member silently vanished and the shorter list was judged as complete -- a 4-owner Safe read as the declared 3-owner profile. A list with an unparseable member is now UNREADABLE.",
+      "A3": "FORK_BASE = uint(env) or 51353212 converted an unreadable override straight back into a benign constant. A malformed or zero HELD_FORK_BLOCK now blocks.",
+      "A4": "The manifest's declared `controller` was required and never compared to the controller being inspected -- the one declared term not checked. The seven key immutables do not close it: five are keccak constants and two come from the environment, so they are identical across deployments.",
+      "A5": "The controller's owner() was read, made mandatory, and then left out of the comparison -- the same 'readable is not approved' defect fixed for the fallback handler one section earlier.",
+      "A6": "DECISIVE. The SetAuthorization decoder scanned each log entry for 32-byte words and indexed them positionally. Real `cast logs` emits address, blockHash, blockNumber, data, logIndex, removed, topics, ... so the FIRST such word is the block hash. Every real entry would have been classified malformed and the entire B4 discovery path was inert against live output. It passed only because the test fixture emitted a simplified shape AND the live range contains no such events. Verified against real Base-mainnet output; the parser now extracts the topics: [...] block only, and the test fixture emits the real field order.",
+      "B1": "needs_execution() calls step(), an in-memory advance, without recording it -- so a machine could walk off its verified state while authoritative stayed True. A step that MOVES the machine now clears authority; one that does not leaves it alone, so a clean pre-dispatch machine stays pollable.",
+      "C1": "An acknowledgement with NO snapshot was unguarded, though its mirror (terminal snapshot with no ack) was. apply() writes both in one transaction, so an ack alone is a torn record -- and it read as permission for fresh work on an operation the native side had already acknowledged.",
+      "C2": "The bound-decision stamp was demanded only for TERMINAL snapshots, so an unattributable mid-lifecycle snapshot sat silently under an operation that then asked to work again. Now required at any state.",
+      "D1": "HeldInstall.install() scoped the restoration lane's target but not the normal lane's, silently relying on the bash fixture having run scopeTarget(roleKey, MORPHO) and (roleKey, USDC). scopeFunction does not grant target clearance, so on a Safe without those steps install() completed WITHOUT reverting and left every normal-lane call failing TargetAddressNotAllowed. A library calling itself the one definition cannot depend on an undeclared precondition.",
+      "E1": "A history-discovery regression scripted a zero topic, so it blocked on the malformed-log path and never exercised discovery. REMOVED as superseded rather than left claiming coverage it did not have.",
+      "E2": "expect_blocked() asserted only the exit code, so any mutation that blocked for an unrelated reason passed -- which is how E1 rotted. It now requires the expected SECTION to be the one that went INCOMPLETE. This immediately caught a mis-mapped test of my own while being applied.",
+      "E4": "The shim's bidirectional prefix match let 'normalCount' also match 'normalCountKey()(bytes32)'; only dict insertion order kept them apart. A bare function name now matches the selector exactly.",
+      "not_fixed": "A7 (all_state_reads_pinned_to_block was a literal) is now derived. The duplicated predicates in token_approvals and identities are harmless and left alone. The dead --block branch for `logs` is left as documented dead code."
+    }
   }
 }

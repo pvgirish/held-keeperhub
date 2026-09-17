@@ -113,6 +113,7 @@ def baseline() -> dict[str, str]:
                                   "0x2222222222222222222222222222222222222222]",
         f"call {SAFE} getThreshold": "2",
         f"call {SAFE} VERSION": "1.4.1",
+        # Second line is the pagination CURSOR. The sentinel means "no further pages".
         f"call {SAFE} getModulesPaginated": f"[{ROLES}, {CONTROLLER}]\n0x0000000000000000000000000000000000000001",
         f"storage {SAFE} 0x4a204f62": ZERO32,
         f"storage {SAFE} 0x6c9a6c4a": ZERO32,
@@ -209,8 +210,15 @@ for key, val in table.items():
     parts = key.split()
     if len(parts) > len(words) or parts[0] != words[0]:
         continue
-    if all(words[i].lower().startswith(p.lower()) or p.lower().startswith(words[i].lower())
-           for i, p in enumerate(parts[1:], start=1)):
+    def word_matches(actual, part):
+        # A bare function name must match the SELECTOR exactly, or "normalCount" also
+        # matches "normalCountKey()(bytes32)" and the key read silently answers with the
+        # counter. Ordering in baseline() was the only thing keeping those apart.
+        if "(" in actual and "(" not in part:
+            return actual.split("(")[0].lower() == part.lower()
+        a, b = actual.lower(), part.lower()
+        return a.startswith(b) or b.startswith(a)
+    if all(word_matches(words[i], p) for i, p in enumerate(parts[1:], start=1)):
         if len(parts) > best_len:
             best, best_len = val, len(parts)
 if best is None:
@@ -262,14 +270,27 @@ print(best)
         return proc.returncode, data
 
 
-def expect_blocked(label: str, mutate, *, manifest_override=_UNSET) -> None:
+def expect_blocked(label: str, mutate, *, section: str, manifest_override=_UNSET,
+                   env_override: dict[str, str] | None = None) -> None:
+    """Require a BLOCK, and require it to come from the section under test.
+
+    Asserting only the exit code let a test pass for an unrelated reason -- most easily a
+    scripted key that no longer matches, so the shim exits 1 and some other read fails.
+    That is exactly how the old history-discovery regression rotted into a
+    malformed-log test without anyone noticing. Naming the section makes the whole family
+    mutation-sensitive.
+    """
     r = baseline()
     mutate(r)
-    code, data = run(r, manifest_override=manifest_override)
+    code, data = run(r, manifest_override=manifest_override, env_override=env_override)
     verdict = (data.get("verdict") or {}).get("activation_would_be")
+    incomplete = (data.get("verdict") or {}).get("incomplete_sections") or []
     assert code == 1, (
         f"{label}: collector exited 0 and returned {verdict!r}; it should BLOCK. "
-        f"incomplete={((data.get('verdict') or {}).get('incomplete_sections'))}")
+        f"incomplete={incomplete}")
+    assert section in incomplete, (
+        f"{label}: blocked, but on {incomplete} rather than {section!r}. A test that "
+        "blocks for the wrong reason is not testing what it says.")
 
 
 # ------------------------------------------------------------ positive control --
@@ -287,82 +308,83 @@ def _():
 @test("REGRESSION: an unreadable Safe guard blocks")
 def _():
     expect_blocked("unreadable guard",
-                   lambda r: r.__setitem__(f"storage {SAFE} 0x4a204f62", "__FAIL__"))
+                   lambda r: r.__setitem__(f"storage {SAFE} 0x4a204f62", "__FAIL__"), section="safe")
 
 
 @test("REGRESSION: an unreadable fallback handler blocks")
 def _():
     expect_blocked("unreadable fallback",
-                   lambda r: r.__setitem__(f"storage {SAFE} 0x6c9a6c4a", "__FAIL__"))
+                   lambda r: r.__setitem__(f"storage {SAFE} 0x6c9a6c4a", "__FAIL__"), section="safe")
 
 
 @test("REGRESSION: an unexpectedly SET guard blocks")
 def _():
     expect_blocked("guard set", lambda r: r.__setitem__(
-        f"storage {SAFE} 0x4a204f62", "0x" + "00" * 12 + "dd" * 20))
+        f"storage {SAFE} 0x4a204f62", "0x" + "00" * 12 + "dd" * 20), section="safe")
 
 
 @test("REGRESSION: a Roles module whose owner is not the Safe blocks")
 def _():
     expect_blocked("roles owner", lambda r: r.__setitem__(
-        f"call {ROLES} owner", "0x" + "de" * 20))
+        f"call {ROLES} owner", "0x" + "de" * 20), section="roles")
 
 
 @test("REGRESSION: an unreadable Roles avatar blocks")
 def _():
-    expect_blocked("roles avatar", lambda r: r.__setitem__(f"call {ROLES} avatar", "__FAIL__"))
+    expect_blocked("roles avatar", lambda r: r.__setitem__(f"call {ROLES} avatar", "__FAIL__"), section="roles")
 
 
 @test("REGRESSION: a Roles target pointing elsewhere blocks")
 def _():
     expect_blocked("roles target", lambda r: r.__setitem__(
-        f"call {ROLES} target", "0x" + "de" * 20))
+        f"call {ROLES} target", "0x" + "de" * 20), section="roles")
 
 
 @test("REGRESSION: a Roles module not enabled on the Safe blocks")
 def _():
     expect_blocked("roles not a module", lambda r: r.__setitem__(
         f"call {SAFE} getModulesPaginated",
-        f"[{CONTROLLER}]\n0x0000000000000000000000000000000000000001"))
+        f"[{CONTROLLER}]\n0x0000000000000000000000000000000000000001"), section="safe")
 
 
 @test("REGRESSION: an unrecognised extra module blocks")
 def _():
     expect_blocked("extra module", lambda r: r.__setitem__(
         f"call {SAFE} getModulesPaginated",
-        f"[{ROLES}, {CONTROLLER}, {USDC}]\n0x0000000000000000000000000000000000000001"))
+        f"[{ROLES}, {CONTROLLER}, {USDC}]\n0x0000000000000000000000000000000000000001"), section="safe")
 
 
 @test("REGRESSION: a different chain id blocks")
 def _():
-    expect_blocked("chain id", lambda r: r.__setitem__("chain-id", "1"))
+    expect_blocked("chain id", lambda r: r.__setitem__("chain-id", "1"), section="observation")
 
 
 @test("REGRESSION: an unreadable observation block hash blocks")
 def _():
-    expect_blocked("block hash", lambda r: r.__setitem__("block", "__FAIL__"))
+    expect_blocked("block hash", lambda r: r.__setitem__("block", "__FAIL__"), section="observation")
 
 
 @test("REGRESSION: a malformed Morpho grant result blocks, and is never read as False")
 def _():
     expect_blocked("malformed grant", lambda r: r.__setitem__(
-        f"call {MORPHO} isAuthorized", "0x1"))
+        f"call {MORPHO} isAuthorized", "0x1"), section="morpho_grants")
 
 
 @test("REGRESSION: a threshold outside the declared profile blocks")
 def _():
-    expect_blocked("threshold", lambda r: r.__setitem__(f"call {SAFE} getThreshold", "1"))
+    expect_blocked("threshold", lambda r: r.__setitem__(f"call {SAFE} getThreshold", "1"), section="safe")
 
 
 @test("REGRESSION: unreadable authorization history blocks")
 def _():
-    expect_blocked("history unreadable", lambda r: r.__setitem__("logs", "__FAIL__"))
+    expect_blocked("history unreadable", lambda r: r.__setitem__("logs", "__FAIL__"), section="morpho_grants")
 
 
 @test("REGRESSION: an unreadable token allowance blocks, and is not read as zero")
 def _():
     expect_blocked("allowance unreadable",
-                   lambda r: r.__setitem__(f"call {USDC} allowance", "__FAIL__"))
+                   lambda r: r.__setitem__(f"call {USDC} allowance", "__FAIL__"),
+                   section="token_approvals")
 
 
 # ------------------------------------------- the controller-specific additions --
@@ -406,34 +428,33 @@ def _():
 @test("REGRESSION: an ACTIVE controller is not a fresh installation")
 def _():
     expect_blocked("already active",
-                   lambda r: r.__setitem__(f"call {CONTROLLER} active", "true"))
+                   lambda r: r.__setitem__(f"call {CONTROLLER} active", "true"), section="held_controller")
 
 
 @test("REGRESSION: a controller bound to another Safe blocks")
 def _():
     expect_blocked("bound elsewhere", lambda r: r.__setitem__(
-        f"call {CONTROLLER} safe", "0x" + "de" * 20))
+        f"call {CONTROLLER} safe", "0x" + "de" * 20), section="held_controller")
 
 
 @test("REGRESSION: non-zero prior consumption is not a fresh installation")
 def _():
     expect_blocked("consumption", lambda r: r.__setitem__(
-        f"call {CONTROLLER} usedSupply", "30000000000"))
+        f"call {CONTROLLER} usedSupply", "30000000000"), section="held_controller")
 
 
 # ------------------------------------------------- discovery beyond the list ---
-@test("REGRESSION: a grant to an address found only in HISTORY blocks")
-def _():
-    # The old collector probed a hand-supplied list, so a grant to anyone outside it was
-    # never queried and the checklist permitted. Candidates now come from the Safe's
-    # bounded authorization history as well.
-    outsider = "0x" + "ee" * 20
-    def mutate(r):
-        r["logs"] = ("address: " + MORPHO + "\ntopics: 0x" + "00" * 32 +
-                     "\n0x" + "00" * 12 + outsider[2:] + "\ndata: 0x")
-        r[f"call {MORPHO} isAuthorized"] = "false"
-        r[f"call {MORPHO} isAuthorized {SAFE} {outsider}"] = "true"
-    expect_blocked("history-derived grant", mutate)
+# REMOVED: "REGRESSION: a grant to an address found only in HISTORY blocks".
+#
+# It scripted a log entry with a ZERO topic, which the decoder now correctly classifies as
+# MALFORMED. So it blocked -- but for the malformed-log reason, never reaching the
+# discovery path named in its title, and the outsider's isAuthorized was never queried.
+# A test that passes for a reason other than the one it claims is worse than no test.
+#
+# The behaviour is genuinely covered by "B4: a decoded grant to an outsider is discovered
+# from history and blocks" below, which scripts a real SetAuthorization entry in the field
+# order cast actually emits, and by "B3: a successful cast returning garbage where logs
+# belong blocks" for the malformed case.
 
 
 # ===================================================================================
@@ -448,26 +469,26 @@ def _():
     # It was READ and then never judged. A fallback handler extends the Safe's call
     # surface to code nobody in this profile reviewed.
     expect_blocked("nonzero fallback", lambda r: r.update({
-        f"storage {SAFE} 0x6c9a6c4a": "0x" + "00" * 12 + "ab" * 20}))
+        f"storage {SAFE} 0x6c9a6c4a": "0x" + "00" * 12 + "ab" * 20}), section="safe")
 
 
 @test("B3: a readable but UNSUPPORTED Safe implementation version blocks")
 def _():
     expect_blocked("unsupported version",
-                   lambda r: r.update({f"call {SAFE} VERSION": "0.0.0-unsupported"}))
+                   lambda r: r.update({f"call {SAFE} VERSION": "0.0.0-unsupported"}), section="safe")
 
 
 @test("B3: a successful cast returning garbage where logs belong blocks")
 def _():
     # returncode 0 with an undecodable body. "The command worked" is not "the answer is
     # usable", and this used to pass straight through as readable history.
-    expect_blocked("garbled logs", lambda r: r.update({"logs": "not-a-valid-log-response"}))
+    expect_blocked("garbled logs", lambda r: r.update({"logs": "not-a-valid-log-response"}), section="morpho_grants")
 
 
 @test("B3: an allowance balance that is not a number blocks, and is never read as zero")
 def _():
     expect_blocked("malformed quota", lambda r: r.update({
-        f"call {ROLES} allowances {SUPPLY_KEY}": "0\n50000000000\n0\nnot-a-number\n0"}))
+        f"call {ROLES} allowances {SUPPLY_KEY}": "0\n50000000000\n0\nnot-a-number\n0"}), section="roles")
 
 
 @test("B3 CONTROL: legitimately EMPTY history is not confused with garbled history")
@@ -486,16 +507,30 @@ def _():
 
 # --------------------- B4: decode the pinned event, do not scrape words ----------
 def _log(topic: str, authorizer: str, authorized: str) -> str:
-    """One event-shaped log entry, in the shape `cast logs` prints."""
+    """One log entry in the REAL field order `cast logs` prints.
+
+    This matters more than it looks. An earlier version of this helper emitted only
+    address/topics/data, which let a parser that scanned the whole entry for 32-byte words
+    appear to work. Real entries are serialised address, blockHash, blockNumber, data,
+    logIndex, removed, topics, transactionHash, transactionIndex -- so the FIRST 32-byte
+    word is the block hash and `data` contributes more before `topics` is reached. A
+    simplified fixture hid a decoder that could not read live output at all.
+    """
     pad = lambda a: "0x" + "0" * 24 + a[2:].lower()  # noqa: E731
     return ("- address: " + MORPHO + "\n"
+            "  blockHash: 0x" + "7c" * 32 + "\n"
+            "  blockNumber: 51353220\n"
+            "  data: 0x" + "00" * 31 + "01\n"
+            "  logIndex: 12\n"
+            "  removed: false\n"
             "  topics: [\n"
-            f"    {topic}\n"
-            f"    {pad(SAFE)}\n"
-            f"    {pad(authorizer)}\n"
-            f"    {pad(authorized)}\n"
+            f"  \t{topic}\n"
+            f"  \t{pad(SAFE)}\n"
+            f"  \t{pad(authorizer)}\n"
+            f"  \t{pad(authorized)}\n"
             "  ]\n"
-            "  data: 0x" + "0" * 63 + "1\n")
+            "  transactionHash: 0x" + "9e" * 32 + "\n"
+            "  transactionIndex: 4\n")
 
 
 SET_AUTH_TOPIC = "0xd5e969f01efe921d3f766bdebad25f0a05e3f237311f56482bf132d0326309c0"
@@ -511,7 +546,7 @@ def _():
         r["logs"] = _log(SET_AUTH_TOPIC, SAFE, OUTSIDER)
         r[f"call {MORPHO} isAuthorized"] = "false"
         r[f"call {MORPHO} isAuthorized {SAFE} {OUTSIDER}"] = "true"
-    expect_blocked("decoded outsider grant", mutate)
+    expect_blocked("decoded outsider grant", mutate, section="morpho_grants")
 
 
 @test("B4 CONTROL: an event authorized by a DIFFERENT Safe is not our history")
@@ -546,7 +581,7 @@ def _():
 # ------------------- B2: the FULL declared installation, not one quota -----------
 @test("B2: a missing declared installation blocks rather than being inferred")
 def _():
-    expect_blocked("no manifest", lambda r: None, manifest_override=None)
+    expect_blocked("no manifest", lambda r: None, manifest_override=None, section="declared_installation")
 
 
 @test("B2: each of the five budgets is read under its own key")
@@ -562,13 +597,13 @@ def _():
     ):
         expect_blocked(f"{label} budget below the declared limit",
                        lambda r, k=key, g=good: r.update({
-                           f"call {ROLES} allowances {k}": allowance(g - 1)}))
+                           f"call {ROLES} allowances {k}": allowance(g - 1)}), section="roles")
 
 
 @test("B2: a REFILLING budget blocks — the quota would replenish itself")
 def _():
     expect_blocked("refilling supply budget", lambda r: r.update({
-        f"call {ROLES} allowances {SUPPLY_KEY}": "1000\n50000000000\n3600\n50000000000\n0"}))
+        f"call {ROLES} allowances {SUPPLY_KEY}": "1000\n50000000000\n3600\n50000000000\n0"}), section="roles")
 
 
 @test("B2: a controller bound to budget keys the installation never configured blocks")
@@ -576,15 +611,15 @@ def _():
     # Exactly the 03d defect: the controller carried its own keys, nothing on the Roles
     # side configured them, and reading them back returned zero for every dimension.
     expect_blocked("controller key mismatch", lambda r: r.update({
-        f"call {CONTROLLER} restorationAllowanceKey": "0x" + "ee" * 32}))
+        f"call {CONTROLLER} restorationAllowanceKey": "0x" + "ee" * 32}), section="held_controller")
 
 
 @test("B2: a controller whose market or lineage is not the declared one blocks")
 def _():
     expect_blocked("wrong market",
-                   lambda r: r.update({f"call {CONTROLLER} marketId": "0x" + "ee" * 32}))
+                   lambda r: r.update({f"call {CONTROLLER} marketId": "0x" + "ee" * 32}), section="held_controller")
     expect_blocked("wrong lineage",
-                   lambda r: r.update({f"call {CONTROLLER} lineage": "0x" + "ee" * 32}))
+                   lambda r: r.update({f"call {CONTROLLER} lineage": "0x" + "ee" * 32}), section="held_controller")
 
 
 @test("B2: an installation with no SELECTED operating identities blocks")
@@ -603,7 +638,7 @@ def _():
 def _():
     expect_blocked("controller not a member", lambda r: r.update({
         f"~rpc~{EXEC_WITHDRAW_OK}": "__ERR__Error: execution reverted: custom error "
-                                    f"{NO_MEMBERSHIP}, data: \"{NO_MEMBERSHIP}\""}))
+                                    f"{NO_MEMBERSHIP}, data: \"{NO_MEMBERSHIP}\""}), section="roles_membership_and_conditions")
 
 
 @test("B2: a condition tree that PERMITS the wrong receiver blocks")
@@ -611,7 +646,7 @@ def _():
     # The negative direction. A tree that permits everything is not a restriction, and a
     # probe set that never expects a refusal could not tell.
     expect_blocked("wrong receiver permitted", lambda r: r.update({
-        f"~rpc~{EXEC_WITHDRAW_BAD}": "0x" + "0" * 63 + "1"}))
+        f"~rpc~{EXEC_WITHDRAW_BAD}": "0x" + "0" * 63 + "1"}), section="roles_membership_and_conditions")
 
 
 @test("B2: an unrecognised revert is UNREADABLE, not filed as a condition refusal")
@@ -619,7 +654,7 @@ def _():
     # Guessing here is how an unconfigured tree would have looked like a working one.
     expect_blocked("unknown revert", lambda r: r.update({
         f"~rpc~{EXEC_WITHDRAW_BAD}": "__ERR__Error: execution reverted: custom error "
-                                     "0xdeadbeef, data: \"0xdeadbeef\""}))
+                                     "0xdeadbeef, data: \"0xdeadbeef\""}), section="roles_membership_and_conditions")
 
 
 @test("B2: a probe the sender cannot even pay for is UNREADABLE, not a refusal")
@@ -629,7 +664,97 @@ def _():
     # not read as "the installation refuses", which would be a false clean bill.
     expect_blocked("probe could not run", lambda r: r.update({
         f"~rpc~{EXEC_SUPPLY}": "__ERR__Error: server returned an error response: "
-                               "error code -32003: Insufficient funds for gas * price + value"}))
+                               "error code -32003: Insufficient funds for gas * price + value"}), section="roles_membership_and_conditions")
+
+
+# ===================================================================================
+# Third pass: fail-open holes an independent review found in the B2-B4 work itself.
+# ===================================================================================
+
+@test("A1: a TRUNCATED module page blocks — the cursor must come back as the sentinel")
+def _():
+    # getModulesPaginated returns (page, next). The cursor was discarded, so "that is all
+    # of them" and "there are more on a page nobody read" were indistinguishable, and an
+    # unreviewed 21st module was invisible to the unrecognised-module check.
+    expect_blocked("module page truncated", lambda r: r.update({
+        f"call {SAFE} getModulesPaginated":
+            f"[{ROLES}, {CONTROLLER}]\n0xdededededededededededededededededededede"}),
+        section="safe")
+
+
+@test("A2: a garbled member of an address list makes the list UNREADABLE, not shorter")
+def _():
+    # Filtering out what does not parse was fail-open: a fourth owner that came back
+    # garbled simply vanished, and the three that remained satisfied the declared
+    # three-owner profile.
+    expect_blocked("garbled owner", lambda r: r.update({
+        f"call {SAFE} getOwners":
+            f"[{SAFE}, 0x1111111111111111111111111111111111111111, "
+            "0x2222222222222222222222222222222222222222, <garbled>]"}),
+        section="safe")
+    expect_blocked("garbled module", lambda r: r.update({
+        f"call {SAFE} getModulesPaginated":
+            f"[{ROLES}, {CONTROLLER}, 0xBADBAD]\n0x0000000000000000000000000000000000000001"}),
+        section="safe")
+
+
+@test("A3: a malformed HELD_FORK_BLOCK blocks instead of falling back to a constant")
+def _():
+    # `uint(...) or DEFAULT` turned an unreadable override straight back into a benign
+    # value, so the bounded-history clause was satisfied by a window nobody validated.
+    expect_blocked("garbled fork base", lambda r: None,
+                   env_override={"HELD_FORK_BLOCK": "not-a-block"},
+                   section="morpho_grants")
+    expect_blocked("zero fork base", lambda r: None,
+                   env_override={"HELD_FORK_BLOCK": "0"},
+                   section="morpho_grants")
+
+
+@test("A4: inspecting a controller OTHER than the declared one blocks")
+def _():
+    # The manifest's `controller` was required and then never compared. The key immutables
+    # do not close this: five are keccak constants and two come from the environment, so
+    # they are identical across deployments and cannot tell two controllers apart.
+    m = manifest()
+    m["controller"] = "0xdededededededededededededededededededede"
+    expect_blocked("undeclared controller", lambda r: None, manifest_override=m,
+                   section="held_controller")
+
+
+@test("A5: a controller owned by someone other than the Safe blocks")
+def _():
+    # owner() was read, made mandatory, and then left out of the comparison -- the same
+    # "readable is not approved" defect that was fixed for the fallback handler.
+    expect_blocked("foreign controller owner", lambda r: r.update({
+        f"call {CONTROLLER} owner": "0xdededededededededededededededededededede"}),
+        section="held_controller")
+
+
+@test("A6: a SetAuthorization entry in the REAL cast field order decodes")
+def _():
+    # The decisive one. Scanning a whole log entry for 32-byte words reads the BLOCK HASH
+    # as the event signature, because cast emits address, blockHash, blockNumber, data,
+    # logIndex, removed, topics, ... -- so every real entry was classified malformed and
+    # the whole B4 discovery path was inert against live output. It passed only because
+    # the test fixture emitted a simplified shape and the live range happens to be empty.
+    outsider = "0x" + "ee" * 20
+    r = baseline()
+    r["logs"] = _log(SET_AUTH_TOPIC, SAFE, outsider)
+    r[f"call {MORPHO} isAuthorized"] = "false"
+    code, data = run(r)
+
+    grants = data["morpho_grants"]
+    assert grants["decoded_events"], (
+        f"a realistically-laid-out SetAuthorization entry did not decode: "
+        f"malformed={grants['malformed_entries']}")
+    assert grants["events_for_this_safe"] == 1, grants["decoded_events"]
+    assert not grants["malformed_entries"], grants["malformed_entries"]
+    discovered = [c["address"].lower() for k, c in grants["candidates"].items()
+                  if k.startswith("history_")]
+    assert outsider.lower() in discovered, (
+        f"the outsider was decoded but never became a candidate: {grants['candidates']}")
+    # It is not actually authorized, so this installation is still clean.
+    assert code == 0, data["verdict"]["incomplete_sections"]
 
 
 def main() -> int:

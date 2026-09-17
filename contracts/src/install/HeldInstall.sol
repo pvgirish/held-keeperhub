@@ -80,6 +80,19 @@ library HeldInstall {
         assign(p.roles, p.controller, RESTORE_ROLE, true);
         if (p.retireMember != address(0)) assign(p.roles, p.retireMember, p.normalRole, false);
 
+        // Clear the NORMAL lane's targets before scoping functions on them. This was
+        // missing and the asymmetry was easy to miss: the restoration lane below scoped
+        // its own target, while the normal lane silently relied on the bash fixture having
+        // run `scopeTarget(roleKey, MORPHO)` and `scopeTarget(roleKey, USDC)` first.
+        //
+        // In Zodiac Roles v2 `scopeFunction` does not grant target clearance, so on a Safe
+        // where those fixture steps had not run, install() would complete WITHOUT
+        // reverting and leave every normal-lane supply, withdraw and approve failing with
+        // TargetAddressNotAllowed. A library that calls itself the one definition of the
+        // installation cannot depend on an undeclared precondition.
+        IRolesTargets(p.roles).scopeTarget(p.normalRole, MORPHO);
+        IRolesTargets(p.roles).scopeTarget(p.normalRole, USDC);
+
         // A NEW lineage gets a clearly labelled NEW budget. Historical native consumption
         // is deliberately NOT imported (V4 §6).
         scopeSupplyTight(p);

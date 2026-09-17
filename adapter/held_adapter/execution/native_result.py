@@ -235,10 +235,14 @@ def restore(journal, operation_id: str, build_machine=None) -> RestoredDecision:
     if snapshot is not None and decision:
         stamped = snapshot.get("held_bound_decision")
         if stamped is None:
-            if state in TERMINAL_NATIVE_STATES:
-                inconsistent.append(
-                    "the native snapshot carries no bound-decision stamp, so the decision "
-                    "it belongs to cannot be identified")
+            # Gating this on TERMINAL let a mid-lifecycle snapshot with no stamp sit
+            # silently under an operation that then asked to work again. apply() stamps
+            # every snapshot it writes, so an unstamped one arrived by some other route --
+            # restore, migration, corruption -- and cannot be attributed to any decision
+            # whatever state it claims.
+            inconsistent.append(
+                "the native snapshot carries no bound-decision stamp, so the decision "
+                "it belongs to cannot be identified")
         elif stamped != decision:
             inconsistent.append(
                 f"the native snapshot belongs to decision {stamped} but the operation is "
@@ -255,6 +259,14 @@ def restore(journal, operation_id: str, build_machine=None) -> RestoredDecision:
         inconsistent.append(
             f"the acknowledgement records {ack_state!r} but the native snapshot is at "
             f"{state!r}")
+    # The mirror of "terminal snapshot with no acknowledgement", which was guarded while
+    # this was not. apply() writes the snapshot and the ack in ONE transaction, so an ack
+    # standing alone is a torn durable record. Left unflagged it read as permission for
+    # fresh economic work on an operation the native side had already acknowledged.
+    if acked and snapshot is None:
+        inconsistent.append(
+            f"an acknowledgement ({ack_state!r}) exists with no native snapshot; the two "
+            "are written in one transaction, so this record is torn")
 
     # Lost local history must never read as permission for fresh work. A native binding,
     # snapshot or acknowledgement is a record that this operation EXISTED, so the absence
@@ -429,8 +441,18 @@ class NativeStateMachineConsumer:
         snapshot still answered, and the caller could not tell.
         """
         self.require_clean()
+        before = self.state
         result = self.machine.step()
         self.step_results.append(result)
+        if self.state != before:
+            # step() is an in-memory advance like any other. A machine that was confirmed
+            # durable at `before` is no longer the object that snapshot describes, so the
+            # authority does not carry over -- otherwise require_authoritative() would keep
+            # passing for a state that was never committed. A poll that does NOT move the
+            # machine changes nothing and leaves the flags alone, so a clean pre-dispatch
+            # machine stays pollable.
+            self._mutated = True
+            self._authoritative = False
         return bool(getattr(result, "needs_execution", False))
 
     # -------------------------------------------------------------------- apply --
