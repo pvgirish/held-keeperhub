@@ -90,6 +90,85 @@ describes what they change; the owner executes them in their own Safe. A Held co
 could fence or activate on its own would be a fourth authority over the customer's funds
 that the inventory does not contain and the owner never approved.
 
+## What the KeeperHub integration actually is
+
+Held's execution path is a KeeperHub direct contract call. The client is built against the
+documented `POST /api/execute/contract-call` route and is wire-tested in 28 tests:
+documented request body, the `Idempotency-Key` **header**, `GET /api/execute/{id}/status`
+with the poll hint, 202 as the documented write success, and the two documented 409 codes
+kept as opposite outcomes rather than one branch.
+
+**It has not been called with a credential.** Every one of those tests runs against
+`OfflineTransport`, which stamps `hosted=false`, and `SendResult.assert_hosted_evidence()`
+refuses a non-hosted result — so no local fixture can be filed as a hosted one. Three tests
+exist solely to prove that. Whether KeeperHub's server-side encoder reproduces Held's
+intended calldata is recorded as **unknown**, because settling it needs one authenticated
+dry run that has not happened.
+
+## Reliability and recovery
+
+The parts that matter when something goes wrong, each with a test behind it:
+
+- A dispatched operation is **durable before any network I/O** — verified by opening a
+  separate connection mid-send, and by `SIGKILL`ing a real child process.
+- Every ambiguous result — timeouts, dropped connections, all 5xx, unrecognised statuses —
+  becomes `UNKNOWN`, never `REJECTED`. **An unknown is not a verified negative.**
+- A restart resumes the original attempt under its original idempotency key and makes
+  **zero duplicate network calls**.
+- Resolution comes from `consumed[operationId]` read at a stated block with chain id,
+  controller and finality — never from a caller's expectation and never from the
+  transport's silence.
+
+Two defects found by adversarial review, and what they cost:
+
+1. The `SetAuthorization` decoder **could not read real `cast logs` output at all** — it
+   indexed 32-byte words positionally and the block hash comes first. The entire
+   grant-discovery path was inert against live data, hidden by a test fixture that emitted a
+   simplified shape.
+2. `reconcile()` believed a caller-supplied empty list. The machine now **re-derives** the
+   retiring-epoch operation set from the durable journal, so omitting an operation is
+   refused rather than believed.
+
+## Native vs Held — measured, not argued
+
+`make p06-comparison` runs the Held half on the fork against the
+[frozen native baseline](docs/baseline/native-measurements.json), same operation, same
+counters. The result does not favour Held on operator work:
+
+| | ceremonies | signatures | transactions |
+|---|---|---|---|
+| Native, clean change | **1** | **2** | **1** |
+| Held, clean change | 2 | 4 | 3 |
+| Native, interrupted (competent) | 2 | 4 | **2** |
+| Held, interrupted | 2 | 4 | 3 |
+
+A competent native operator — fence first, let it settle, read the consumed allowance,
+derive the new remaining, then activate — **reaches the correct remaining capacity on the
+first attempt.** Held does not make that cheaper, and the claim that it did is
+[withdrawn](docs/submission/CLAIM-LEDGER.md).
+
+What the measurements *do* support:
+
+- **One store answers whether a specific operation executed.** Native derives the budget
+  correctly in aggregate but does not identify which operation ran.
+- **The system refuses while an outcome is unknown.** Native has no per-operation record to
+  refuse with; a competent operator supplies the discipline instead.
+- **An activation-time consistency guard.** Observed firing during the measurement:
+  `AllowanceDesynchronised(rolesRemaining, expected)` refused an activation whose raised
+  ceiling the Zodiac allowance would not have honoured.
+- **Against Held: it costs more.** A controller, two role memberships, five budgets and a
+  durable journal, before any of the above is available.
+
+Held buys enforcement and per-operation evidence at the price of setup and one extra
+transaction. That is the honest trade.
+
+## Supported scope
+
+One Safe, one Morpho market, supply and withdraw, on Base. Two typed controller entry
+points — no generic executor. Authority discovery is **bounded**: a declared profile over a
+declared block range, and anything outside it is reported as out of scope, which is not the
+same as absent.
+
 ## Evidence grades
 
 Every claim in this repository carries one, and they are never promoted:
@@ -139,9 +218,13 @@ Stated plainly, because a submission that hides these is worse than one that lac
   calldata is recorded as unknown, not assumed.
 - **P03 is PARTIAL.** Its local half is complete and regressed; the hosted half does not
   exist.
-- **P05 console is a prototype** being connected to real service state.
-- **P06–P08 are not complete.** Adversarial composed coverage, clean-install verification
-  and the submission package are in progress.
+- **P05 console**: `--state-source live` reads real sources and refuses to fall back to
+  demonstration data, but the HTML rendering of the four views is still prototype.
+- **One adversarial case is unestablished for an external reason**: a broadcast whose
+  transaction hash is known but whose receipt never arrives on a *public* chain. That needs
+  L10.
+- **A genuine chain reorganisation is not simulated.** A fork has no finality to disagree
+  about; what is tested is that unfinalized readings are not verdicts.
 - **Not audited, not production ready.** Finite testing is not an audit.
 - **Every key in the fixtures is a well-known anvil account.** That is not custody and
   proves nothing about a production installation.
@@ -149,14 +232,15 @@ Stated plainly, because a submission that hides these is worse than one that lac
 ## What Held does not claim
 
 Held does not replace Almanak, KeeperHub, Safe or Morpho, and it does not claim those tools
-cannot do what they actually do. A competent operator with Safe batching, Zodiac Roles,
-Morpho's own history and Almanak's recovery can already do a great deal. The measured
-comparison is in [`docs/submission/CLAIM-LEDGER.md`](docs/submission/CLAIM-LEDGER.md), and
-where it shows a tie or a tradeoff, it says so.
+cannot do what they actually do. **We measured that, and native won on operator work.** A
+competent operator with Safe batching, Zodiac Roles, Morpho's own history and Almanak's
+recovery reaches the correct end state in fewer ceremonies and fewer transactions than Held
+does.
 
-Held's claim is narrower: it makes customer-approved changes and runner handovers across
-those tools **recoverable and verifiable**, so an interrupted operation does not have to be
-guessed at and a replacement runner cannot silently inherit a fresh budget.
+Held's surviving claim is narrower and is the one the measurements support: it makes an
+interrupted operation **resolvable from one place**, refuses to proceed while the answer is
+unknown, and refuses to install a policy the native Roles layer would not honour. It buys
+enforcement and per-operation evidence, and charges setup for them.
 
 ## Status
 
@@ -165,9 +249,11 @@ guessed at and a replacement runner cannot silently inherit a fresh budget.
 | P00 route + native baseline | complete | REAL LOCAL FORK + REAL OFFLINE SDK | pending |
 | P01 identity + journal | complete | locally verified | pending |
 | P02 controller + Roles | complete | REAL LOCAL FORK | pending |
-| P03 native → KeeperHub | **PARTIAL** | local complete; **hosted missing (L10)** | one commit reviewed |
-| P04 authority + handover | runtime service + hero demo | REAL LOCAL FORK | pending |
-| P05 operator console | prototype, being connected | SYNTHETIC | pending |
-| P06–P08 | not started / in progress | — | — |
+| P03 native → KeeperHub | **PARTIAL** | local complete; **hosted missing (L10)** | two reviews, all findings closed |
+| P04 authority + handover | runtime service + hero demo | REAL LOCAL FORK | Review 1, all findings closed |
+| P05 operator console | live mode implemented; HTML rendering still prototype | SYNTHETIC + REAL LOCAL FORK | pending |
+| P06 adversarial + comparison | 23/24 cases; comparison **measured** | REAL LOCAL FORK | pending |
+| P07 clean install | `make clean-install` passes from an isolated clone | — | pending |
+| P08 submission package | assembled; gate **BLOCKED** on mandatory items | — | pending |
 
 Nothing in this repository is independently accepted. Self-testing is not acceptance.

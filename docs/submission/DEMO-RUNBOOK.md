@@ -50,12 +50,12 @@ Run the supply and show it land:
 > fork. Twelve USDC actually leaves the Safe."
 
 **If the public KeeperHub transaction exists by recording time, open it here and say so
-explicitly.** If it does not:
+explicitly.**
 
-> "The KeeperHub execution is not established yet — it needs an organisation credential we
-> do not have. It is not stubbed and not simulated, and the repository says so."
-
-Do not skip this sentence. A judge who discovers it later discounts everything else.
+**If it does not: DO NOT RECORD THE SUBMISSION VIDEO.** M1 is a mandatory requirement, and a
+video whose central segment is absent cannot be fixed in narration. `make submission-gate`
+will say BLOCKED, and that is the correct state to stop in. Record a working-session
+walkthrough if one is useful internally, but it is not the submission video.
 
 ## 1:10–2:05 — The hero: recovery and handover
 
@@ -79,7 +79,18 @@ Linger on 8 and 9. They are the product.
 Four views, ~6 seconds each: Terms, Activity, Unresolved, Authority/Handover. Point at the
 evidence-grade labels.
 
-## 2:30–2:50 — Reliability
+## 2:20–2:35 — Native vs Held, honestly
+
+> "We measured this against competent native tooling. Native is cheaper: one ceremony for
+> the clean change against our two. On the interrupted change it ties. What Held adds is
+> that one place answers whether a specific operation executed, the system refuses to
+> proceed while that is unknown, and it refuses to install a policy the Roles layer would
+> not honour."
+
+Show the table from the README. **Do not skip this segment.** A judge who finds the
+measurement later and discovers the demo implied a win discounts everything else.
+
+## 2:35–2:50 — Reliability
 
 Show **two real defects found by adversarial review**, and the regressions that now cover
 them. Do not show a test count.

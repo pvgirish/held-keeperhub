@@ -81,11 +81,28 @@ agent frameworks.
 
 **17. What is the strongest native alternative?**
 A competent operator using Safe batching, Zodiac Roles with tight conditions, Morpho's own
-authorization history and Almanak's recovery — running a careful manual procedure. That
-operator gets a long way. The fair comparison over the *handover* workflow is P06 work and
-has not been measured, so we do not claim a win (C1, C2).
+authorization history and Almanak's recovery. We measured it: fence first, let it settle,
+read the consumed allowance, derive the new remaining, activate. It reaches the correct
+result on the first attempt.
 
-**18. What would make Held unnecessary?**
+**18. What did your measured comparison actually show?**
+That native is cheaper. Clean change: native 1 ceremony / 2 signatures / 1 transaction
+against Held's 2 / 4 / 3. Interrupted change: a tie on ceremonies and signatures, with Held
+submitting one more transaction. **We withdrew the claim that Held reduces coordination
+work** — it does not.
+
+What survived measurement: one store answers whether a *specific* operation executed; the
+system refuses while that is unknown; and an activation-time consistency guard fired for
+real during the run, refusing a ceiling the Zodiac allowance would not have honoured. Held
+buys enforcement and per-operation evidence, and charges setup for them.
+
+**19. Why is KeeperHub necessary in the final integration?**
+It is the execution layer: the outer caller and payer, retry semantics, and an idempotency
+contract, so Held does not run broadcast infrastructure. Held keeps the runner's
+authorization separate from KeeperHub's execution identity — they are different authorities
+and conflating them would be a security error.
+
+**20. What would make Held unnecessary?**
 If KeeperHub exposed a durable, queryable per-operation execution record, and Almanak
 carried customer-approved ceilings with on-chain consumption, most of Held's coordination
 value would move upstream — which would be a good outcome.
