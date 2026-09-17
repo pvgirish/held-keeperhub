@@ -618,6 +618,70 @@ def _():
     assert CastControllerSource("x", finality_source=Broken())._finalized_at("1") is False
 
 
+@test("P06 GAP: evidence that moves BACKWARD between readings is refused, not settled")
+def _():
+    # Reorg-shaped disagreement. A fork has no finality to disagree about, so this is the
+    # closest meaningful reproduction: the authority observation is at a LOWER block than
+    # the fence it is supposed to describe. A reading that has gone backwards cannot
+    # describe the state being handed over.
+    j = fresh()
+    m, c = reconciled(j)
+    m.prepare_candidate(candidate(), observed=reading(c, dispatching=False))
+    reorged = inventory_report(observation={"block_number": FENCE_BLOCK - 3,
+                                            "chain_id": CHAIN, "finality": "NONE"})
+    exc = blocks(lambda: m.clear_authority(reorged, fence_block=FENCE_BLOCK),
+                 contains="before the fence")
+    assert any("SCOPE:" in b for b in exc.blockers)
+    j.close()
+
+
+@test("P06 GAP: a consumption marker read at an unfinalized block is not a verdict")
+def _():
+    # Where finality IS required, an unfinalized reading must not settle an operation.
+    j = fresh()
+    j.add_operation("0x" + "7e" * 32, "UNKNOWN", 1)
+    m, c = fenced(j)
+    rep = build_report(m.journal, record=m.record,
+                       fence_reading=reading(c, dispatching=False),
+                       reader=Reader(markers={"0x" + "7e" * 32: "0x" + "aa" * 32}),
+                       require_finalized=True)
+    assert rep.unresolved == ["0x" + "7e" * 32], rep.unresolved
+    assert "not finalized" in rep.resolutions[0].reason
+    blocks(lambda: m.reconcile(rep), contains="unresolved")
+    j.close()
+
+
+@test("P06 GAP: failed revocation — Held detects, blocks, and leaves the act to the owner")
+def _():
+    # V4 deliberately keeps cleanup outside Held's authority: a Morpho grant to another
+    # agent may be legitimate use, and revoking it to make a checklist green would be its
+    # own incident. So there is no Held revocation to fail. What must hold is the contract
+    # at the boundary: DETECTED, BLOCKED, owner action required, and still blocked until
+    # the delegate is actually gone.
+    j = fresh()
+    m, c = reconciled(j)
+    m.prepare_candidate(candidate(), observed=reading(c, dispatching=False))
+    outsider = "0x" + "ee" * 20
+
+    with_delegate = inventory_report(
+        morpho_grants={"verdict": "COMPLETE", "external_delegates": [outsider]})
+    exc = blocks(lambda: m.clear_authority(with_delegate, fence_block=FENCE_BLOCK),
+                 contains="owner must decide")
+    assert exc.blockers == [f"EXTERNAL_DELEGATE:{outsider}"]
+
+    # The owner "revokes" but it does not take: the delegate is still there. Still blocked.
+    still_there = inventory_report(
+        morpho_grants={"verdict": "COMPLETE", "external_delegates": [outsider]})
+    blocks(lambda: m.clear_authority(still_there, fence_block=FENCE_BLOCK),
+           contains="owner must decide")
+    assert m.record.state is HandoverState.BLOCKED
+
+    # Only a readback showing it actually gone releases the gate.
+    m.clear_authority(inventory_report(), fence_block=FENCE_BLOCK)
+    assert m.record.state is HandoverState.CLEARED
+    j.close()
+
+
 # ----------------------------------------------------------------------- PRESERVE --
 
 @test("PRESERVE: a restart resumes the handover from the durable record")

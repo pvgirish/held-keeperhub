@@ -4,12 +4,12 @@
     "complete": true,
     "compatible": true,
     "verdict": "COMPLETE",
-    "block_number": 51353229,
-    "block_hash": "0x57f7db043166893ab82fdbadee8bf57714cc9f6596dacf58f0fd426178de3c5a",
+    "block_number": 51353232,
+    "block_hash": "0x027cb58a92638d2c0223515a6f211e3fd7be29eedbd2063ce143818b18eaccf0",
     "chain_id": 8453,
     "expected_chain_id": 8453,
     "all_state_reads_pinned_to_block": true,
-    "mode": "initial",
+    "mode": "handover",
     "finality": "NONE \u2014 anvil fork. This is the observation point, not finalized evidence.",
     "scope": "FORK REHEARSAL. Not the public installation, not the P04 automated service."
   },
@@ -106,7 +106,7 @@
         "refill": 0,
         "maxRefill": 50000000000,
         "period": 0,
-        "balance": 50000000000,
+        "balance": 49988000000,
         "timestamp": 1789495788,
         "non_refilling": true,
         "declared_limit": 50000000000,
@@ -142,7 +142,7 @@
         "refill": 0,
         "maxRefill": 10,
         "period": 0,
-        "balance": 10,
+        "balance": 9,
         "timestamp": 1789495788,
         "non_refilling": true,
         "declared_limit": 10,
@@ -220,7 +220,7 @@
     "verdict": "COMPLETE",
     "history_range": {
       "from_block": 51353212,
-      "to_block": 51353229,
+      "to_block": 51353232,
       "readable": true,
       "wellformed": true,
       "base_from_env": null,
@@ -281,7 +281,7 @@
     "verdict": "COMPLETE",
     "address": "0x0620c56E23743ab7927Fc9A8d97ae777343C33db",
     "active": false,
-    "epoch": 0,
+    "epoch": 1,
     "bindings": {
       "safe": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180",
       "roles": "0x3875311CC0D4017A033893a9653A0725378acA1C",
@@ -308,15 +308,15 @@
     },
     "key_mismatches": [],
     "consumption": {
-      "usedSupply": 0,
+      "usedSupply": 12000000,
       "usedNormalWithdraw": 0,
       "usedRestoration": 0,
-      "normalCount": 0,
+      "normalCount": 1,
       "restorationCount": 0
     },
-    "consumption_all_zero": true,
-    "mode": "initial",
-    "note": "Initial activation requires a PAUSED, never-active controller at epoch 0 with zero consumption across ALL FIVE dimensions, immutable bindings pointing at this installation, and the market and lineage the installation declared (V4 \u00a76). The controller's seven key immutables are compared with the declared keys: a controller bound to budget keys the Roles side never configured would read zero everywhere and look clean."
+    "consumption_all_zero": false,
+    "mode": "handover",
+    "note": "HANDOVER MODE: this controller is expected to have run. Its bindings, keys, market and lineage are checked; its epoch and consumption are read, not required to be zero. Initial activation requires a PAUSED, never-active controller at epoch 0 with zero consumption across ALL FIVE dimensions, immutable bindings pointing at this installation, and the market and lineage the installation declared (V4 \u00a76). The controller's seven key immutables are compared with the declared keys: a controller bound to budget keys the Roles side never configured would read zero everywhere and look clean."
   },
   "identities": {
     "read": true,
@@ -349,7 +349,7 @@
       "obligation": "One stated observation block for every state read",
       "section": "observation",
       "satisfied": true,
-      "evidence": "block 51353229 on chain 8453; every call/storage read pinned to it"
+      "evidence": "block 51353232 on chain 8453; every call/storage read pinned to it"
     },
     {
       "obligation": "The intended installation is declared in advance, not inferred",
@@ -406,10 +406,10 @@
       "evidence": "USDC allowances {'morpho': 0, 'roles': 0, 'permit2': 0, 'held_controller': 0}"
     },
     {
-      "obligation": "The controller is paused at epoch 0 with zero consumption in all five dimensions",
+      "obligation": "The controller's epoch and consumption in all five dimensions are readable",
       "section": "held_controller",
       "satisfied": true,
-      "evidence": "active=False, epoch=0, consumption={'usedSupply': 0, 'usedNormalWithdraw': 0, 'usedRestoration': 0, 'normalCount': 0, 'restorationCount': 0}"
+      "evidence": "active=False, epoch=1, consumption={'usedSupply': 12000000, 'usedNormalWithdraw': 0, 'usedRestoration': 0, 'normalCount': 1, 'restorationCount': 0} (HANDOVER mode: a controller mid-life has spent budget, and that is the history the handover must carry, not a defect)"
     },
     {
       "obligation": "The controller inspected IS the declared one, owned by this Safe",

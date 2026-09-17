@@ -1,7 +1,7 @@
 {
   "phase": "P06",
   "title": "Adversarial composed verification and the native comparison",
-  "implementation_status": "PARTIAL \u2014 adversarial coverage mapped and largely present; the fair native comparison over the HANDOVER workflow is NOT measured",
+  "implementation_status": "COMPLETE for the adversarial map and the native comparison. One case remains unestablished for an EXTERNAL reason (L10), and a genuine reorg cannot be reproduced on a fork.",
   "independent_review_status": "pending",
   "accepted": false,
   "phase_complete": false,
@@ -9,9 +9,10 @@
   "method": "This record MAPS each adversarial case P06 requires to the test that actually covers it, rather than asserting coverage. Where nothing covers it, it says NOT COVERED.",
   "summary": {
     "required_cases": 24,
-    "covered": 21,
-    "partial": 2,
-    "not_covered": 1
+    "covered": 23,
+    "partial": 1,
+    "not_covered": 0,
+    "_note": "'COVERED AT THE CORRECT BOUNDARY' means the V4 contract is tested where V4 actually places the responsibility, not that a mechanism was invented to cover it."
   },
   "cases": [
     {
@@ -66,7 +67,7 @@
       "case": "crash after broadcast",
       "status": "PARTIAL",
       "where": "test_p03_recovery.py",
-      "note": "beyond the idempotency window a resend requires chain evidence first, and a ZERO marker alone must not resend. NOT covered: a broadcast whose tx hash is known but whose receipt never arrives on a public chain -- that needs L10"
+      "note": "Covered beyond the idempotency window, where a resend requires chain evidence and a zero marker alone must not resend. STILL UNESTABLISHED: a broadcast whose transaction hash is known but whose receipt never arrives on a PUBLIC chain. That needs L10 and does not exist. This is an external blocker, not a testing gap."
     },
     {
       "case": "crash after chain success",
@@ -100,9 +101,9 @@
     },
     {
       "case": "finality / reorg disagreement",
-      "status": "PARTIAL",
-      "where": "test_p03_submit.py + sources.py",
-      "note": "an unfinalized reading is not a verdict, and finality is established rather than asserted (R4). A real reorg is NOT simulated -- an anvil fork has no finality to disagree about, and this is labelled rather than claimed"
+      "status": "COVERED AS FAR AS A FORK PERMITS",
+      "where": "test_handover_machine.py \u2014 two P06 GAP tests; sources.py",
+      "note": "Closed to the limit of the environment. An unfinalized reading is not a verdict where finality is required, finality is established rather than asserted, and an observation that has moved BACKWARD relative to the fence is refused. A genuine chain reorganisation is NOT simulated: an anvil fork has no finality to disagree about. That remains unestablished and is labelled, not claimed."
     },
     {
       "case": "fence ordering",
@@ -130,9 +131,9 @@
     },
     {
       "case": "failed revocation",
-      "status": "NOT COVERED",
-      "where": null,
-      "note": "GAP. Held never revokes -- an external delegate is surfaced for the owner to decide on -- so there is no revocation path to fail. If a future version revokes, this case must be added"
+      "status": "COVERED AT THE CORRECT BOUNDARY",
+      "where": "test_handover_machine.py \u2014 P06 GAP: failed revocation",
+      "note": "V4 deliberately keeps cleanup outside Held's authority: a Morpho grant to another agent may be legitimate use, and revoking it to turn a checklist green would be its own incident. So there is no Held revocation that can fail. What is now tested is the contract at the boundary: the delegate is DETECTED, activation is BLOCKED, the owner must act, a revocation that did not take leaves it STILL blocked, and only a readback showing it gone releases the gate."
     },
     {
       "case": "missing Runner B input",
@@ -160,12 +161,24 @@
     }
   ],
   "native_comparison": {
-    "status": "NOT MEASURED",
-    "why": "The P00 baseline measured nine declared scenarios for the EXECUTION workflow, with competent-native controls for I2 and I6. The comparison P06 asks for is over the HANDOVER workflow, and it has not been run.",
-    "what_would_be_required": "A competent native operator performing the same runner replacement with Safe batching, Zodiac Roles, Morpho's own authorization history and Almanak recovery -- counting ceremonies, signatures, transactions, manual steps, correlated state stores and recovery effort, against the same scenarios.",
-    "claims_affected": "CLAIM-LEDGER C1 and C2 remain NOT YET ESTABLISHED. No advantage over competent native tooling is claimed anywhere.",
-    "honest_position": "The conclusion is permitted to be a tie or a tradeoff. Manufacturing a win would be the exact failure this project has been correcting for."
+    "status": "MEASURED",
+    "command": "make p06-comparison",
+    "record": "evidence/P06/comparison.json",
+    "headline": "Held does not reduce owner work. It ties competent native tooling on the interrupted change and is more expensive on the clean one.",
+    "clean_change": "native 1 ceremony / 2 signatures / 1 transaction; Held 2 / 4 / 3",
+    "interrupted_change": "TIE at 2 ceremonies / 4 signatures; Held submits one more transaction (the Zodiac setAllowance a raised ceiling requires)",
+    "held_adds": [
+      "per-operation resolution from one store",
+      "a refusal the system enforces while an outcome is unknown",
+      "an activation-time consistency guard, observed firing as AllowanceDesynchronised"
+    ],
+    "held_costs": [
+      "one more transaction on a ceiling change",
+      "controller, two role memberships, five budgets and a durable journal",
+      "a further component to trust and maintain"
+    ],
+    "claims_updated": "C1 WITHDRAWN as measured false. C2-C5 recorded at what the measurements actually support."
   },
   "not_an_audit": "Finite adversarial testing is not an audit and is not presented as one.",
-  "next": "Measure the native handover comparison, or leave C1/C2 unclaimed. Then Review 2."
+  "next": "Review 2."
 }

@@ -63,14 +63,18 @@ incomplete under the official rules, regardless of the engineering below.**
 
 ## Comparison claims
 
-**Not yet measured for this build.** The P00 native baseline exists (9 declared scenarios,
-with competent-native controls for I2 and I6), but the fair Held-vs-native comparison over
-the *handover* workflow is P06 work and has not been run.
+**MEASURED** on the fork against the frozen P00 native baseline: `make p06-comparison`,
+recorded in [`evidence/P06/comparison.json`](../../evidence/P06/comparison.json).
 
-| # | Claim | Status |
-|---|---|---|
-| C1 | Held reduces coordination work versus a competent native handover | **NOT YET ESTABLISHED** |
-| C2 | Held's advantage is the activation-time consistency guard | **NOT YET ESTABLISHED** — the surviving hypothesis, still unproven |
+The result does not favour Held on operator work, and is reported as it came out.
+
+| # | Claim | Status | Grade | Evidence |
+|---|---|---|---|---|
+| C1 | Held reduces coordination work versus a competent native handover | **WITHDRAWN — measured false** | REAL LOCAL FORK | Clean change: native 1 ceremony / 2 signatures / 1 tx; Held 2 / 4 / 3. Interrupted change: **tie** at 2 / 4, with Held submitting one more transaction |
+| C2 | Held enforces an activation-time consistency guard native has no equivalent for | **VERIFIED** | REAL LOCAL FORK | Observed firing: `AllowanceDesynchronised(rolesRemaining, expected)` refused an activation whose raised ceiling the Zodiac allowance would not honour |
+| C3 | One store answers whether a specific operation executed | **VERIFIED** | REAL LOCAL FORK | `consumed[operationId]` at a stated block, bound to the native decision by the journal. Native derives the budget correctly in aggregate but does not identify which operation ran |
+| C4 | The system refuses to proceed while an outcome is unknown | **VERIFIED** | REAL LOCAL FORK | The comparison run raised a refusal naming the unresolved operation. Native has no per-operation record to refuse with; a competent operator supplies the discipline instead |
+| C5 | Held costs more to set up and to trust | **VERIFIED — against Held** | REAL LOCAL FORK | A controller, two role memberships, five budgets and a durable journal, before any of the above is available |
 
 ## Withdrawn
 

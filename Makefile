@@ -5,7 +5,7 @@ export PY
 export SDK
 
 .PHONY: check-plan-digests check-phase-00 check-phase-01 check-phase-02 check-phase-03-local check-phase-03 check-phase-03-composed check-bootstrap-rehearsal check-phase-04 check-phase-05 check-manifests check-probe \
-        check-baseline check-native-workflow gate-tests hero-demo clean-install submission-gate
+        check-baseline check-native-workflow gate-tests hero-demo clean-install submission-gate p06-comparison
 
 check-phase-00:
 	@rc=0; \
@@ -65,6 +65,11 @@ check-phase-04:
 ## REAL LOCAL FORK evidence. Not public-chain evidence.
 hero-demo:
 	@./script/run_hero_demo.sh
+
+## P06: the HELD half of the frozen handover comparison, measured on the fork against
+## the native half in docs/baseline/native-measurements.json.
+p06-comparison:
+	@./script/run_p06_comparison.sh
 
 ## P07: can somebody else pick this up? Clones into an isolated directory and checks
 ## submodules, portability, committed secrets, documented environment and the gates that

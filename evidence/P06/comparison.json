@@ -1,0 +1,118 @@
+{
+  "record": "P06 \u2014 measured Held/native handover comparison",
+  "evidence_grade": "REAL LOCAL FORK",
+  "operation": {
+    "description": "Raise the cumulative supply ceiling 50,000 -> 80,000 USDC and replace operator A with operator B, with 30,000 already consumed.",
+    "correct_remaining_after": "50000000000",
+    "units": "USDC base units (6 decimals)"
+  },
+  "native_source": "docs/baseline/native-measurements.json (protocol frozen before run)",
+  "native": {
+    "clean": {
+      "ceremonies": 1,
+      "individual_signatures": 2,
+      "submitted_transactions": 1,
+      "manual_steps": 5
+    },
+    "interrupted_competent": {
+      "ceremonies": 2,
+      "individual_signatures": 4,
+      "submitted_transactions": 2,
+      "finding": "The I2 defect is a property of the NAIVE single-batch procedure, not of the native tooling. Fencing first and deriving the new ceiling from the reconciled on-chain figure closes it completely. The cost is that the change cannot be one atomic ceremony: it necessarily becomes two (fence, then activate"
+    }
+  },
+  "held": {
+    "interrupted": {
+      "ceremonies": 2,
+      "individual_signatures": 4,
+      "submitted_transactions": 3,
+      "chain_reads": 5,
+      "stores_consulted_for_resolution": [
+        "ERC20 approval state",
+        "Held controller consumed[operationId]",
+        "Held controller state",
+        "Morpho authorization state",
+        "Safe state",
+        "Zodiac Roles state"
+      ],
+      "stores_consulted_count": 6,
+      "manually_correlated_fields": 0,
+      "recovery_steps": 2,
+      "refusals_raised": [
+        "refused while unresolved: ['UNRESOLVED:0x37ac8a6892009552c1cbc5baabeb6a907ec0fd8f5147c66efaa7401c82776ce2']"
+      ]
+    },
+    "remaining_after": 79988000000,
+    "used_preserved": 12000000,
+    "final_runner": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+    "final_epoch": 2
+  },
+  "findings": [
+    {
+      "dimension": "owner ceremonies, clean change",
+      "result": "NATIVE IS CHEAPER",
+      "detail": "native does the clean change in 1 ceremony / 2 signatures / 1 transaction. Held needs 2 ceremonies / 4 signatures / 3 transactions, because fence and activate are deliberately separate owner acts.",
+      "held_claims_advantage": false
+    },
+    {
+      "dimension": "owner ceremonies, interrupted change",
+      "result": "TIE",
+      "detail": "both reach the correct end state in 2 ceremonies / 4 signatures / 2 transactions. The competent native procedure -- fence first, let it settle, read the consumed allowance, derive the new remaining, then activate -- is as cheap as Held's.",
+      "held_claims_advantage": false
+    },
+    {
+      "dimension": "submitted transactions, interrupted change",
+      "result": "NATIVE IS CHEAPER",
+      "detail": "native I2-competent submits 2 transactions; Held submitted 3. The extra one is the Zodiac setAllowance that a raised ceiling requires. A real owner batches it with the activation into one MultiSend, which is why the ceremony count ties at 2 while the transaction count does not.",
+      "held_claims_advantage": false
+    },
+    {
+      "dimension": "stores consulted to resolve an in-flight operation",
+      "result": "HELD IS NARROWER",
+      "detail": "Held answers 'did that operation execute?' from ONE store: consumed[operationId] at a stated block, already bound to the native decision by the durable journal. The competent native procedure derives the answer in aggregate by reading the Roles allowance before and after the fence -- correct for the BUDGET, but it does not identify WHICH operation executed. Held consulted 6 stores across the whole handover; the resolution question itself needed 1.",
+      "held_claims_advantage": true,
+      "caveat": "Native's aggregate derivation reaches the correct remaining capacity on the first attempt. Per-operation identity matters for the strategy's own bookkeeping and for refusing to proceed, not for the budget arithmetic."
+    },
+    {
+      "dimension": "behaviour when the outcome is unknown",
+      "result": "HELD REFUSES; NATIVE HAS NOTHING TO REFUSE WITH",
+      "detail": "Held raised 1 refusal(s) naming the unresolved operation, and would not advance. The native procedure has no per-operation record, so there is no state in which it can decline: a competent operator supplies the discipline instead.",
+      "held_claims_advantage": true,
+      "caveat": "This is a property of the SYSTEM, not of the operator. A careful native operator following the V4 \u00a76 order reaches the same correct outcome."
+    },
+    {
+      "dimension": "setup and trust cost",
+      "result": "HELD COSTS MORE",
+      "detail": "Held requires deploying and installing a controller, granting it sole membership of two Zodiac roles, configuring five budgets, and running a durable journal. Native requires none of that. That cost is real and is paid before any of the advantages above are available.",
+      "held_claims_advantage": false
+    },
+    {
+      "dimension": "activation-time consistency guard",
+      "result": "HELD ENFORCES SOMETHING NATIVE DOES NOT",
+      "detail": "Observed, not asserted: the first activation attempt reverted AllowanceDesynchronised(rolesRemaining, expected) because the ceiling had been raised while the Zodiac allowance was left alone. The controller refuses to install a policy the native Roles layer would not honour, so the two layers cannot silently disagree. Native has no equivalent check -- a competent operator simply has to remember to update both, which the I1-clean MultiSend does.",
+      "held_claims_advantage": true,
+      "caveat": "This prevents an operator ERROR. It does not make native incapable; it makes one specific native mistake impossible rather than merely unlikely."
+    }
+  ],
+  "limits": [
+    "Local Base-mainnet fork only. No public transaction, no deployment, no spending.",
+    "Operator-work counts are counts of discrete contract-level actions this harness performs, exactly as the native baseline states of its own numbers. Not a human-factors study.",
+    "The native half was measured earlier against a protocol frozen before that run; this half was measured after Held existed. The counters and the operation are the same, but the two halves were not run simultaneously.",
+    "Almanak reconfiguration and the authenticated KeeperHub boundary are NOT exercised on either side. L10 is open."
+  ],
+  "conclusion": {
+    "headline": "Held does not reduce owner work. It ties competent native tooling on the interrupted change and is more expensive on the clean one.",
+    "what_held_demonstrably_adds": [
+      "Per-operation resolution: one store answers whether a specific operation executed, bound to the native decision. Native derives the BUDGET correctly in aggregate but does not identify which operation ran.",
+      "A refusal the system enforces: the handover will not advance while an outcome is unknown. Native relies on operator discipline for the same outcome.",
+      "An activation-time consistency guard that refuses a policy the native Roles layer would not honour -- observed firing in this run."
+    ],
+    "what_held_costs": [
+      "One more submitted transaction on a ceiling change.",
+      "Deploying and installing a controller, two Zodiac role memberships, five budgets and a durable journal, before any of the above is available.",
+      "A further component to trust and maintain."
+    ],
+    "valid_reading": "Held buys enforcement and per-operation evidence at the price of setup and one extra transaction. A competent native operator following the V4 section 6 order reaches the same correct end state.",
+    "what_is_NOT_claimed": "That Held is cheaper, faster, or that native tooling cannot do this. The measurements say otherwise and are reported as they came out."
+  }
+}
