@@ -70,6 +70,7 @@ hero-demo:
 ## privacy, understandable owner approval, and the recovery export.
 check-phase-05:
 	@$(PY) tests/integration/test_p05_console.py
+	@$(PY) tests/integration/test_p05_live_views.py
 
 ## P03 LOCAL HALF ONLY: native ActionBundle interception and envelope binding.
 ## This does NOT establish the hosted KeeperHub route. That gate needs an
