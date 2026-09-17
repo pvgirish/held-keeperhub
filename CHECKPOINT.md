@@ -14,10 +14,12 @@ UTC and every assistant entry in it records model `claude-opus-5`. That comes fr
 session transcript's **runtime metadata**, not from the `Co-Authored-By` trailer — a commit
 label is not evidence of which model served a session. No second agent contributed.
 
-**Review status, corrected 2026-09-17.** The reviewer *has* since inspected the source of
-`67eed71` and reproduced its behaviour: see `docs/plan/REVIEW-67eed71.md`. That review
-confirms a set of repairs (preserve them) and leaves findings N1–N3 and B1–B4 open. It is an
-external review of one commit, not acceptance of any phase.
+**Review status, 2026-09-17.** The reviewer inspected the source of `67eed71` and
+reproduced its behaviour: see `docs/plan/REVIEW-67eed71.md`. It confirmed a set of repairs
+(preserved, not redone) and raised findings N1–N3 and B1–B4, **all of which are now closed
+and regressed**. That was an external review of one commit's adapter and collector; it is
+not acceptance of any phase, and the corrections it prompted have themselves not been
+reviewed by anyone but their author.
 
 ## Status at this checkpoint
 
@@ -26,7 +28,7 @@ external review of one commit, not acceptance of any phase.
 | **P00** — route evidence + measured native baseline | Local gates reported passing. **Independent acceptance pending.** |
 | **P01** — types, identity, journal, result/ack | Local gates reported passing (31 tests). **Independent acceptance pending.** |
 | **P02** — typed controller + native Roles enforcement | Local gates reported passing (50 tests in three stages), including property/fuzz coverage and the exact Morpho rounding/share-effect contract. **Independent acceptance pending.** |
-| **P03** — native interception → signing → KeeperHub → reconciliation | **PARTIAL.** 130 local tests + 16 composed checks reported. **Local corrections N1–N3 and B1–B4 are open** (see below), *and* the composed PUBLIC execution is blocked on **L10**. Neither stubbed nor simulated. **Independent acceptance pending.** |
+| **P03** — native interception → signing → KeeperHub → reconciliation | **PARTIAL.** 163 local tests + 16 composed checks. The 67eed71 review's local findings **N1–N3 and B1–B4 are closed and regressed** (2026-09-17); the composed PUBLIC execution remains blocked on **L10**. Neither stubbed nor simulated. **Independent acceptance pending for everything, including the corrections.** |
 | **P04** — authority inventory, owner fencing, change, handover | **PARTIAL PREPARATION** — fork contract tests only; the required runtime service does not exist. |
 | **P05** — the private operator console | **PARTIAL PREPARATION** — interface prototype, not connected to real service state. |
 
@@ -35,16 +37,18 @@ This is a checkpoint, not a claim of phase completion.
 **Corrected 2026-09-17.** An earlier version of this table said P03's local half was
 *finished* and that P04 was the next task. Both were wrong, in two separate ways:
 
-1. **The test count was stale** (89). The authoritative record,
-   `evidence/P03/acceptance.json`, reports **130 local** and **16 composed**. Those are the
-   executor's own recorded results; the 2026-09-17 pass did **not** rerun them.
-2. **The local half is not finished.** The external review of this very commit
-   (`docs/plan/REVIEW-67eed71.md`) found the native recovery contract still has unenforced
-   boundaries and the bootstrap rehearsal never verifies the controller-only Roles
-   installation. Its probes were rerun here on 2026-09-17 and **every finding reproduced**.
+1. **The test count was stale** (89). It was **130** at `67eed71`, and is **163** now that
+   the review's regressions are in. All counts in this file were re-run on 2026-09-17.
+2. **The local half was not finished.** The external review of this very commit
+   (`docs/plan/REVIEW-67eed71.md`) found the native recovery contract still had unenforced
+   boundaries and the bootstrap rehearsal never verified the controller-only Roles
+   installation. Its probes were rerun here on 2026-09-17 and **every finding reproduced**
+   before anything was changed. All seven are now closed with regressions that assert the
+   refusal; see `evidence/P03/acceptance.json` under `review_67eed71`.
 
-So **"L10 is the only blocker" is false.** L10 is the separate external-access dependency;
-N1–N3 and B1–B4 are local work that does not need it.
+So **"L10 is the only blocker" was false while those were open.** With them closed, L10 is
+again the outstanding external dependency for the hosted half — but closing them is not
+acceptance: Claude authored and ran the corrections too.
 
 The composed public-execution evidence that Criterion 2 needs still does not exist: no
 contract is deployed, no funds are spent, and the authenticated KeeperHub route has never
@@ -74,17 +78,18 @@ been called.
 | `HELD_PRICE_MODE=testing-only make check-phase-00` | PASS (6 gates) | `evidence/P00/`, `docs/baseline/native-measurements.json` |
 | `make check-phase-01` | PASS, 31 tests | `evidence/P01/report.md`, `tests/core/run_tests.py` |
 | `make check-phase-02` | PASS, 50 tests in three stages | `evidence/P02/report.md` |
-| `make check-phase-03-local` | PASS, **130** tests in six files | `evidence/P03/acceptance.json` |
+| `make check-phase-03-local` | PASS, **163** tests in eight files | `evidence/P03/acceptance.json` |
 | `make check-phase-03-composed` | PASS, **16** checks (3 fork tests + 5 Python), local only | `evidence/P03/acceptance.json` |
 | `make check-phase-03` | **INCOMPLETE by design** — runs every local check, then exits non-zero because the hosted execution has not been performed | `evidence/P03/acceptance.json` |
 | `docs/plan/review-67eed71/test_native_checkpoint.py` | 12 cases — 9 fixed controls pass, **3 findings reproduced** | `docs/plan/review-67eed71/PROVENANCE.md` |
 | `docs/plan/review-67eed71/test_bootstrap_collector.py` | 12 cases — 8 correct rejections, **4 FALSE PERMITTED** | `docs/plan/review-67eed71/PROVENANCE.md` |
 
-The first four rows are the **executor's own recorded results**, carried from
-`evidence/P03/acceptance.json`; the 2026-09-17 pass did not rerun them. The last two rows
-**were** run on 2026-09-17, against the committed sources verified by Git blob hash. Their
-exit status is not a phase gate — they reproduce known behaviour using a synthetic journal
-and scripted `cast` responses, with no SDK, Forge, fork or RPC.
+Every row above was run on 2026-09-17 against the working tree, with
+`HELD_PRICE_MODE=testing-only`. The two reviewer probes reproduce the pre-fix behaviour
+against the packet's frozen copies of the sources, verified by Git blob hash; their exit
+status is not a phase gate, and they use a synthetic journal and scripted `cast` responses
+with no SDK, Forge, fork or RPC. The live equivalents are the P03 local and composed gates
+and `make check-bootstrap-rehearsal`.
 
 `check-phase-02` stage 0 is 14 **property/fuzz** tests against an independent reference
 predicate (256 runs each, pinned seed). Stage 1 is 4 **labelled adversarial mock** tests
@@ -95,8 +100,11 @@ conflated.
 
 `check-phase-03-local` is 17 interception + 9 native-bundle (against the REAL pinned
 compiler) + 18 signing + 28 KeeperHub client + 18 submission binding/reconciliation + 20
-crash-restart recovery = **130**. A further 20 bootstrap-collector decision tests run the
-real collector as a subprocess against a scripted `cast` shim, including a positive control.
+crash-restart recovery + 15 native decision/recovery + 38 bootstrap-collector decisions =
+**163**. The collector suite runs the real collector as a subprocess against a scripted
+`cast` shim and includes positive controls; the native decision/recovery suite uses a
+synthetic journal and machine and is a control-flow test, not a substitute for the composed
+run.
 Every KeeperHub test runs against `OfflineTransport`, which stamps `hosted=false`; **none of
 them establish L10**, and three exist specifically to prove a local result cannot be filed as
 if they did.
@@ -110,15 +118,9 @@ Python signer reproduces the signature **byte for byte**.
 
 ## Still pending
 
-1. **N1–N3 and B1–B4** — the open findings of `docs/plan/REVIEW-67eed71.md`. **This is the
-   next task**, it is local, and it does not depend on L10. N finishes the native decision
-   and recovery contract (dirty-object authority at the public entry point; checkpoint
-   relationship validated during `restore`, not only `apply`; the producer bound before
-   dispatch in the real composed lifecycle). B finishes the initial-activation rehearsal
-   (deploy through the tested controller-only Roles route rather than a bare `enableModule`;
-   collect against the full declared installation; reject malformed and unsupported values
-   instead of permitting them; decode authorization history from the pinned event rather than
-   scraping hex words). `RESUME.md` carries the full catalogue.
+1. **Independent review of the N1–N3 / B1–B4 corrections.** They are closed and regressed,
+   but self-testing is not acceptance. `RESUME.md` carries the full catalogue of what each
+   finding was; `evidence/P03/acceptance.json` records how each was closed.
 2. P06 composed adversarial faults, P07 install/release evidence, P08 assembly. **P04 and P05
    are partial preparation, not done** — P04 has fork contract tests but no runtime service;
    P05 is an unconnected interface prototype.
@@ -144,15 +146,13 @@ Python signer reproduces the signature **byte for byte**.
 which is what made it look next, but it is not next: the review of this commit left local
 P03 work open, and P04's own record already reads PARTIAL PREPARATION.
 
-Execute **N1–N3 then B1–B4** from `docs/plan/REVIEW-67eed71.md`, in the order that review
-sets out: close N against the actual production entry points, the real journal and the pinned
-native consumer; then correct the paused deployment wiring and complete B with
-original-checklist coverage, live fork readbacks, typed history tests and positive controls.
+**Updated 2026-09-17: N1–N3 and B1–B4 are done.** The next task is the bounded
+L10 / public-action request, once the corrections have been independently reviewed.
+`evidence/P03/execution-manifest.json` is the concrete public execution, written before the
+fact; executing it needs authorization to deploy a contract and spend funds, which has not
+been given.
 
-Use `docs/plan/review-67eed71/`'s probes to reproduce and localize — never as a substitute
-for integration evidence. Preserve the repairs the review confirms (9 native controls, 8
-collector controls) and do not redo them. Do not require full P04 early and do not reopen
-P00's native comparison.
+Do not require full P04 early and do not reopen P00's native comparison.
 
 ## Reproducing
 

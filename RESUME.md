@@ -71,7 +71,22 @@ confirmed-fixed control still passed.** Details and the case-by-case table are i
 machine and scripted `cast` responses, run no SDK/Forge/fork/RPC, and **their exit status is
 not a phase gate**. Closing the findings needs the real entry points and live fork readbacks.
 
-### Open work — the review's own catalogue
+### The review's catalogue — ALL SEVEN CLOSED 2026-09-17, pending independent review
+
+**Every finding below was reproduced against the committed code before anything was
+changed, and each is now closed with a regression that asserts the REFUSAL rather than a
+changed value.** The fixes the review explicitly confirms — 9 native and 8 collector
+controls — were preserved, not redone; they are kept as an explicit `PRESERVED` group in
+`tests/integration/test_p03_native_checkpoint.py`.
+
+Commits: `1f912de` (N1–N3), `05197d0` (B1), and the B2–B4 commit that follows this file.
+Per-finding detail is in `evidence/P03/acceptance.json` under `review_67eed71`.
+
+**Closing these is not acceptance.** Claude authored and ran this work too. The catalogue
+is kept below in full because it says what was wrong and why, which is what a later
+reviewer needs.
+
+
 
 **N — finish the native recovery contract**
 
@@ -138,19 +153,38 @@ not a phase gate**. Closing the findings needs the real entry points and live fo
   candidate, separate history success from completeness from compatible live grants, and add
   genuine grant/revoke and unrelated-event controls.
 
-**Consequence for the handover: "L10 is the only blocker" and "P03-local is finished" are
-both wrong.** N1–N3 and B1–B4 are local corrections open *in addition to* L10, which is a
-separate external-access dependency.
+**Consequence for the handover, now resolved:** "L10 is the only blocker" was wrong while
+N1–N3 and B1–B4 were open. With them closed, **L10 is once again the outstanding external
+dependency for P03's hosted half** — but P03 is still not accepted, and nothing here has
+been independently reviewed.
+
+## Gate state after the corrections
+
+```
+make check-phase-03-local           163 tests   (was 130)
+  interception 17 · native-bundle 9 · signing 18 · KeeperHub 28 · submission 18
+  · crash/restart recovery 20 · native decision/recovery 15 (new)
+  · bootstrap-collector decisions 38 (was 20)
+make check-phase-03-composed        16 checks, PASS on the pinned fork
+make check-bootstrap-rehearsal      9 sections COMPLETE, 13/13 obligations (fork only)
+make check-phase-02                 50 tests, three stages, PASS
+make check-phase-04                 10 tests, PASS
+make check-phase-03                 INCOMPLETE by design — L10
+```
+
+The composed run's action hash is `0x51bb5c6557d3ea42…`, byte-identical to the one recorded
+before this work, so driving the lifecycle from the real producer did not change the
+economic bytes. Every run needs `HELD_PRICE_MODE=testing-only` and `PY=~/venv312/bin/python`.
 
 ## Next task
 
-Execute **N1–N3** and **B1–B4** above, in the review's stated order: close N with the actual
-production entry points, journal and pinned native consumer; then correct the paused
-deployment wiring and complete B with original-checklist coverage, live fork readbacks, typed
-history tests and positive controls. Use the packet's probes to reproduce and localize, never
-as a substitute for integration evidence. Preserve the fixes the review explicitly confirms —
-9 native and 8 collector controls — and do not redo them. Keep positive controls and evidence
-labels.
+**Independent review of the N1–N3 / B1–B4 work**, then the bounded L10 / public-action
+request. `evidence/P03/execution-manifest.json` is the concrete public execution, written
+before the fact as a commitment; executing it needs authorization to deploy a contract and
+spend funds, which has not been given.
+
+P04's runtime authority service and P05's connected console remain PARTIAL PREPARATION and
+are the phase work after that.
 
 Not authorized by that review: full P04 early, reopening P00's native comparison, public
 deployment, funding, broadcast, publication, billing or routing-hook changes, blanket

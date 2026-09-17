@@ -1,271 +1,288 @@
 {
- "phase": "P03",
- "title": "Native interception, runner signing, the KeeperHub client and the submission path",
- "implementation_status": "PARTIAL \u2014 local defects C1-C4 repaired; the required composed hosted execution does not exist",
- "independent_review_status": "pending",
- "accepted": false,
- "accepted_note": "Claude authored and ran this. Self-testing is not independent acceptance.",
- "gate": {
-  "command": "make check-phase-03",
-  "result": "INCOMPLETE by design \u2014 runs every local check, then exits non-zero because the required hosted execution has not been performed. The prompt's own command cannot read as a pass while L10 is open.",
-  "local_command": "make check-phase-03-local",
-  "interception": "17 passed",
-  "native_bundle": "9 passed (against the REAL pinned compiler)",
-  "signing": "18 passed",
-  "keeperhub_wire_contract": "28 passed",
-  "submission_binding_and_reconciliation": "18 passed",
-  "crash_restart_recovery": "20 passed",
-  "total_local": 130,
-  "composed": "make check-phase-03-composed \u2014 PASS, 16 checks (local only)",
-  "bootstrap_collector_decisions": "20 passed (incl. positive control)"
- },
- "what_is_established": {
-  "native_connection": "CompilationResult -> action_bundle -> Held record -> admission, with economic calldata copied byte for byte. The producer verdict is strictly fail-closed: exact status set, no prefix match, no default success for a missing verdict, FAILED+is_safety_refusal preserved as a refusal, PARTIAL refused, self-contradictory SUCCESS refused, and a declared intent_type that disagrees with the family decoded from calldata refused.",
-  "cross_language_action_hash": "Python -> Solidity. fixtures/crosslang-vectors.json carries its own provenance (producer, SDK commit read from the imported tree, record version, calldata digest) and is only written when the installed SDK matches the pin.",
-  "cross_language_signing": "Solidity -> Python, the reverse direction, because the envelope digest commits to the domain separator and therefore to the controller address, which Python cannot know before the fork deploys it. The fork publishes envelope, digest and signature; the Python signer reproduces the signature BYTE FOR BYTE from held_core alone. Two implementations sharing no code agree on both the digest and the ECDSA output.",
-  "signing_discipline": "Keys are referenced (env:NAME, keystore:/path), never held. A key-shaped 'reference' is refused. sign() recovers from its own output and requires the configured runner, and rejects non-low-s output, so a signature the controller would reject is caught locally instead of after an execution is spent.",
-  "executor_semantics": "Execution keys bound to the attempt (retry reuses, replacement does not) and sent as the documented Idempotency-Key HEADER. Exponential backoff with jitter for our own guess; a server Retry-After is obeyed exactly, never shortened. The two documented 409 codes are separate outcomes and neither is retried. Every ambiguous result -- timeouts, dropped connections, all 5xx, unrecognised statuses and undocumented 409 codes -- is UNKNOWN and never REJECTED.",
-  "submission_ordering": "The operation is DISPATCHED and the exact replayable request is durable in ONE transaction BEFORE any network I/O, verified by opening a SEPARATE connection to the same SQLite file at the moment the request goes out, and by SIGKILLing a real child process mid-send. A restart resumes the original attempt under its original key and makes zero duplicate network calls.",
-  "reconciliation": "The verdict comes from the controller's consumed[operationId], compared for EQUALITY with the payload hash the JOURNAL durably bound -- not a caller-supplied expectation, not an execution id, not a transaction hash, and not KeeperHub's status. Evidence must also carry the chain id, controller, block and finality it was read at; wrong scope or an unfinalized reading is refused.",
-  "request_binding": "The submitted request IS the signed authorization: it is constructed from the admitted action and the signature just produced, and re-encoded to byte equality before sending. submit() has no calldata parameter."
- },
- "what_is_NOT_established": {
-  "L10": "BLOCKED-UNKNOWN, unchanged. No KeeperHub organisation API key exists, so the authenticated caller/payer route has never been called. It is neither stubbed nor simulated.",
-  "anti_simulation_measures": [
-   "Only HttpsTransport can produce hosted=true, and it requires an https:// origin with a real credential.",
-   "OfflineTransport stamps hosted=false on everything it touches.",
-   "SendResult.assert_hosted_evidence() refuses a non-hosted result, so no local fixture can be filed as an L10 pass.",
-   "Three tests exist solely to prove a local result cannot pass as hosted evidence."
-  ],
-  "public_chain": "NOTHING is deployed, funded or executed on any public chain. All controller evidence is from a Base-mainnet fork at block 51353212.",
-  "chain_reader_scope": "The reconciliation tests use an in-test chain double. It stands in for chain ACCESS, not chain BEHAVIOUR -- that the controller writes consumed[id]=payloadHash in the same transaction as the economic effect is proven separately against real pinned Morpho on the fork in P02."
- },
- "defect_found_and_fixed_this_phase": {
-  "what": "The first draft of KeeperHubClient.preflight() used GET /api/chains as the authentication check.",
-  "why_it_was_wrong": "That endpoint is public. Re-verified live on 2026-09-16: it answers 200 with the full catalog and no credential at all. A preflight built on it would have reported 'passed' for an invalid key and for no key -- a vacuous check standing exactly where L10 is supposed to be.",
-  "fix": "preflight() is now a SIMULATE-mode call on the authenticated contract-call route. The public catalog is its own explicitly-unauthenticated method that sends no credential. A test asserts preflight targets the authenticated path and does not broadcast."
- },
- "open_unknowns": {
-  "server_side_encoding": "Whether KeeperHub's encoder reproduces the intended calldata from functionName/functionArgs. Needs one authenticated dry run (L10).",
-  "response_schema": "Execution-id and transaction-hash field names are read defensively (executionId|id, transactionHash|txHash) because the authenticated response shape has not been observed.",
-  "resolved_since_the_review": "The chainId field is documented as the numeric chain id. The earlier 'internal catalog id vs numeric' uncertainty is CLOSED and did not require an org key -- recording it as blocked was itself a small error."
- },
- "manifest": "evidence/P03/execution-manifest.json -- the concrete public execution, written BEFORE the fact as a commitment. Executing it would require deploying a contract and spending funds on a public chain, which is not authorized.",
- "completeness": "P03 is NOT complete. The abc0fdd review rejected the earlier 'local half complete' claim and found four local implementation defects, all now repaired with regressions. The required KeeperHub public execution remains blocked on L10.",
- "next": "Connect one genuine LOCAL composed run (native producer -> admitted action -> signature -> typed request -> controller effect on the fork -> durable/native result and recovery), then prepare the bounded L10/public-action request.",
- "phase_complete": false,
- "review_findings_repaired": {
-  "C1_wire_contract": {
-   "was": "Sent `to`/`data`; put `idempotencyKey` in the JSON body with no header; polled /api/execute/{id}; collapsed every 409 into IN_PROGRESS. The client retried ambiguous failures while sending NO idempotency header, so the retry was not protected by the mechanism its own comments claimed.",
-   "now": "Documented body (contractAddress, chainId, functionName, functionArgs and abi as JSON STRINGS, value, strict-boolean simulate); Idempotency-Key HEADER; GET /api/execute/{id}/status with X-Poll-Interval-Hint; 202 recognised as the documented write success.",
-   "409_split": "idempotency_conflict (same key, DIFFERENT body) is its own outcome and is NEVER retried or polled \u2014 Held derives both key and body deterministically, so it indicates a determinism bug in our own request. idempotency_in_progress is IN_PROGRESS. An undocumented 409 code is UNKNOWN rather than guessed.",
-   "additional_defects_found_while_verifying": [
-    "403 is documented as insufficient scope OR SPENDING CAP EXCEEDED, not only a bad credential. The message now names both, and the mcp:read/mcp:write scope split.",
-    "The backoff CAPPED a server Retry-After at max_seconds, silently SHORTENING documented pacing. It is now obeyed exactly; max_seconds bounds only our own guess.",
-    "A simulation returning 200 was classified ACCEPTED. SIMULATED is now its own outcome so a dry run can never be recorded as economic success."
-   ],
-   "source": "https://docs.keeperhub.com/api/direct-execution, reread 2026-09-16. Documented-schema evidence ONLY; no authenticated live call was made.",
-   "chain_id_field": "RESOLVED. The numeric chainId is documented; the earlier 'internal catalog id' uncertainty did not need an org key and should not have been recorded as blocked."
+  "phase": "P03",
+  "title": "Native interception, runner signing, the KeeperHub client and the submission path",
+  "implementation_status": "PARTIAL \u2014 the 67eed71 review's local findings N1-N3 and B1-B4 are closed and regressed; the required composed hosted execution does not exist (L10)",
+  "independent_review_status": "pending",
+  "accepted": false,
+  "accepted_note": "Claude authored and ran this. Self-testing is not independent acceptance.",
+  "gate": {
+    "command": "make check-phase-03",
+    "result": "INCOMPLETE by design \u2014 runs every local check, then exits non-zero because the required hosted execution has not been performed. The prompt's own command cannot read as a pass while L10 is open.",
+    "local_command": "make check-phase-03-local",
+    "interception": "17 passed",
+    "native_bundle": "9 passed (against the REAL pinned compiler)",
+    "signing": "18 passed",
+    "keeperhub_wire_contract": "28 passed",
+    "submission_binding_and_reconciliation": "18 passed",
+    "crash_restart_recovery": "20 passed",
+    "total_local": 163,
+    "composed": "make check-phase-03-composed \u2014 PASS, 16 checks (local only)",
+    "bootstrap_collector_decisions": "38 passed (incl. positive and empty-history controls)",
+    "native_decision_recovery": "15 passed (synthetic journal/machine; adapter control flow)",
+    "_count_note": "was 130. +15 native decision/recovery regressions, and the collector decision suite went 20 -> 38. No test was removed."
   },
-  "C2_crash_restart": {
-   "was": "record_attempt_before_send() committed a PENDING attempt but left the operation AUTHORIZED; DISPATCHED came only after the network call returned. A crash between left AUTHORIZED + PENDING, and the next submit() accepted that state, minted a NEW attempt id and NEW idempotency key, and sent a second unprotected request for work that may already have executed.",
-   "now": "Journal.claim_for_dispatch() moves the operation to DISPATCHED and persists the exact replayable request (idempotency key, request body, calldata, kind) in ONE transaction, before any I/O. A UNIQUE PARTIAL INDEX permits one PENDING BROADCAST attempt per operation, so concurrent submitters cannot both claim. submit() refuses with ResumeRequired when an unresolved attempt exists; resume() resends the IDENTICAL body under the IDENTICAL key.",
-   "beyond_the_window": "Past the documented 24h idempotency window the server no longer dedupes, so resume() refuses without chain evidence and resolves instead of resending if the operation already executed.",
-   "simulation_separated": "A dry run never claims the operation and never blocks a later real send.",
-   "verified_by": "Real SQLite close/reopen across processes, and a child process SIGKILLed mid-send by the transport itself. After SIGKILL the operation is DISPATCHED on disk with a resumable PENDING attempt, and a fresh process makes ZERO duplicate network calls.",
-   "schema": "Journal SCHEMA_VERSION 1 -> 2. Existing databases require an explicit migration; the version check refuses an unmigrated file rather than guessing."
+  "what_is_established": {
+    "native_connection": "CompilationResult -> action_bundle -> Held record -> admission, with economic calldata copied byte for byte. The producer verdict is strictly fail-closed: exact status set, no prefix match, no default success for a missing verdict, FAILED+is_safety_refusal preserved as a refusal, PARTIAL refused, self-contradictory SUCCESS refused, and a declared intent_type that disagrees with the family decoded from calldata refused.",
+    "cross_language_action_hash": "Python -> Solidity. fixtures/crosslang-vectors.json carries its own provenance (producer, SDK commit read from the imported tree, record version, calldata digest) and is only written when the installed SDK matches the pin.",
+    "cross_language_signing": "Solidity -> Python, the reverse direction, because the envelope digest commits to the domain separator and therefore to the controller address, which Python cannot know before the fork deploys it. The fork publishes envelope, digest and signature; the Python signer reproduces the signature BYTE FOR BYTE from held_core alone. Two implementations sharing no code agree on both the digest and the ECDSA output.",
+    "signing_discipline": "Keys are referenced (env:NAME, keystore:/path), never held. A key-shaped 'reference' is refused. sign() recovers from its own output and requires the configured runner, and rejects non-low-s output, so a signature the controller would reject is caught locally instead of after an execution is spent.",
+    "executor_semantics": "Execution keys bound to the attempt (retry reuses, replacement does not) and sent as the documented Idempotency-Key HEADER. Exponential backoff with jitter for our own guess; a server Retry-After is obeyed exactly, never shortened. The two documented 409 codes are separate outcomes and neither is retried. Every ambiguous result -- timeouts, dropped connections, all 5xx, unrecognised statuses and undocumented 409 codes -- is UNKNOWN and never REJECTED.",
+    "submission_ordering": "The operation is DISPATCHED and the exact replayable request is durable in ONE transaction BEFORE any network I/O, verified by opening a SEPARATE connection to the same SQLite file at the moment the request goes out, and by SIGKILLing a real child process mid-send. A restart resumes the original attempt under its original key and makes zero duplicate network calls.",
+    "reconciliation": "The verdict comes from the controller's consumed[operationId], compared for EQUALITY with the payload hash the JOURNAL durably bound -- not a caller-supplied expectation, not an execution id, not a transaction hash, and not KeeperHub's status. Evidence must also carry the chain id, controller, block and finality it was read at; wrong scope or an unfinalized reading is refused.",
+    "request_binding": "The submitted request IS the signed authorization: it is constructed from the admitted action and the signature just produced, and re-encoded to byte equality before sending. submit() has no calldata parameter."
   },
-  "C3_signature_binding": {
-   "was": "submit(admitted, envelope, calldata) signed the envelope and sent caller-supplied calldata, with nothing checking they corresponded.",
-   "now": "There is no calldata parameter. controller_abi.build_execute_call() constructs the ONE permitted typed invocation from the verified admitted action plus exactly the signature just produced, and refuses on operation-id, payload-hash or family disagreement. ContractCallRequest.verify_encoding() re-encodes the arguments and requires byte equality with the expected calldata before anything leaves.",
-   "selectors_verified": "executeSupply 0xfe6a574c and executeWithdraw 0xda3e8387, confirmed against `forge inspect` on the compiled controller rather than derived from my own type strings.",
-   "replay_property": "The persisted JSON body re-encodes to its own calldata, which is what makes resume() send identical bytes.",
-   "not_established": "That KeeperHub's SERVER-side encoder produces the same bytes from functionName/functionArgs. That needs one authenticated dry run and is blocked on L10. It is recorded, not assumed."
+  "what_is_NOT_established": {
+    "L10": "BLOCKED-UNKNOWN, unchanged. No KeeperHub organisation API key exists, so the authenticated caller/payer route has never been called. It is neither stubbed nor simulated.",
+    "anti_simulation_measures": [
+      "Only HttpsTransport can produce hosted=true, and it requires an https:// origin with a real credential.",
+      "OfflineTransport stamps hosted=false on everything it touches.",
+      "SendResult.assert_hosted_evidence() refuses a non-hosted result, so no local fixture can be filed as an L10 pass.",
+      "Three tests exist solely to prove a local result cannot pass as hosted evidence."
+    ],
+    "public_chain": "NOTHING is deployed, funded or executed on any public chain. All controller evidence is from a Base-mainnet fork at block 51353212.",
+    "chain_reader_scope": "The reconciliation tests use an in-test chain double. It stands in for chain ACCESS, not chain BEHAVIOUR -- that the controller writes consumed[id]=payloadHash in the same transaction as the economic effect is proven separately against real pinned Morpho on the fork in P02."
   },
-  "C4_durable_reconciliation": {
-   "was": "reconcile() loaded the journal operation but compared the chain marker with its payload_hash ARGUMENT, so a caller passing Q for an operation bound to P could drive CONFIRMED off a marker of Q.",
-   "now": "The journal's binding is authoritative; a caller expectation that disagrees is an error. ChainReader returns ChainEvidence carrying chain id, controller, block number/hash and finality, and reconciliation refuses evidence from the wrong chain or controller and refuses an unfinalized reading."
+  "defect_found_and_fixed_this_phase": {
+    "what": "The first draft of KeeperHubClient.preflight() used GET /api/chains as the authentication check.",
+    "why_it_was_wrong": "That endpoint is public. Re-verified live on 2026-09-16: it answers 200 with the full catalog and no credential at all. A preflight built on it would have reported 'passed' for an invalid key and for no key -- a vacuous check standing exactly where L10 is supposed to be.",
+    "fix": "preflight() is now a SIMULATE-mode call on the authenticated contract-call route. The public catalog is its own explicitly-unauthenticated method that sends no credential. A test asserts preflight targets the authenticated path and does not broadcast."
+  },
+  "open_unknowns": {
+    "server_side_encoding": "Whether KeeperHub's encoder reproduces the intended calldata from functionName/functionArgs. Needs one authenticated dry run (L10).",
+    "response_schema": "Execution-id and transaction-hash field names are read defensively (executionId|id, transactionHash|txHash) because the authenticated response shape has not been observed.",
+    "resolved_since_the_review": "The chainId field is documented as the numeric chain id. The earlier 'internal catalog id vs numeric' uncertainty is CLOSED and did not require an org key -- recording it as blocked was itself a small error."
+  },
+  "manifest": "evidence/P03/execution-manifest.json -- the concrete public execution, written BEFORE the fact as a commitment. Executing it would require deploying a contract and spending funds on a public chain, which is not authorized.",
+  "completeness": "P03 is NOT complete. The abc0fdd review rejected the earlier 'local half complete' claim and found four local implementation defects, all now repaired with regressions. The required KeeperHub public execution remains blocked on L10.",
+  "next": "Independent review of the N1-N3 / B1-B4 work. Then the bounded L10/public-action request. P04's runtime authority service and P05's connected console remain PARTIAL PREPARATION.",
+  "phase_complete": false,
+  "review_findings_repaired": {
+    "C1_wire_contract": {
+      "was": "Sent `to`/`data`; put `idempotencyKey` in the JSON body with no header; polled /api/execute/{id}; collapsed every 409 into IN_PROGRESS. The client retried ambiguous failures while sending NO idempotency header, so the retry was not protected by the mechanism its own comments claimed.",
+      "now": "Documented body (contractAddress, chainId, functionName, functionArgs and abi as JSON STRINGS, value, strict-boolean simulate); Idempotency-Key HEADER; GET /api/execute/{id}/status with X-Poll-Interval-Hint; 202 recognised as the documented write success.",
+      "409_split": "idempotency_conflict (same key, DIFFERENT body) is its own outcome and is NEVER retried or polled \u2014 Held derives both key and body deterministically, so it indicates a determinism bug in our own request. idempotency_in_progress is IN_PROGRESS. An undocumented 409 code is UNKNOWN rather than guessed.",
+      "additional_defects_found_while_verifying": [
+        "403 is documented as insufficient scope OR SPENDING CAP EXCEEDED, not only a bad credential. The message now names both, and the mcp:read/mcp:write scope split.",
+        "The backoff CAPPED a server Retry-After at max_seconds, silently SHORTENING documented pacing. It is now obeyed exactly; max_seconds bounds only our own guess.",
+        "A simulation returning 200 was classified ACCEPTED. SIMULATED is now its own outcome so a dry run can never be recorded as economic success."
+      ],
+      "source": "https://docs.keeperhub.com/api/direct-execution, reread 2026-09-16. Documented-schema evidence ONLY; no authenticated live call was made.",
+      "chain_id_field": "RESOLVED. The numeric chainId is documented; the earlier 'internal catalog id' uncertainty did not need an org key and should not have been recorded as blocked."
+    },
+    "C2_crash_restart": {
+      "was": "record_attempt_before_send() committed a PENDING attempt but left the operation AUTHORIZED; DISPATCHED came only after the network call returned. A crash between left AUTHORIZED + PENDING, and the next submit() accepted that state, minted a NEW attempt id and NEW idempotency key, and sent a second unprotected request for work that may already have executed.",
+      "now": "Journal.claim_for_dispatch() moves the operation to DISPATCHED and persists the exact replayable request (idempotency key, request body, calldata, kind) in ONE transaction, before any I/O. A UNIQUE PARTIAL INDEX permits one PENDING BROADCAST attempt per operation, so concurrent submitters cannot both claim. submit() refuses with ResumeRequired when an unresolved attempt exists; resume() resends the IDENTICAL body under the IDENTICAL key.",
+      "beyond_the_window": "Past the documented 24h idempotency window the server no longer dedupes, so resume() refuses without chain evidence and resolves instead of resending if the operation already executed.",
+      "simulation_separated": "A dry run never claims the operation and never blocks a later real send.",
+      "verified_by": "Real SQLite close/reopen across processes, and a child process SIGKILLed mid-send by the transport itself. After SIGKILL the operation is DISPATCHED on disk with a resumable PENDING attempt, and a fresh process makes ZERO duplicate network calls.",
+      "schema": "Journal SCHEMA_VERSION 1 -> 2. Existing databases require an explicit migration; the version check refuses an unmigrated file rather than guessing."
+    },
+    "C3_signature_binding": {
+      "was": "submit(admitted, envelope, calldata) signed the envelope and sent caller-supplied calldata, with nothing checking they corresponded.",
+      "now": "There is no calldata parameter. controller_abi.build_execute_call() constructs the ONE permitted typed invocation from the verified admitted action plus exactly the signature just produced, and refuses on operation-id, payload-hash or family disagreement. ContractCallRequest.verify_encoding() re-encodes the arguments and requires byte equality with the expected calldata before anything leaves.",
+      "selectors_verified": "executeSupply 0xfe6a574c and executeWithdraw 0xda3e8387, confirmed against `forge inspect` on the compiled controller rather than derived from my own type strings.",
+      "replay_property": "The persisted JSON body re-encodes to its own calldata, which is what makes resume() send identical bytes.",
+      "not_established": "That KeeperHub's SERVER-side encoder produces the same bytes from functionName/functionArgs. That needs one authenticated dry run and is blocked on L10. It is recorded, not assumed."
+    },
+    "C4_durable_reconciliation": {
+      "was": "reconcile() loaded the journal operation but compared the chain marker with its payload_hash ARGUMENT, so a caller passing Q for an operation bound to P could drive CONFIRMED off a marker of Q.",
+      "now": "The journal's binding is authoritative; a caller expectation that disagrees is an error. ChainReader returns ChainEvidence carrying chain id, controller, block number/hash and finality, and reconciliation refuses evidence from the wrong chain or controller and refuses an unfinalized reading."
+    }
+  },
+  "still_not_established": {
+    "L10": "BLOCKED-UNKNOWN. No KeeperHub organisation API key. The authenticated route has never been called; it is neither stubbed nor simulated.",
+    "server_side_encoding": "Whether KeeperHub's encoder reproduces the intended calldata from functionArgs. One authenticated dry run would settle it.",
+    "composed_trace": "A LOCAL composed trace now exists (see composed_local_run). What is still missing is the same trace THROUGH KeeperHub, which is L10-blocked.",
+    "public_chain": "Nothing deployed, funded or executed on any public chain.",
+    "native_strategy_loop": "The acknowledgement boundary is connected to the real IntentStateMachine, but a full native strategy run driving many intents end to end is not exercised."
+  },
+  "composed_local_run": {
+    "gate": "make check-phase-03-composed",
+    "result": "PASS \u2014 3 fork tests + 5 Python checks",
+    "what_it_connects": "real pinned Almanak IntentCompiler -> CompilationResult (producer verdict checked) -> ActionBundle -> Held record -> admit_bundle -> AuthorizationEnvelope signed by the runner key -> the one permitted typed controller call, ABI-encoded -> executed VERBATIM by the real HeldController against real pinned Morpho on the Base-mainnet fork -> consumed[operationId] read back -> journal reconciled to CONFIRMED from THAT reading -> recovery refuses to resend.",
+    "why_it_is_new": "Everything before it proved pieces. The adapter proved it could admit, sign and encode; the fork proved the controller enforces its limits. Nothing proved the two halves fit together. If the Python encoder and the Solidity ABI disagreed by one byte the controller would revert, so this is the first check in the project that would catch such a disagreement.",
+    "evidence": {
+      "calldata_bytes": 644,
+      "selector": "0xfe6a574c (executeSupply, confirmed against forge inspect)",
+      "operation_id": "0x7821251001ab03d8e81ad09ebddebfc1aca05777d26aa59aed7724604bc0a18e",
+      "consumed_payload_on_chain": "0x51bb5c6557d3ea42937270b2ded34f064af9a3ec0f46df379dd5f7ee2e88dbed",
+      "loop_closure": "That consumed payload is byte-identical to expectedActionHash in fixtures/crosslang-vectors.json, which Python computed from the REAL compiler output. The controller independently recorded the same hash after executing Python's bytes.",
+      "economic_effect": "100.000000 USDC debited from the Safe, Morpho position increased, native Roles quota charged exactly once.",
+      "negatives": [
+        "A single flipped byte inside the encoded arguments is refused and moves nothing.",
+        "Replaying the identical request bytes is refused by the consumed-id guard and does not change consumption.",
+        "After the real execution, resume() past the idempotency window reads the chain, finds it executed, resolves to CONFIRMED and sends ZERO duplicate requests."
+      ],
+      "finality_labelling": "CORRECTED. The fork reader now separates OBSERVED fields (marker, chain id, controller -- read from the executing fork test) from SYNTHETIC ones (block hash, finality, block number). An anvil fork has no meaningful finality, so this run must NOT be described as carrying finalized-chain provenance. The earlier version supplied 0xabab... and finalized=True as though observed."
+    },
+    "address_binding": "Passes 1 and 3 deploy the controller to the same address because each forge run starts from the same pinned fork block with the same deployer nonce. This is not assumed: the EIP-712 domain separator commits to the controller address, so a mismatch would fail signature verification rather than pass silently.",
+    "fixture_note": "The fixture's default per-action minimum is 1,000 USDC while the real compiler produced 100 USDC. The composed run activates with ms lowered to the compiler's amount -- a customer-approved-limits choice. The REQUEST is never adjusted to fit the fixture.",
+    "what_it_does_NOT_establish": [
+      "KeeperHub is not involved. The calldata is delivered directly because the hosted route needs an organisation credential (L10) that does not exist and is not simulated.",
+      "That KeeperHub's server-side encoder reproduces these bytes from functionName/functionArgs.",
+      "Any public-chain execution. This is a local fork at block 51353212.",
+      "The real native result/ack consumer boundary: the journal transition here is Held's own durable state, not native acknowledgement."
+    ],
+    "lifecycle_completed": {
+      "was": "The composed Python test read pre-generated vectors, constructed a stand-in admitted object, and afterwards built a FRESH temporary journal with placeholder request metadata. That exercised reconcile() but skipped the durable pre-I/O claim, and the 'admitted' operation id was a fork fixture (keccak(\"xlang-sign\")), not one the adapter had minted.",
+      "now": [
+        "The REAL pinned compiler runs in this test and its output is admitted through admit_native_bundle. Observed: 2 native calls, action hash 0x51bb5c65...",
+        "Held builds its OWN envelope for that admitted operation; only the CONTROLLER ADDRESS comes from the fork, because the EIP-712 domain separator commits to it and Python cannot know it before deployment.",
+        "The REAL Submitter performs the claim. A capture transport observes, at the moment the request would leave, that the operation is already durable and the exact request is persisted -- then refuses to deliver, because KeeperHub is not called.",
+        "ONE journal spans the whole run: the claim made before the request and the reconciliation afterwards are the same operation in the same database.",
+        "The native result is delivered and acknowledged in ONE commit, with a duplicate delivery a no-op and a conflicting result refused."
+      ],
+      "native_ack_scope": "The consumer is a LOCAL harness standing in for a native strategy's result sink, labelled as such. What it exercises is the COMMIT BOUNDARY -- the part that can be wrong. It is not the Almanak consumer."
+    }
+  },
+  "second_review_findings_repaired": {
+    "when": "63928be review, 2026-09-16",
+    "reproduced_by_the_reviewer_and_by_me": {
+      "simulation_classifier": {
+        "was": "The classifier looked for `simulated: true` / `simulation` -- fields I INVENTED, and the project's own fixture used that invention, so the test passed while missing the real thing. The DOCUMENTED response {\"success\": true, \"status\": \"simulated\", \"wouldRevert\": false} classified as ACCEPTED: a dry run recorded as an economic execution.",
+        "now": "Classification keys off the REQUEST MODE, which Held always knows, with the documented `status` as confirmation. A response whose mode disagrees with the request is UNKNOWN, not silently resolved. `wouldRevert: true` is REJECTED -- a successful simulation reporting a failing call is not a green light.",
+        "verified": "Reproduced the ACCEPTED result myself before fixing; four classifier cases now assert the documented shapes."
+      },
+      "expired_cache_resend": {
+        "was": "Past the idempotency window, resume() read the chain and -- on a ZERO marker -- FELL THROUGH to broadcast. 'Not consumed at block N' is not 'cannot be consumed at block N+1', and outside the dedupe window that resend is a genuinely SECOND submission of the same economic action.",
+        "now": "A zero marker alone never resends. The only evidence that settles non-execution is RETIREMENT of the authorization: once the controller's epoch has advanced past the envelope's, that signature can never execute. ChainEvidence carries controller_epoch; a retired attempt is settled RETIRED, the operation becomes FAILED, and the operator is told to reauthorize the SAME id and payload -- not to resend the old request, which would revert on the epoch check. Without retirement evidence the operation stays blocked.",
+        "verified": "Reproduced the single stray broadcast myself; the regression test now asserts zero calls and a surviving claim."
+      }
+    },
+    "additional_defect_found_while_fixing": {
+      "what": "Journal.unresolved_attempt() matched only state='PENDING'.",
+      "effect": "An ambiguous send recorded UNKNOWN and the attempt VANISHED from recovery -- the single most important case. Nothing pointed at the original idempotency key, and it is also what let two of my tests return before asserting anything.",
+      "now": "LIVE_ATTEMPT_STATES = PENDING, UNKNOWN, IN_PROGRESS, ACCEPTED; the unique partial index covers all of them; SETTLED_ATTEMPT_STATES are terminal. An ACCEPTED or IN_PROGRESS attempt is polled, never resent. Journal schema 2 -> 3."
+    },
+    "test_hygiene": {
+      "was": "Two recovery tests could `return` before exercising their assertions when an attempt was no longer PENDING.",
+      "now": "The early returns are gone. A shared _expired_rig() asserts a live attempt exists before each expired-window case, and the restart test asserts the claim is visible rather than branching on it."
+    }
+  },
+  "third_review_findings_repaired": {
+    "when": "1883b4d review, 2026-09-16",
+    "all_reproduced_against_the_real_journal_before_fixing": true,
+    "confirmed_operation_resend": {
+      "was": "reconcile() settled the OPERATION but left its attempt live, and resume() reached broadcast() before noticing. Observed: 1 outbound call for a CONFIRMED operation. The prohibited state transition was caught only AFTER the outbound-call decision.",
+      "now": "resume() checks terminal operation state FIRST, before anything reaches the network, and reconcile() settles every live attempt in the same breath as confirming the operation. A live attempt under a CONFIRMED operation is precisely what recovery would pick up and resend.",
+      "note": "This never established two economic executions -- provider dedupe and the consumed-id guard are separate defences. It established a client sending work it already knew was complete."
+    },
+    "later_rejection_erasing_uncertainty": {
+      "was": "An operation that was UNKNOWN, then retried and REJECTED, became FAILED without any chain read. A 401 from a revoked credential does not prove the EARLIER ambiguous request never executed, and FAILED licences reauthorization.",
+      "now": "A REJECTED outcome cannot move an already-UNKNOWN operation. The same rule applies INSIDE the client's retry loop: once any attempt has been ambiguous, a later definitive rejection is reported as UNKNOWN with an explanation, because it is definitive about the retry only."
+    },
+    "window_boundary": {
+      "was": "age > IDEMPOTENCY_WINDOW_SECONDS, so exactly at the window a resend still happened.",
+      "now": ">=. At exactly the documented window the provider may already have dropped the key; being a second early costs nothing, being a second late costs an unprotected duplicate."
+    },
+    "empty_2xx_preflight": {
+      "was": "In simulate mode a bare 2xx with an empty body classified as SIMULATED -- a positive preflight from the mere absence of a reported revert.",
+      "now": "An empty body is UNKNOWN. A positive preflight requires the documented affirmative result."
+    },
+    "composed_identity_scope": {
+      "was": "The composed run admitted against the native-bundle test's PROFILE (controller 0x3875311c..., lineage 0x1111...) and then signed an envelope scoped to the DEPLOYED controller 0x5615dEB7... with lineage 0x...0011. operation_id() binds chain, controller, Safe and lineage, so the admitted id was never minted for the deployment it was signed for. Comparing copied ids, payload hashes and families could not catch it -- all three were copied from the same place.",
+      "now": "ONE profile is built from the verified deployment context BEFORE admission and used for operation-id derivation, signing, request targeting, journaling and reconciliation. Submitter._require_consistent_scope() re-derives operation_id from the envelope's scope and refuses a mismatch, and checks the envelope's chain and controller against the submission destination. This is in the PRODUCTION path, not only the test.",
+      "side_effect": "The check immediately caught the test fixtures' own hardcoded 0xaa... operation id, which had passed every earlier check because those checks compared copies of it. The fixture now derives its id from its scope."
+    }
+  },
+  "native_result_acknowledgement": {
+    "status": "CONNECTED to the actual pinned Almanak consumer.",
+    "component": "almanak.framework.intents.state_machine.IntentStateMachine at 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938",
+    "why_it_is_checkable": "_handle_validating is explicit: with no receipt it returns needs_execution=True and keeps asking to be executed. So 'the native consumer acknowledged' has a concrete meaning -- it reached COMPLETED and STOPPED asking.",
+    "observed": [
+      "Before delivery: state VALIDATING_SUPPLY, needs_execution True.",
+      "R.deliver(...) with NativeStateMachineConsumer -> APPLIED; native state COMPLETED.",
+      "The follow-up step reports needs_execution False, is_complete True, success True -- the consumer will not have Held resubmit.",
+      "Redelivery of the same result -> DUPLICATE, with no second advance.",
+      "A FAILED receipt sends the machine to sadflow, the apply RAISES, the transaction rolls back and NO acknowledgement survives."
+    ],
+    "atomicity": "The advanced native state (to_dict()) and the acknowledgement are written on the SAME journal connection, closing the V4 \u00a74 crash window: there is no point at which the consumer has moved but the ack has not.",
+    "still_labelled": [
+      "The receipt's tx_hash is a fixture value: the fork does not surface a transaction hash to this process. The ECONOMIC effect is what was verified, in composed-result.json.",
+      "This is not a full native strategy loop, and the receipt is built from Held's own verified on-chain reading rather than handed over by a gateway.",
+      "The local harness test is KEPT beside it, relabelled MODEL ONLY. It was never the native consumer."
+    ]
+  },
+  "fourth_review_findings_repaired": {
+    "when": "9c830cc review, 2026-09-16",
+    "all_reproduced_against_the_real_implementation_first": true,
+    "rejected_retry_rule": {
+      "was": "Uncertainty was preserved only when the operation was ALREADY UNKNOWN. The process-kill path leaves DISPATCHED/PENDING, which still took the FAILED route; and BOTH forms dropped the original attempt out of the live set, so recovery could no longer find the thing it has to resolve.",
+      "reproduced": "crash DISPATCHED/PENDING --401--> FAILED, attempt REJECTED, live=False. UNKNOWN/UNKNOWN --401--> UNKNOWN but attempt REJECTED, live=False.",
+      "now": "The RULE, not another state pair: the response to the latest HTTP request and the settlement of the ORIGINAL attempt are different facts. A rejection settles the attempt only when that request was its FIRST dispatch. Every resume is by definition not a first dispatch, so a rejection there leaves the operation UNKNOWN and the attempt LIVE.",
+      "control_preserved": "A fresh, definitively refused first dispatch is still FAILED with the attempt REJECTED -- otherwise the rule would block every operation forever."
+    },
+    "preflight_affirmative_fields": {
+      "was": "The guard rejected only an EMPTY body. {\"success\": false} and a bare {\"status\": \"simulated\"} still classified as SIMULATED -- a green light assembled from a missing verdict.",
+      "now": "An explicit failure reads REJECTED (sharper than UNKNOWN); a missing success/wouldRevert reads UNKNOWN; a status that is not 'simulated' reads UNKNOWN; only success true + wouldRevert false is SIMULATED. The invented `simulated: true` shape no longer passes as a preflight -- it survives only for the broadcast contradiction check."
+    },
+    "native_restart_safety": {
+      "producing_decision_bound": "bind_native_decision() records WHICH native decision (intent_id, intent_type) produced the operation, so a restart can IDENTIFY the original rather than reconstruct one by coincidence.",
+      "pinned_sdk_finding": "IntentStateMachine has to_dict() but NO from_dict, no state setter and no reconstruction path at the pin. This is a real property of the native boundary and it drives the design rather than being worked around.",
+      "restoration": "restore() treats the DURABLE SNAPSHOT as authoritative. For a COMPLETED decision it returns a completed marker and does NOT build a machine -- a rebuilt one would report needs_execution=True for finished work. Verified across a real close/reopen: complete=True, acked=True, needs_execution()=False, and zero machines rebuilt.",
+      "persistence_failure": "An in-memory advance is not transactional and cannot be undone. So the guarantee is not 'the machine is restored' -- it cannot be. The consumer is NOT authoritative until verify_committed() confirms the snapshot, and require_authoritative() raises otherwise. Exercised with a consumer that fails AFTER the advance: machine COMPLETED, nothing durable, authoritative False.",
+      "ordering_note": "results.deliver() INSERTs the results row BEFORE apply(), so a foreign-key failure never reaches the machine. That path was already safe; the hazard is a failure between the advance and the commit, which is what the test models."
+    }
+  },
+  "bootstrap_checklist": {
+    "status": "REHEARSED on the fork against the actual PAUSED Held installation. NOT satisfied for any public installation.",
+    "gate": "make check-bootstrap-rehearsal",
+    "requirement": "P03 required work 6 / V4 \u00a76: at ONE stated block, report separately Safe ownership/threshold/implementation and enabled modules/guard/fallback; Roles implementation, members, conditions and allowance state; Morpho grants confirmed by mapping readback; relevant token approvals and delegated spend paths; runner/executor identities with attested control kept DISTINCT from chain facts.",
+    "method": "Every value is READ with cast from the running fork. Nothing is taken from the fixture scripts' own output, because the checklist's job is to verify the installation independently of whatever built it.",
+    "result": "All five sections COMPLETE at fork block 51353228; verdict PERMITTED BY THIS CHECKLIST.",
+    "non_vacuity": "Proven. Injecting Morpho.setAuthorization(0x\u2026dEaD, true) and USDC.approve(Morpho, 1) on the same fork turned morpho_grants and token_approvals INCOMPLETE, left safe and roles COMPLETE, and exited 1 with verdict BLOCKED.",
+    "declared_boundaries": [
+      "FORK ONLY. The public installation needs its own bounded collection and readback against its own addresses before any authorized activation; these addresses and conclusions cannot stand in for it.",
+      "NO FINALITY. An anvil fork has none. The block is the observation point, not finalized evidence.",
+      "NOT the P04 automated authority service. This is hand-driven collection that P04 is meant to automate and generalise.",
+      "Morpho grant completeness is WITHIN THE DECLARED DISCOVERY SET. The readback checks the listed identities; it cannot enumerate every address that might hold a grant.",
+      "Private-key and credential control is ATTESTED, never verified. Public chain data cannot prove it, and the fork's keys are well-known anvil accounts that are not custody."
+    ],
+    "effect_on_request_B": "This removes the rehearsal from the critical path but NOT the requirement. Request B still needs the same collection performed against the actual public Safe/controller/Roles at a stated finalized block.",
+    "superseded_claim": "The earlier entry said 'all five sections COMPLETE'. That claim is WITHDRAWN as evidence of a completed activation rehearsal: it inspected only the P00 native fixture with no Held controller, and its predicates permitted 14 scripted situations that should have blocked. The readbacks it performed were real; the completeness verdict it drew from them was not supported."
+  },
+  "fifth_review_findings_repaired": {
+    "when": "1b07557 review, 2026-09-16",
+    "all_reproduced_against_the_real_code_first": true,
+    "native_checkpoint_identity": {
+      "binding_was_replaceable": "bind_native_decision used INSERT OR REPLACE, so a second call silently replaced the original decision -- even with a different intent type. A binding that can be overwritten identifies nothing. It is now WRITE-ONCE: an identical reopen is idempotent, a different identity or type raises NativeDecisionConflict.",
+      "consumption_ignored_the_binding": "Reproduced: a machine for decision B applied under an operation bound to decision A, deliver() returned APPLIED, and verify_committed() returned True because it compared only STATE LABELS. Both machines saying COMPLETED is not proof the correct decision completed. apply() now checks identity FIRST, before the machine is touched, and the identity is stamped into the snapshot.",
+      "verification_could_see_uncommitted_writes": "verify_committed() read the journal's OWN connection, so called inside the delivering transaction it saw its own uncommitted snapshot and set authoritative=True; a later rollback removed the snapshot and left the flag set. It now reads through a SEPARATE connection, which cannot see an uncommitted write, so 'verified' means committed.",
+      "restore_ignored_durable_operation_state": "Reproduced: a CONFIRMED operation with no native snapshot built a fresh machine and let it decide work was needed -- at exactly the gap between economic confirmation and native acknowledgement. restore() now consults the DURABLE OPERATION STATE first. CONFIRMED-but-unacked raises NativeRecoveryBlocked telling the operator to recover and DELIVER the existing result; UNKNOWN and DISPATCHED stay blocked; no machine is built in any of those cases.",
+      "authority_is_enforced_in_the_decision_path": "needs_execution() raises on an inconsistent durable record, on a recoverable result, and on an unsettled operation, rather than relying on callers to remember an optional require_authoritative() check.",
+      "inconsistent_records_are_reported": "A terminal snapshot with no acknowledgement, or with no bound decision, is recorded as inconsistent and blocks rather than reading as complete."
+    },
+    "bootstrap_collector": {
+      "finding": "14 of 20 scripted negative scenarios returned exit 0 and PERMITTED. The prose above the predicates claimed checks the predicates did not make: Safe completeness ignored the guard/fallback result, Roles completeness did not require a matching owner/avatar/target, identity completeness was literally complete=True.",
+      "restructured": "Every section now answers READ (did the query return usable data), COMPLETE (are all required fields present) and COMPATIBLE (does it match the supported profile) SEPARATELY, and a failure of any one blocks. A section that cannot distinguish 'read failed' from 'read fine, value wrong' cannot be trusted to block.",
+      "now_blocks_on": [
+        "unreadable guard or fallback handler; a guard that is SET",
+        "Roles owner/avatar/target that is not the Safe; unreadable Roles fields",
+        "a Roles module not actually enabled on the Safe; any unrecognised enabled module",
+        "chain id or threshold or owner count outside the declared profile; unreadable block hash",
+        "malformed Morpho grant output (parsed strictly; never read as False)",
+        "unreadable token allowance (never read as zero) and unreadable authorization history",
+        "a missing, ACTIVE, elsewhere-bound or already-consuming Held controller"
+      ],
+      "discovery_widened": "Morpho candidates now come from the Safe's BOUNDED authorization history over the pinned range PLUS known identities, then mapping readback. Probing a hand-supplied list was not discovery -- a grant to an address nobody listed was never queried. A regression covers exactly that: a grant visible only in history now blocks.",
+      "reads_are_pinned": "All state reads pass --block for the observation block, so the single-block observation the artifact advertises is what actually happens.",
+      "now_inspects_the_real_installation": "fixtures/scripts/03d deploys the Held controller PAUSED and enables it on the Safe, and the collector checks active=false, epoch 0, immutable bindings and zero consumption across all five budget dimensions. The previous rehearsal inspected only the P00 native Safe/Roles fixture and still reported COMPLETE, so it could not have established the paused initial state it claimed.",
+      "failure_path_tested": "20 decision tests run the REAL collector as a subprocess with a scripted cast shim, including a positive control that must still PERMIT. A checklist that blocks everything proves as little as one that blocks nothing."
+    }
+  },
+  "review_67eed71": {
+    "packet": "docs/plan/REVIEW-67eed71.md; digests and reviewer probes in docs/plan/review-67eed71/",
+    "reviewed_revision": "67eed7193f5fe9472d8c2f1876dfb10c7e400f9a",
+    "source_match": "The packet's two source files match this repo's blobs at 67eed71 exactly (native_result.py 6b3299a0..., collect_bootstrap_evidence.py 637f1717...), so the findings were against current code, not a stale snapshot.",
+    "reproduced_before_fixing": "Both reviewer probes rerun in this tree 2026-09-17: all 3 native findings and all 4 collector FALSE PERMITTED reproduced; all 9 native and 8 collector confirmed-fixed controls still held.",
+    "confirmed_fixes_preserved": "Not redone. The regressions for them are kept as an explicit PRESERVED group in tests/integration/test_p03_native_checkpoint.py.",
+    "N1": "CLOSED. needs_execution() called machine.step() with no lifecycle check, so a machine mutated by a rolled-back apply still answered. Now a clean/dirty distinction enforced at that entry point: apply() marks dirty before touching the machine, verify_committed() clears it, require_clean() refuses a dirty one and says to recover via restore(). A clean pre-dispatch machine stays usable, which the review required.",
+    "N2": "CLOSED. restore() checked only that a terminal snapshot had SOME ack and SOME binding. It now validates the whole relationship: the snapshot's stamped held_bound_decision and intent_id against the binding, the ack's state against the snapshot's, and a terminal acked decision against an operation that actually CONFIRMED. An unstamped terminal snapshot cannot be identified and blocks. A binding, snapshot or ack with no durable operation row is an evidence gap and blocks. No machine is built while inconsistent.",
+    "N3": "CLOSED. The composed test created the native machine AFTER dispatch and reconciliation, in a test named as though it ran at admission. The producer now runs first, is stepped to produce the bundle that is actually admitted, and is bound while the journal shows no claim -- asserted, not narrated. Observed: pass 2 prints 'bound at CREATED', pass 4 reopens the identical decision. The decision id is pinned rather than random because the pinned machine has no from_dict, so a stable name is the only way a restart can reopen it.",
+    "B1": "CLOSED. 03d sent enableModule(controller) and stopped: no role membership, no condition trees, none of the five budgets, no retirement -- and it derived its own budget keys in bash, so the controller was bound to keys nothing configured. contracts/src/install/HeldInstall.sol is now the single definition, called by both HeldForkHarness.setUp() and script/solidity/InstallPausedHeld.s.sol. Live readback after the change shows all five budgets configured. Controller stays paused at epoch 0; no native history imported.",
+    "B2": "CLOSED. The collector read one environment allowance. It now reads all five declared budgets under their own keys, the controller's seven key immutables, the market and the lineage, and verifies BOTH roles' membership and condition trees by read-only eth_call, with positive and negative probes. A clause-to-evidence table covers 13 V4 \u00a76 obligations. Missing configuration is INCOMPLETE, never inferred.",
+    "B3": "CLOSED. All four inputs that were PERMITTED now block: an unreviewed nonzero fallback handler, an unsupported Safe version, a successful cast returning garbage where logs belong, and an allowance balance that is not a number. Values are typed on the way in; a readable value is not an approved one. A control keeps legitimately EMPTY history passing.",
+    "B4": "CLOSED. Authorization history is decoded from the real SetAuthorization topic with the authorizer checked to be this Safe, and every candidate carries provenance. The constant the file declared (0xd4a0d2e7...) was not that event's hash and was never used; the real one is 0xd5e969f0..., confirmed with cast keccak. Controls cover a decoded outsider grant, another Safe's event, and an unrelated event that must not be scraped.",
+    "still_open": "L10, unchanged. Nothing deployed, funded, broadcast or executed publicly. accepted=false; this review covers one commit's adapter and collector and is not phase acceptance."
   }
- },
- "still_not_established": {
-  "L10": "BLOCKED-UNKNOWN. No KeeperHub organisation API key. The authenticated route has never been called; it is neither stubbed nor simulated.",
-  "server_side_encoding": "Whether KeeperHub's encoder reproduces the intended calldata from functionArgs. One authenticated dry run would settle it.",
-  "composed_trace": "A LOCAL composed trace now exists (see composed_local_run). What is still missing is the same trace THROUGH KeeperHub, which is L10-blocked.",
-  "public_chain": "Nothing deployed, funded or executed on any public chain.",
-  "native_strategy_loop": "The acknowledgement boundary is connected to the real IntentStateMachine, but a full native strategy run driving many intents end to end is not exercised."
- },
- "composed_local_run": {
-  "gate": "make check-phase-03-composed",
-  "result": "PASS \u2014 3 fork tests + 5 Python checks",
-  "what_it_connects": "real pinned Almanak IntentCompiler -> CompilationResult (producer verdict checked) -> ActionBundle -> Held record -> admit_bundle -> AuthorizationEnvelope signed by the runner key -> the one permitted typed controller call, ABI-encoded -> executed VERBATIM by the real HeldController against real pinned Morpho on the Base-mainnet fork -> consumed[operationId] read back -> journal reconciled to CONFIRMED from THAT reading -> recovery refuses to resend.",
-  "why_it_is_new": "Everything before it proved pieces. The adapter proved it could admit, sign and encode; the fork proved the controller enforces its limits. Nothing proved the two halves fit together. If the Python encoder and the Solidity ABI disagreed by one byte the controller would revert, so this is the first check in the project that would catch such a disagreement.",
-  "evidence": {
-   "calldata_bytes": 644,
-   "selector": "0xfe6a574c (executeSupply, confirmed against forge inspect)",
-   "operation_id": "0x7821251001ab03d8e81ad09ebddebfc1aca05777d26aa59aed7724604bc0a18e",
-   "consumed_payload_on_chain": "0x51bb5c6557d3ea42937270b2ded34f064af9a3ec0f46df379dd5f7ee2e88dbed",
-   "loop_closure": "That consumed payload is byte-identical to expectedActionHash in fixtures/crosslang-vectors.json, which Python computed from the REAL compiler output. The controller independently recorded the same hash after executing Python's bytes.",
-   "economic_effect": "100.000000 USDC debited from the Safe, Morpho position increased, native Roles quota charged exactly once.",
-   "negatives": [
-    "A single flipped byte inside the encoded arguments is refused and moves nothing.",
-    "Replaying the identical request bytes is refused by the consumed-id guard and does not change consumption.",
-    "After the real execution, resume() past the idempotency window reads the chain, finds it executed, resolves to CONFIRMED and sends ZERO duplicate requests."
-   ],
-   "finality_labelling": "CORRECTED. The fork reader now separates OBSERVED fields (marker, chain id, controller -- read from the executing fork test) from SYNTHETIC ones (block hash, finality, block number). An anvil fork has no meaningful finality, so this run must NOT be described as carrying finalized-chain provenance. The earlier version supplied 0xabab... and finalized=True as though observed."
-  },
-  "address_binding": "Passes 1 and 3 deploy the controller to the same address because each forge run starts from the same pinned fork block with the same deployer nonce. This is not assumed: the EIP-712 domain separator commits to the controller address, so a mismatch would fail signature verification rather than pass silently.",
-  "fixture_note": "The fixture's default per-action minimum is 1,000 USDC while the real compiler produced 100 USDC. The composed run activates with ms lowered to the compiler's amount -- a customer-approved-limits choice. The REQUEST is never adjusted to fit the fixture.",
-  "what_it_does_NOT_establish": [
-   "KeeperHub is not involved. The calldata is delivered directly because the hosted route needs an organisation credential (L10) that does not exist and is not simulated.",
-   "That KeeperHub's server-side encoder reproduces these bytes from functionName/functionArgs.",
-   "Any public-chain execution. This is a local fork at block 51353212.",
-   "The real native result/ack consumer boundary: the journal transition here is Held's own durable state, not native acknowledgement."
-  ],
-  "lifecycle_completed": {
-   "was": "The composed Python test read pre-generated vectors, constructed a stand-in admitted object, and afterwards built a FRESH temporary journal with placeholder request metadata. That exercised reconcile() but skipped the durable pre-I/O claim, and the 'admitted' operation id was a fork fixture (keccak(\"xlang-sign\")), not one the adapter had minted.",
-   "now": [
-    "The REAL pinned compiler runs in this test and its output is admitted through admit_native_bundle. Observed: 2 native calls, action hash 0x51bb5c65...",
-    "Held builds its OWN envelope for that admitted operation; only the CONTROLLER ADDRESS comes from the fork, because the EIP-712 domain separator commits to it and Python cannot know it before deployment.",
-    "The REAL Submitter performs the claim. A capture transport observes, at the moment the request would leave, that the operation is already durable and the exact request is persisted -- then refuses to deliver, because KeeperHub is not called.",
-    "ONE journal spans the whole run: the claim made before the request and the reconciliation afterwards are the same operation in the same database.",
-    "The native result is delivered and acknowledged in ONE commit, with a duplicate delivery a no-op and a conflicting result refused."
-   ],
-   "native_ack_scope": "The consumer is a LOCAL harness standing in for a native strategy's result sink, labelled as such. What it exercises is the COMMIT BOUNDARY -- the part that can be wrong. It is not the Almanak consumer."
-  }
- },
- "second_review_findings_repaired": {
-  "when": "63928be review, 2026-09-16",
-  "reproduced_by_the_reviewer_and_by_me": {
-   "simulation_classifier": {
-    "was": "The classifier looked for `simulated: true` / `simulation` -- fields I INVENTED, and the project's own fixture used that invention, so the test passed while missing the real thing. The DOCUMENTED response {\"success\": true, \"status\": \"simulated\", \"wouldRevert\": false} classified as ACCEPTED: a dry run recorded as an economic execution.",
-    "now": "Classification keys off the REQUEST MODE, which Held always knows, with the documented `status` as confirmation. A response whose mode disagrees with the request is UNKNOWN, not silently resolved. `wouldRevert: true` is REJECTED -- a successful simulation reporting a failing call is not a green light.",
-    "verified": "Reproduced the ACCEPTED result myself before fixing; four classifier cases now assert the documented shapes."
-   },
-   "expired_cache_resend": {
-    "was": "Past the idempotency window, resume() read the chain and -- on a ZERO marker -- FELL THROUGH to broadcast. 'Not consumed at block N' is not 'cannot be consumed at block N+1', and outside the dedupe window that resend is a genuinely SECOND submission of the same economic action.",
-    "now": "A zero marker alone never resends. The only evidence that settles non-execution is RETIREMENT of the authorization: once the controller's epoch has advanced past the envelope's, that signature can never execute. ChainEvidence carries controller_epoch; a retired attempt is settled RETIRED, the operation becomes FAILED, and the operator is told to reauthorize the SAME id and payload -- not to resend the old request, which would revert on the epoch check. Without retirement evidence the operation stays blocked.",
-    "verified": "Reproduced the single stray broadcast myself; the regression test now asserts zero calls and a surviving claim."
-   }
-  },
-  "additional_defect_found_while_fixing": {
-   "what": "Journal.unresolved_attempt() matched only state='PENDING'.",
-   "effect": "An ambiguous send recorded UNKNOWN and the attempt VANISHED from recovery -- the single most important case. Nothing pointed at the original idempotency key, and it is also what let two of my tests return before asserting anything.",
-   "now": "LIVE_ATTEMPT_STATES = PENDING, UNKNOWN, IN_PROGRESS, ACCEPTED; the unique partial index covers all of them; SETTLED_ATTEMPT_STATES are terminal. An ACCEPTED or IN_PROGRESS attempt is polled, never resent. Journal schema 2 -> 3."
-  },
-  "test_hygiene": {
-   "was": "Two recovery tests could `return` before exercising their assertions when an attempt was no longer PENDING.",
-   "now": "The early returns are gone. A shared _expired_rig() asserts a live attempt exists before each expired-window case, and the restart test asserts the claim is visible rather than branching on it."
-  }
- },
- "third_review_findings_repaired": {
-  "when": "1883b4d review, 2026-09-16",
-  "all_reproduced_against_the_real_journal_before_fixing": true,
-  "confirmed_operation_resend": {
-   "was": "reconcile() settled the OPERATION but left its attempt live, and resume() reached broadcast() before noticing. Observed: 1 outbound call for a CONFIRMED operation. The prohibited state transition was caught only AFTER the outbound-call decision.",
-   "now": "resume() checks terminal operation state FIRST, before anything reaches the network, and reconcile() settles every live attempt in the same breath as confirming the operation. A live attempt under a CONFIRMED operation is precisely what recovery would pick up and resend.",
-   "note": "This never established two economic executions -- provider dedupe and the consumed-id guard are separate defences. It established a client sending work it already knew was complete."
-  },
-  "later_rejection_erasing_uncertainty": {
-   "was": "An operation that was UNKNOWN, then retried and REJECTED, became FAILED without any chain read. A 401 from a revoked credential does not prove the EARLIER ambiguous request never executed, and FAILED licences reauthorization.",
-   "now": "A REJECTED outcome cannot move an already-UNKNOWN operation. The same rule applies INSIDE the client's retry loop: once any attempt has been ambiguous, a later definitive rejection is reported as UNKNOWN with an explanation, because it is definitive about the retry only."
-  },
-  "window_boundary": {
-   "was": "age > IDEMPOTENCY_WINDOW_SECONDS, so exactly at the window a resend still happened.",
-   "now": ">=. At exactly the documented window the provider may already have dropped the key; being a second early costs nothing, being a second late costs an unprotected duplicate."
-  },
-  "empty_2xx_preflight": {
-   "was": "In simulate mode a bare 2xx with an empty body classified as SIMULATED -- a positive preflight from the mere absence of a reported revert.",
-   "now": "An empty body is UNKNOWN. A positive preflight requires the documented affirmative result."
-  },
-  "composed_identity_scope": {
-   "was": "The composed run admitted against the native-bundle test's PROFILE (controller 0x3875311c..., lineage 0x1111...) and then signed an envelope scoped to the DEPLOYED controller 0x5615dEB7... with lineage 0x...0011. operation_id() binds chain, controller, Safe and lineage, so the admitted id was never minted for the deployment it was signed for. Comparing copied ids, payload hashes and families could not catch it -- all three were copied from the same place.",
-   "now": "ONE profile is built from the verified deployment context BEFORE admission and used for operation-id derivation, signing, request targeting, journaling and reconciliation. Submitter._require_consistent_scope() re-derives operation_id from the envelope's scope and refuses a mismatch, and checks the envelope's chain and controller against the submission destination. This is in the PRODUCTION path, not only the test.",
-   "side_effect": "The check immediately caught the test fixtures' own hardcoded 0xaa... operation id, which had passed every earlier check because those checks compared copies of it. The fixture now derives its id from its scope."
-  }
- },
- "native_result_acknowledgement": {
-  "status": "CONNECTED to the actual pinned Almanak consumer.",
-  "component": "almanak.framework.intents.state_machine.IntentStateMachine at 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938",
-  "why_it_is_checkable": "_handle_validating is explicit: with no receipt it returns needs_execution=True and keeps asking to be executed. So 'the native consumer acknowledged' has a concrete meaning -- it reached COMPLETED and STOPPED asking.",
-  "observed": [
-   "Before delivery: state VALIDATING_SUPPLY, needs_execution True.",
-   "R.deliver(...) with NativeStateMachineConsumer -> APPLIED; native state COMPLETED.",
-   "The follow-up step reports needs_execution False, is_complete True, success True -- the consumer will not have Held resubmit.",
-   "Redelivery of the same result -> DUPLICATE, with no second advance.",
-   "A FAILED receipt sends the machine to sadflow, the apply RAISES, the transaction rolls back and NO acknowledgement survives."
-  ],
-  "atomicity": "The advanced native state (to_dict()) and the acknowledgement are written on the SAME journal connection, closing the V4 \u00a74 crash window: there is no point at which the consumer has moved but the ack has not.",
-  "still_labelled": [
-   "The receipt's tx_hash is a fixture value: the fork does not surface a transaction hash to this process. The ECONOMIC effect is what was verified, in composed-result.json.",
-   "This is not a full native strategy loop, and the receipt is built from Held's own verified on-chain reading rather than handed over by a gateway.",
-   "The local harness test is KEPT beside it, relabelled MODEL ONLY. It was never the native consumer."
-  ]
- },
- "fourth_review_findings_repaired": {
-  "when": "9c830cc review, 2026-09-16",
-  "all_reproduced_against_the_real_implementation_first": true,
-  "rejected_retry_rule": {
-   "was": "Uncertainty was preserved only when the operation was ALREADY UNKNOWN. The process-kill path leaves DISPATCHED/PENDING, which still took the FAILED route; and BOTH forms dropped the original attempt out of the live set, so recovery could no longer find the thing it has to resolve.",
-   "reproduced": "crash DISPATCHED/PENDING --401--> FAILED, attempt REJECTED, live=False. UNKNOWN/UNKNOWN --401--> UNKNOWN but attempt REJECTED, live=False.",
-   "now": "The RULE, not another state pair: the response to the latest HTTP request and the settlement of the ORIGINAL attempt are different facts. A rejection settles the attempt only when that request was its FIRST dispatch. Every resume is by definition not a first dispatch, so a rejection there leaves the operation UNKNOWN and the attempt LIVE.",
-   "control_preserved": "A fresh, definitively refused first dispatch is still FAILED with the attempt REJECTED -- otherwise the rule would block every operation forever."
-  },
-  "preflight_affirmative_fields": {
-   "was": "The guard rejected only an EMPTY body. {\"success\": false} and a bare {\"status\": \"simulated\"} still classified as SIMULATED -- a green light assembled from a missing verdict.",
-   "now": "An explicit failure reads REJECTED (sharper than UNKNOWN); a missing success/wouldRevert reads UNKNOWN; a status that is not 'simulated' reads UNKNOWN; only success true + wouldRevert false is SIMULATED. The invented `simulated: true` shape no longer passes as a preflight -- it survives only for the broadcast contradiction check."
-  },
-  "native_restart_safety": {
-   "producing_decision_bound": "bind_native_decision() records WHICH native decision (intent_id, intent_type) produced the operation, so a restart can IDENTIFY the original rather than reconstruct one by coincidence.",
-   "pinned_sdk_finding": "IntentStateMachine has to_dict() but NO from_dict, no state setter and no reconstruction path at the pin. This is a real property of the native boundary and it drives the design rather than being worked around.",
-   "restoration": "restore() treats the DURABLE SNAPSHOT as authoritative. For a COMPLETED decision it returns a completed marker and does NOT build a machine -- a rebuilt one would report needs_execution=True for finished work. Verified across a real close/reopen: complete=True, acked=True, needs_execution()=False, and zero machines rebuilt.",
-   "persistence_failure": "An in-memory advance is not transactional and cannot be undone. So the guarantee is not 'the machine is restored' -- it cannot be. The consumer is NOT authoritative until verify_committed() confirms the snapshot, and require_authoritative() raises otherwise. Exercised with a consumer that fails AFTER the advance: machine COMPLETED, nothing durable, authoritative False.",
-   "ordering_note": "results.deliver() INSERTs the results row BEFORE apply(), so a foreign-key failure never reaches the machine. That path was already safe; the hazard is a failure between the advance and the commit, which is what the test models."
-  }
- },
- "bootstrap_checklist": {
-  "status": "REHEARSED on the fork against the actual PAUSED Held installation. NOT satisfied for any public installation.",
-  "gate": "make check-bootstrap-rehearsal",
-  "requirement": "P03 required work 6 / V4 \u00a76: at ONE stated block, report separately Safe ownership/threshold/implementation and enabled modules/guard/fallback; Roles implementation, members, conditions and allowance state; Morpho grants confirmed by mapping readback; relevant token approvals and delegated spend paths; runner/executor identities with attested control kept DISTINCT from chain facts.",
-  "method": "Every value is READ with cast from the running fork. Nothing is taken from the fixture scripts' own output, because the checklist's job is to verify the installation independently of whatever built it.",
-  "result": "All five sections COMPLETE at fork block 51353228; verdict PERMITTED BY THIS CHECKLIST.",
-  "non_vacuity": "Proven. Injecting Morpho.setAuthorization(0x\u2026dEaD, true) and USDC.approve(Morpho, 1) on the same fork turned morpho_grants and token_approvals INCOMPLETE, left safe and roles COMPLETE, and exited 1 with verdict BLOCKED.",
-  "declared_boundaries": [
-   "FORK ONLY. The public installation needs its own bounded collection and readback against its own addresses before any authorized activation; these addresses and conclusions cannot stand in for it.",
-   "NO FINALITY. An anvil fork has none. The block is the observation point, not finalized evidence.",
-   "NOT the P04 automated authority service. This is hand-driven collection that P04 is meant to automate and generalise.",
-   "Morpho grant completeness is WITHIN THE DECLARED DISCOVERY SET. The readback checks the listed identities; it cannot enumerate every address that might hold a grant.",
-   "Private-key and credential control is ATTESTED, never verified. Public chain data cannot prove it, and the fork's keys are well-known anvil accounts that are not custody."
-  ],
-  "effect_on_request_B": "This removes the rehearsal from the critical path but NOT the requirement. Request B still needs the same collection performed against the actual public Safe/controller/Roles at a stated finalized block.",
-  "superseded_claim": "The earlier entry said 'all five sections COMPLETE'. That claim is WITHDRAWN as evidence of a completed activation rehearsal: it inspected only the P00 native fixture with no Held controller, and its predicates permitted 14 scripted situations that should have blocked. The readbacks it performed were real; the completeness verdict it drew from them was not supported."
- },
- "fifth_review_findings_repaired": {
-  "when": "1b07557 review, 2026-09-16",
-  "all_reproduced_against_the_real_code_first": true,
-  "native_checkpoint_identity": {
-   "binding_was_replaceable": "bind_native_decision used INSERT OR REPLACE, so a second call silently replaced the original decision -- even with a different intent type. A binding that can be overwritten identifies nothing. It is now WRITE-ONCE: an identical reopen is idempotent, a different identity or type raises NativeDecisionConflict.",
-   "consumption_ignored_the_binding": "Reproduced: a machine for decision B applied under an operation bound to decision A, deliver() returned APPLIED, and verify_committed() returned True because it compared only STATE LABELS. Both machines saying COMPLETED is not proof the correct decision completed. apply() now checks identity FIRST, before the machine is touched, and the identity is stamped into the snapshot.",
-   "verification_could_see_uncommitted_writes": "verify_committed() read the journal's OWN connection, so called inside the delivering transaction it saw its own uncommitted snapshot and set authoritative=True; a later rollback removed the snapshot and left the flag set. It now reads through a SEPARATE connection, which cannot see an uncommitted write, so 'verified' means committed.",
-   "restore_ignored_durable_operation_state": "Reproduced: a CONFIRMED operation with no native snapshot built a fresh machine and let it decide work was needed -- at exactly the gap between economic confirmation and native acknowledgement. restore() now consults the DURABLE OPERATION STATE first. CONFIRMED-but-unacked raises NativeRecoveryBlocked telling the operator to recover and DELIVER the existing result; UNKNOWN and DISPATCHED stay blocked; no machine is built in any of those cases.",
-   "authority_is_enforced_in_the_decision_path": "needs_execution() raises on an inconsistent durable record, on a recoverable result, and on an unsettled operation, rather than relying on callers to remember an optional require_authoritative() check.",
-   "inconsistent_records_are_reported": "A terminal snapshot with no acknowledgement, or with no bound decision, is recorded as inconsistent and blocks rather than reading as complete."
-  },
-  "bootstrap_collector": {
-   "finding": "14 of 20 scripted negative scenarios returned exit 0 and PERMITTED. The prose above the predicates claimed checks the predicates did not make: Safe completeness ignored the guard/fallback result, Roles completeness did not require a matching owner/avatar/target, identity completeness was literally complete=True.",
-   "restructured": "Every section now answers READ (did the query return usable data), COMPLETE (are all required fields present) and COMPATIBLE (does it match the supported profile) SEPARATELY, and a failure of any one blocks. A section that cannot distinguish 'read failed' from 'read fine, value wrong' cannot be trusted to block.",
-   "now_blocks_on": [
-    "unreadable guard or fallback handler; a guard that is SET",
-    "Roles owner/avatar/target that is not the Safe; unreadable Roles fields",
-    "a Roles module not actually enabled on the Safe; any unrecognised enabled module",
-    "chain id or threshold or owner count outside the declared profile; unreadable block hash",
-    "malformed Morpho grant output (parsed strictly; never read as False)",
-    "unreadable token allowance (never read as zero) and unreadable authorization history",
-    "a missing, ACTIVE, elsewhere-bound or already-consuming Held controller"
-   ],
-   "discovery_widened": "Morpho candidates now come from the Safe's BOUNDED authorization history over the pinned range PLUS known identities, then mapping readback. Probing a hand-supplied list was not discovery -- a grant to an address nobody listed was never queried. A regression covers exactly that: a grant visible only in history now blocks.",
-   "reads_are_pinned": "All state reads pass --block for the observation block, so the single-block observation the artifact advertises is what actually happens.",
-   "now_inspects_the_real_installation": "fixtures/scripts/03d deploys the Held controller PAUSED and enables it on the Safe, and the collector checks active=false, epoch 0, immutable bindings and zero consumption across all five budget dimensions. The previous rehearsal inspected only the P00 native Safe/Roles fixture and still reported COMPLETE, so it could not have established the paused initial state it claimed.",
-   "failure_path_tested": "20 decision tests run the REAL collector as a subprocess with a scripted cast shim, including a positive control that must still PERMIT. A checklist that blocks everything proves as little as one that blocks nothing."
-  }
- }
 }

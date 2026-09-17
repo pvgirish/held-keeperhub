@@ -45,6 +45,22 @@ CONTROLLER=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['control
 
 echo "export HELD_CONTROLLER=$CONTROLLER" >> /tmp/held_fixture.env
 echo "export HELD_INSTALL_MANIFEST=$(pwd)/$MANIFEST" >> /tmp/held_fixture.env
+# The SELECTED operating identities for this installation. anvil accounts #4 and #6 — the
+# same runnerB and executor the fork suite uses. Local fixture identities, never custody.
+echo "export HELD_RUNNER=0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65" >> /tmp/held_fixture.env
+echo "export HELD_EXECUTOR=0x976EA74026E726554dB657fA54763abd0C3a0aa9" >> /tmp/held_fixture.env
+
+# FORK-ONLY AFFORDANCE, labelled because it is one. The checklist verifies role
+# membership and the condition trees by simulating a role call FROM the controller with
+# eth_call. Anvil enforces the sender's gas balance even for eth_call, and a freshly
+# deployed controller holds no ETH, so the simulation fails before it reaches the Roles
+# module and the check cannot distinguish "not a member" from "no gas".
+#
+# The controller never spends ETH -- it holds none in production and needs none. This is
+# dust so a READ-ONLY probe can run. A public installation cannot do this, and the
+# checklist records that limitation rather than pretending the simulation is available
+# everywhere.
+cast rpc anvil_setBalance "$CONTROLLER" 0xDE0B6B3A7640000 --rpc-url "$HELD_BASE_RPC" >/dev/null
 
 ACTIVE=$(cast call "$CONTROLLER" 'active()(bool)' --rpc-url "$HELD_BASE_RPC")
 EPOCH=$(cast call "$CONTROLLER" 'epoch()(uint64)' --rpc-url "$HELD_BASE_RPC")

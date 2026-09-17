@@ -35,6 +35,10 @@ OUT="evidence/P03/bootstrap-rehearsal.json"
   . /tmp/held_fixture.env
   export HELD_SAFE="$SAFE" HELD_ROLES="$ROLES" HELD_ROLE_KEY="$ROLE_KEY" HELD_ALLOW_KEY="$ALLOW_KEY"
   export HELD_CONTROLLER="${HELD_CONTROLLER:-}"
+  # The DECLARED installation and the SELECTED operating identities. Absent, the checklist
+  # reports INCOMPLETE rather than inferring them from whatever it happens to read.
+  export HELD_INSTALL_MANIFEST="${HELD_INSTALL_MANIFEST:-}"
+  export HELD_RUNNER="${HELD_RUNNER:-}" HELD_EXECUTOR="${HELD_EXECUTOR:-}"
   exec "${PY:-$HOME/venv312/bin/python}" script/collect_bootstrap_evidence.py
 ' | tee /tmp/held_bootstrap.log
 
