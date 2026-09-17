@@ -429,6 +429,72 @@ def _():
     j.close()
 
 
+# --------------------------------------------------------------------- EXPORT --
+
+@test("EXPORT: raw key material is refused; a reference is required")
+def _():
+    from held_handover import ExportError, assert_reference
+    assert assert_reference("env:HELD_RUNNER_B_KEY", "k") == "env:HELD_RUNNER_B_KEY"
+    for bad in ("0x" + "47" * 32, "47" * 32, "just-a-string"):
+        try:
+            assert_reference(bad, "k")
+            raise AssertionError(f"accepted {bad[:14]}... as a credential reference")
+        except ExportError:
+            pass
+
+
+@test("EXPORT: runner B inherits the SPENT budget, with remaining stated")
+def _():
+    from held_handover import build_export
+    j = fresh()
+    m, c = fenced(j)
+    m.reconcile([])
+    m.prepare_candidate(candidate(), observed=reading(c, dispatching=False))
+    exp = build_export(handover_id="h1", record=m.record,
+                       reading=reading(c, dispatching=False),
+                       runner_key_reference="env:HELD_RUNNER_B_KEY")
+    d = exp.to_dict()
+    assert d["consumptionCarried"]["usedSupply"] == USED["usedSupply"]
+    assert d["remainingCapacity"]["supply"] == 50_000_000_000 - USED["usedSupply"]
+    assert exp.usable is True
+    # No secret may appear anywhere in the serialised export.
+    blob = exp.to_json()
+    assert "47" * 32 not in blob and "RUNNER_B_KEY" in blob
+    j.close()
+
+
+@test("EXPORT: a replacement with pending work is NOT usable, and says why")
+def _():
+    from held_handover import build_export
+    j = fresh()
+    m, c = fenced(j)
+    m.reconcile([])
+    m.prepare_candidate(candidate(), observed=reading(c, dispatching=False))
+    exp = build_export(handover_id="h1", record=m.record,
+                       reading=reading(c, dispatching=False),
+                       runner_key_reference="env:HELD_RUNNER_B_KEY",
+                       pending_operations=["0xaa"])
+    assert exp.usable is False, "B was cleared to start with work still in the air"
+    assert exp.to_dict()["pendingOperations"] == ["0xaa"]
+    j.close()
+
+
+@test("EXPORT: an unreadable controller blocks the export rather than defaulting")
+def _():
+    from held_handover import build_export
+    j = fresh()
+    m, c = fenced(j)
+    m.reconcile([])
+    m.prepare_candidate(candidate(), observed=reading(c, dispatching=False))
+    broken = ControllerDouble()
+    broken.fail = True
+    exp = build_export(handover_id="h1", record=m.record, reading=reading(broken),
+                       runner_key_reference="env:HELD_RUNNER_B_KEY")
+    assert exp.usable is False
+    assert any("could not be established" in b for b in exp.blocked_on), exp.blocked_on
+    j.close()
+
+
 def main() -> int:
     print("---")
     if FAILED:

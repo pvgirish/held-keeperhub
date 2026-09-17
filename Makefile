@@ -5,7 +5,7 @@ export PY
 export SDK
 
 .PHONY: check-plan-digests check-phase-00 check-phase-01 check-phase-02 check-phase-03-local check-phase-03 check-phase-03-composed check-bootstrap-rehearsal check-phase-04 check-phase-05 check-manifests check-probe \
-        check-baseline check-native-workflow gate-tests
+        check-baseline check-native-workflow gate-tests hero-demo
 
 check-phase-00:
 	@rc=0; \
@@ -58,6 +58,13 @@ check-phase-04:
 	@$(PY) tests/authority/test_authority_inventory.py
 	@$(PY) tests/handover/test_handover_machine.py
 	@./script/run_p04_fork_tests.sh
+
+## The HERO WORKFLOW, end to end on the real fork: runner A active -> ambiguous
+## operation -> handover refused -> reconcile -> owner fence -> inventory -> prepare B
+## -> owner activation -> consumption preserved -> A refused -> B continues.
+## REAL LOCAL FORK evidence. Not public-chain evidence.
+hero-demo:
+	@./script/run_hero_demo.sh
 
 ## P05: the private operator console -- the four operator jobs, authentication and
 ## privacy, understandable owner approval, and the recovery export.

@@ -1,0 +1,51 @@
+{
+  "schema": "held.replacement-export.v1",
+  "handoverId": "hero",
+  "lineage": "0x0000000000000000000000000000000000000000000000000000000000000011",
+  "controller": "0x0620c56E23743ab7927Fc9A8d97ae777343C33db",
+  "chainId": 8453,
+  "newEpoch": 2,
+  "runner": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+  "runnerKeyReference": "env:HELD_RUNNER_B_KEY",
+  "executor": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+  "policy": [
+    50000000000,
+    50000000000,
+    10000000000,
+    40000000000,
+    40000000000,
+    10000000000,
+    1000000,
+    1000000,
+    0,
+    0,
+    10,
+    5,
+    0,
+    0
+  ],
+  "consumptionCarried": {
+    "usedSupply": 12000000,
+    "usedNormalWithdraw": 0,
+    "usedRestoration": 0,
+    "normalCount": 1,
+    "restorationCount": 0
+  },
+  "remainingCapacity": {
+    "supply": 49988000000,
+    "normalWithdraw": 50000000000,
+    "restoration": 10000000000,
+    "normalCount": 9,
+    "restorationCount": 5
+  },
+  "nativeConfigDigest": "0xabababababababababababababababababababababababababababababababab",
+  "nativeCheckpoints": [],
+  "settledOperations": [],
+  "pendingOperations": [],
+  "blockedOn": [],
+  "usable": true,
+  "evidenceGrade": "REAL LOCAL FORK",
+  "exportedAt": 1789669111,
+  "_credentials": "REFERENCED, NOT CARRIED. No private key, API key or secret appears in this file. B resolves the reference in its own environment.",
+  "_consumption": "CARRIED FORWARD. B inherits the budget the retiring runner spent from; it does not get a fresh one. That is the point of a handover as opposed to a redeployment."
+}
