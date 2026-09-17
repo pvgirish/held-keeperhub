@@ -179,6 +179,19 @@ The composed run's action hash is `0x51bb5c6557d3ea42…`, byte-identical to the
 before this work, so driving the lifecycle from the real producer did not change the
 economic bytes. Every run needs `HELD_PRICE_MODE=testing-only` and `PY=~/venv312/bin/python`.
 
+## Review 1 and its repairs (2026-09-18)
+
+An independent review of the Pass-1 work found ten defects, **all ten confirmed** — none
+were rejected. The two most serious were ways the handover could advance with no evidence
+at all: `reconcile()` believed a caller-supplied empty list, and `clear_authority()`
+accepted any duck-typed object (which the hero demo *constructed* when the report was
+missing). The demo's "ambiguous operation" had also never been submitted, and the
+replacement export reported `usable: true` while carrying nothing.
+
+All are repaired in `c5aa22e`, each with a named acceptance regression. Two Pass-1 claims
+are WITHDRAWN and kept visible (W5, W6 in the claim ledger). Details per finding are in that
+commit message and in `docs/submission/CLAIM-LEDGER.md`.
+
 ## Next task
 
 **Independent review of the N1–N3 / B1–B4 work**, then the bounded L10 / public-action
