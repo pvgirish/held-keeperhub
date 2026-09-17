@@ -4,8 +4,8 @@
   "complete": true,
   "compatible": true,
   "verdict": "COMPLETE",
-  "block_number": 51353230,
-  "block_hash": "0x03b23cffeda47803fb4abbdfccea7f618b493d18aa1f3405e17ea813cdc074b0",
+  "block_number": 51353229,
+  "block_hash": "0x4dd88208700a3391dca189d7109b8169babde808f1d5e781e14d830868f6b97e",
   "chain_id": 8453,
   "expected_chain_id": 8453,
   "all_state_reads_pinned_to_block": true,
@@ -28,7 +28,7 @@
   "expected_threshold": 2,
   "implementation_version": "\"1.4.1\"",
   "enabled_modules": [
-   "0xB4A7e7Ef53bBdA157A1c3c8715Cc98f93FFD674B",
+   "0x0620c56E23743ab7927Fc9A8d97ae777343C33db",
    "0x3875311CC0D4017A033893a9653A0725378acA1C"
   ],
   "roles_module_enabled": true,
@@ -56,8 +56,8 @@
    "refill": "0",
    "maxRefill": "50000000000",
    "period": "0",
-   "balance": "20000000000",
-   "timestamp": "1789495777"
+   "balance": "50000000000",
+   "timestamp": "1789495786"
   },
   "non_refilling": true,
   "note": "A Roles module whose owner/avatar/target is not the Safe is not this Safe's module, however well configured it looks. A refilling allowance is refused by the controller at activation and during operation; read back here rather than trusted from the setup script."
@@ -69,13 +69,13 @@
   "verdict": "COMPLETE",
   "history_range": {
    "from_block": 51353212,
-   "to_block": 51353230,
+   "to_block": 51353229,
    "readable": true
   },
   "candidates": {
    "safe_self": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
    "roles_module": "0x3875311cc0d4017a033893a9653a0725378aca1c",
-   "held_controller": "0xB4A7e7Ef53bBdA157A1c3c8715Cc98f93FFD674B",
+   "held_controller": "0x0620c56E23743ab7927Fc9A8d97ae777343C33db",
    "history_0": "0xf1d1157b17af4d2e973e686d11b7b1235de68254",
    "history_1": "0x000000000000000000000000000000007023b227",
    "history_2": "0x9a620a62b78bc508ddc0891fbbd8b7ac0f8fce87",
@@ -84,20 +84,19 @@
    "history_5": "0x000000000000000000000000000000001a1b5980",
    "history_6": "0x22afbf5a17496295ef3bc9bb5944056c63ccaa09",
    "history_7": "0x001e9afd72ec07b149175f9622372dbc09492609",
-   "history_8": "0x5eddb4103e3ccd56d3825b98b6226af9d4b6077c",
-   "history_9": "0x000000000000000000000000000000005880c8f6",
+   "history_8": "0xd13b6319ee3456b0a60e28c8e87e58b59a6a5ea6",
+   "history_9": "0x000000000000000000000000000000005880c8fd",
    "history_10": "0x2be109dcf28344484f91185f9a79bd5a805a55ae",
    "history_11": "0xf3a5e6d13e2e22fb146f050bf0653e4857ac0559",
    "history_12": "0x00000000000000000000000000000002540be400",
    "history_13": "0xf1caa8d008f12f6440918c20d75a3602cda30fe0",
-   "history_14": "0x001ec8f975373a9028542c65a88d4e9f8adfe423",
-   "history_15": "0x0000000000000000000000000000000056aa978f",
-   "history_16": "0x4edb8d3a8cdf2cf60ec1536b462ca7d73aa0ccdb",
-   "history_17": "0xec5c4daba63e6f329e323e81f375261bf4776e14",
-   "history_18": "0x0000000000000000000000000000000056604464",
-   "history_19": "0xb663e19b9742e5a918a6c5337373bd004f78e7dc"
+   "history_14": "0x9eb58ddf383ed5059c266ce5269ed01ab712cb1a",
+   "history_15": "0x022180ad69d45f4c8431219f1478be40961fa0e0",
+   "history_16": "0xdb06c6d1928b24ad6276ad09dfdf232d8dbcc4f2",
+   "history_17": "0x000000000000000000000000000000005660447b",
+   "history_18": "0x47cc3db01aba41e8ce9518548d703a723447c5e4"
   },
-  "candidates_from_history": 42,
+  "candidates_from_history": 37,
   "grants": {
    "safe_self": false,
    "roles_module": false,
@@ -120,8 +119,7 @@
    "history_15": false,
    "history_16": false,
    "history_17": false,
-   "history_18": false,
-   "history_19": false
+   "history_18": false
   },
   "unreadable": [],
   "external_delegates": [],
@@ -148,7 +146,7 @@
   "complete": true,
   "compatible": true,
   "verdict": "COMPLETE",
-  "address": "0xB4A7e7Ef53bBdA157A1c3c8715Cc98f93FFD674B",
+  "address": "0x0620c56E23743ab7927Fc9A8d97ae777343C33db",
   "active": false,
   "epoch": "0",
   "bindings": {

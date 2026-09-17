@@ -6,6 +6,7 @@ import {Test, console2} from "forge-std/Test.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {HeldController} from "../../contracts/src/HeldController.sol";
+import {HeldInstall} from "../../contracts/src/install/HeldInstall.sol";
 import {ConditionFlat, IERC20, IMorpho, IRoles, IRolesAdmin, IRolesTargets, MarketParams} from "../../contracts/src/Interfaces.sol";
 
 /// @notice Shared fork harness: the REAL pinned Base-mainnet fixture.
@@ -20,12 +21,14 @@ import {ConditionFlat, IERC20, IMorpho, IRoles, IRolesAdmin, IRolesTargets, Mark
 ///      duplicating ~350 lines of fixture setup into a second file would have let the
 ///      two drift apart silently.
 abstract contract HeldForkHarness is Test {
-    address constant MORPHO = 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb;
-    address constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
-    address constant COLL = 0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452;
-    address constant ORACLE = 0xD7A1abA119a236Fea5BBC5cAC6836465cbe9289A;
-    address constant IRM = 0x46415998764C29aB2a25CbeA6254146D50D22687;
-    uint256 constant LLTV = 860000000000000000;
+    // Taken from HeldInstall rather than restated, so the configuration these tests
+    // exercise and the configuration a deployment installs cannot drift apart.
+    address constant MORPHO = HeldInstall.MORPHO;
+    address constant USDC = HeldInstall.USDC;
+    address constant COLL = HeldInstall.COLL;
+    address constant ORACLE = HeldInstall.ORACLE;
+    address constant IRM = HeldInstall.IRM;
+    uint256 constant LLTV = HeldInstall.LLTV;
     uint256 constant USDC_SLOT = 9;
 
     // anvil deterministic accounts — LOCAL FIXTURE IDENTITIES ONLY, never real custody
@@ -41,17 +44,17 @@ abstract contract HeldForkHarness is Test {
     bytes32 roleKey;
     bytes32 allowKey;
     bytes32 marketId;
-    bytes32 constant LINEAGE = bytes32(uint256(0x11));
+    bytes32 constant LINEAGE = HeldInstall.LINEAGE;
 
-    bytes32 constant WITHDRAW_KEY = keccak256("held-withdraw-cap");
-    bytes32 constant RESTORE_ROLE = keccak256("held-restoration-v1");
-    bytes32 constant RESTORE_KEY = keccak256("held-restoration-cap");
-    bytes32 constant NORMAL_COUNT_KEY = keccak256("held-normal-count");
-    bytes32 constant RESTORE_COUNT_KEY = keccak256("held-restoration-count");
-    uint128 constant LN = 50_000e6;
-    uint128 constant LR = 10_000e6;
-    uint128 constant LS = 50_000e6;
-    uint128 constant MS = 40_000e6;
+    bytes32 constant WITHDRAW_KEY = HeldInstall.WITHDRAW_KEY;
+    bytes32 constant RESTORE_ROLE = HeldInstall.RESTORE_ROLE;
+    bytes32 constant RESTORE_KEY = HeldInstall.RESTORE_KEY;
+    bytes32 constant NORMAL_COUNT_KEY = HeldInstall.NORMAL_COUNT_KEY;
+    bytes32 constant RESTORE_COUNT_KEY = HeldInstall.RESTORE_COUNT_KEY;
+    uint128 constant LN = HeldInstall.LN;
+    uint128 constant LR = HeldInstall.LR;
+    uint128 constant LS = HeldInstall.LS;
+    uint128 constant MS = HeldInstall.MS;
 
     function setUp() public {
         safe = vm.envAddress("HELD_SAFE");
@@ -75,38 +78,20 @@ abstract contract HeldForkHarness is Test {
             })
         );
 
-        // Owner installs the new lineage: the controller becomes the role member and
-        // the previous operator is retired. V4 §3: the controller is the SOLE member
-        // of the operating role; neither runner gets a direct path around it.
+        // THE installation, from the one definition of it. Previously this block spelled
+        // the whole thing out here, which is why the pre-activation deployment helper was
+        // able to install something else entirely and nobody noticed.
         vm.startPrank(safe);
-        _assign(address(controller), roleKey, true);
-        _assign(address(controller), RESTORE_ROLE, true);
-        _assign(runnerA, roleKey, false);
-        // A NEW lineage gets a clearly labelled NEW budget. The native fixture's
-        // historical 30,000 is deliberately NOT imported (V4 §6).
-        // P02 OVERLAY: re-scope supply with TIGHT argument conditions. The P00 fixture
-        // bound only the `assets` allowance and left the market tuple, shares and
-        // onBehalf permissive. Roles must be an INDEPENDENT defence: controller-side
-        // checks do not substitute for it.
-        _scopeSupplyTight();
-        _scopeApproveBounded();
-        _setAllowance(LS, LS);
-        // Withdraw needs its own scoped function and its own non-refilling quota, or
-        // Roles rejects it outright (FunctionNotAllowed) -- scopeTarget sets
-        // Clearance.Function, so EVERY function must be scoped explicitly. Defence in
-        // depth: the amount is bound to a separate allowance key, exactly as supply is.
-        _scopeWithdraw(roleKey, WITHDRAW_KEY, NORMAL_COUNT_KEY);
-        IRolesAdmin(roles).setAllowance(WITHDRAW_KEY, LN, LN, 0, 0, 0);
-        // The RESTORATION lane is a separate role with its OWN non-refilling key, because
-        // Zodiac allows one condition tree per (role, target, selector). V4 §3 permits
-        // separate normal/restoration roles; both remain controller-only.
-        IRolesTargets(roles).scopeTarget(RESTORE_ROLE, MORPHO);
-        _scopeWithdraw(RESTORE_ROLE, RESTORE_KEY, RESTORE_COUNT_KEY);
-        IRolesAdmin(roles).setAllowance(RESTORE_KEY, LR, LR, 0, 0, 0);
-        // Native COUNT allowances, one per lane. V4 §5: the shared normal count covers
-        // SUPPLY and NORMAL WITHDRAW; restoration has its own.
-        IRolesAdmin(roles).setAllowance(NORMAL_COUNT_KEY, 10, 10, 0, 0, 0);
-        IRolesAdmin(roles).setAllowance(RESTORE_COUNT_KEY, 5, 5, 0, 0, 0);
+        HeldInstall.install(
+            HeldInstall.Params({
+                safe: safe,
+                roles: roles,
+                controller: address(controller),
+                retireMember: runnerA,
+                normalRole: roleKey,
+                supplyKey: allowKey
+            })
+        );
         vm.stopPrank();
 
         _fundSafe(50_000e6);
@@ -118,12 +103,7 @@ abstract contract HeldForkHarness is Test {
     }
 
     function _assign(address who, bytes32 key, bool member) internal {
-        bytes32[] memory keys = new bytes32[](1);
-        bool[] memory members = new bool[](1);
-        keys[0] = key;
-        members[0] = member;
-        (bool ok,) = roles.call(abi.encodeWithSignature("assignRoles(address,bytes32[],bool[])", who, keys, members));
-        require(ok, "assignRoles failed");
+        HeldInstall.assign(roles, who, key, member);
     }
 
     function _setAllowance(uint128 balance, uint128 maxRefill) internal {
@@ -135,88 +115,9 @@ abstract contract HeldForkHarness is Test {
         require(ok, "setAllowance failed");
     }
 
-    /// @dev Flat condition tree for Morpho.withdraw(MarketParams,uint256,uint256,address,address):
-    ///      root Calldata/Matches, param0 the MarketParams tuple with Pass on its five
-    ///      fields, param1 `assets` bound WithinAllowance to the withdraw key, Pass on
-    ///      the rest. Same shape as the supply tree built by fixture step 3b.
-    /// @dev TIGHT withdraw tree. Every fixed argument is pinned with EqualTo; only the
-    ///      amount is a quota. Previously shares, onBehalf, receiver and the market tuple
-    ///      fields were all `Pass`, which meant Roles was not independently restricting
-    ///      anything except the amount.
-    function _scopeWithdraw(bytes32 role, bytes32 allowanceKey, bytes32 countKey) internal {
-        ConditionFlat[] memory c = new ConditionFlat[](11);
-        c[0] = ConditionFlat(0, 5, 5, "");                                   // root Calldata/Matches
-        c[1] = ConditionFlat(0, 3, 5, "");                                   // param0 tuple, Matches
-        c[2] = ConditionFlat(0, 1, 28, abi.encode(allowanceKey));            // param1 assets WithinAllowance
-        c[3] = ConditionFlat(0, 1, 16, abi.encode(uint256(0)));              // param2 shares == 0
-        c[4] = ConditionFlat(0, 1, 16, abi.encode(safe));                    // param3 onBehalf == Safe
-        c[5] = ConditionFlat(0, 1, 16, abi.encode(safe));                    // param4 receiver == Safe
-        c[6] = ConditionFlat(1, 1, 16, abi.encode(USDC));
-        c[7] = ConditionFlat(1, 1, 16, abi.encode(COLL));
-        c[8] = ConditionFlat(1, 1, 16, abi.encode(ORACLE));
-        c[9] = ConditionFlat(1, 1, 16, abi.encode(IRM));
-        c[10] = ConditionFlat(1, 1, 16, abi.encode(LLTV));
-        IRolesAdmin(roles).scopeFunction(role, MORPHO, IMorpho.withdraw.selector, _withCallCount(c, countKey), 0);
-    }
-
-    /// @dev TIGHT supply tree, the P02 overlay over the P00 fixture's permissive one.
-    function _scopeSupplyTight() internal {
-        ConditionFlat[] memory c = new ConditionFlat[](11);
-        c[0] = ConditionFlat(0, 5, 5, "");                                   // root Calldata/Matches
-        c[1] = ConditionFlat(0, 3, 5, "");                                   // param0 tuple, Matches
-        c[2] = ConditionFlat(0, 1, 28, abi.encode(allowKey));                // param1 assets WithinAllowance
-        c[3] = ConditionFlat(0, 1, 16, abi.encode(uint256(0)));              // param2 shares == 0
-        c[4] = ConditionFlat(0, 1, 16, abi.encode(safe));                    // param3 onBehalf == Safe
-        // EqualTo accepts Dynamic. compValue is hashed on store and compared against
-        // keccak256(pluck(...)) at check time, so the empty-bytes encoding below pins
-        // the callback to empty AT THE ROLES LAYER, independently of the controller.
-        c[5] = ConditionFlat(0, 2, 16, abi.encode(bytes("")));               // param4 data == 0x
-        c[6] = ConditionFlat(1, 1, 16, abi.encode(USDC));
-        c[7] = ConditionFlat(1, 1, 16, abi.encode(COLL));
-        c[8] = ConditionFlat(1, 1, 16, abi.encode(ORACLE));
-        c[9] = ConditionFlat(1, 1, 16, abi.encode(IRM));
-        c[10] = ConditionFlat(1, 1, 16, abi.encode(LLTV));
-        IRolesAdmin(roles).scopeFunction(roleKey, MORPHO, IMorpho.supply.selector, _withCallCount(c, NORMAL_COUNT_KEY), 0);
-    }
-
-    /// @dev P02 overlay for the token approval. The P00 fixture bound the spender to
-    ///      Morpho but left the VALUE unrestricted at the native layer. A finite bound is
-    ///      applied here; cleanup approve(0) stays permitted because 0 < bound.
-    ///
-    ///      Deliberately NOT a WithinAllowance: the approval must not charge the economic
-    ///      amount quota, which is consumed by the protocol call alone (V4 §5).
-    function _scopeApproveBounded() internal {
-        ConditionFlat[] memory c = new ConditionFlat[](3);
-        c[0] = ConditionFlat(0, 5, 5, "");                                   // root Calldata/Matches
-        c[1] = ConditionFlat(0, 1, 16, abi.encode(MORPHO));                  // spender == Morpho
-        c[2] = ConditionFlat(0, 1, 18, abi.encode(uint256(MS) + 1));         // value < Ms + 1
-        IRolesAdmin(roles).scopeFunction(roleKey, USDC, IERC20.approve.selector, c, 0);
-    }
-
-    /// @dev Insert a CallWithinAllowance node so the native COUNT allowance is actually
-    ///      CONSUMED by the economic call, not merely checked at activation.
-    ///
-    ///      Operator 30 / paramType None(0), confirmed from Zodiac Types.sol at the
-    ///      pinned source. The node must be INSERTED among the root's children, not
-    ///      appended: the condition array is required to be breadth-first, and appending
-    ///      a parent==0 node after the parent==1 tuple children reverts NotBFS().
-    function _withCallCount(ConditionFlat[] memory base, bytes32 countKey)
-        internal pure returns (ConditionFlat[] memory out)
-    {
-        uint256 insertAt = base.length;
-        for (uint256 i = 1; i < base.length; i++) {
-            if (base[i].parent != 0) { insertAt = i; break; }
-        }
-        out = new ConditionFlat[](base.length + 1);
-        for (uint256 i = 0; i < insertAt; i++) out[i] = base[i];
-        out[insertAt] = ConditionFlat(0, 0, 30, abi.encode(countKey));
-        for (uint256 i = insertAt; i < base.length; i++) {
-            out[i + 1] = base[i];
-            // children referencing the tuple keep pointing at it; the tuple is at index 1
-            // and nothing was inserted before it, so parent indices are unchanged.
-        }
-    }
-
+    /// @dev The supply, withdraw and approval condition trees, and the CallWithinAllowance
+    ///      insertion, now live in HeldInstall -- one definition, used by this harness and
+    ///      by the pre-activation deployment alike.
     /// @dev Sync every dimension EXCEPT the supply amount, so a test can vary that one
     ///      alone and observe the guard. Must be called under an active prank.
     function _syncNonSupply(HeldController.Policy memory p) internal {

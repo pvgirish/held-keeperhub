@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
-# Deploy the Held controller PAUSED onto the fork, so the bootstrap rehearsal inspects
-# the actual installation rather than only the P00 native Safe/Roles fixture.
+# Deploy AND INSTALL the Held controller PAUSED onto the fork, through the tested route.
+#
+# What this used to do, and why it was wrong: it deployed the controller, sent
+# `enableModule(controller)` to the Safe, and stopped. That is not the installation Held
+# runs under. It assigned the controller to NEITHER Zodiac Role, configured no condition
+# trees, set none of the five native budgets and never retired the previous runner. Worse,
+# it derived its own budget keys here in bash ("held.restoration.role" and friends) while
+# the tested installation used HeldInstall's, so the controller it deployed was bound to
+# budget keys that nothing on the Roles side ever configured.
+#
+# The bootstrap checklist then inspected THAT. So the checklist verified a permission path
+# the tests never exercised, and the tested path was never verified by the checklist.
+#
+# Now the whole thing is one owner act in script/solidity/InstallPausedHeld.s.sol, which
+# calls the SAME HeldInstall.install() that test/contracts/HeldForkHarness.sol calls. If
+# the two diverge, the P02 fork suite fails.
 #
 # It is deployed and NOT activated: V4 §6 requires a paused, never-active controller at
 # epoch 0 with zero consumption before initial activation. Nothing here activates it.
@@ -8,39 +22,31 @@ set -euo pipefail
 export PATH="$HOME/.foundry/bin:$PATH"
 . /tmp/held_fixture.env
 
-MORPHO=0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb
-USDC=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
-COLL=0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452
-ORACLE=0xD7A1abA119a236Fea5BBC5cAC6836465cbe9289A
-IRM=0x46415998764C29aB2a25CbeA6254146D50D22687
-LLTV=860000000000000000
-LINEAGE=0x0000000000000000000000000000000000000000000000000000000000000011
-DEPLOYER_PK=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+# anvil account #1 — the P00 native runner, retired as part of installing the new lineage.
+RUNNER_A=0x70997970C51812dc3A010C7d01b50e0d17dc79C8
 
-MARKET_ID=$(cast keccak "$(cast abi-encode 'f(address,address,address,address,uint256)' \
-  "$USDC" "$COLL" "$ORACLE" "$IRM" "$LLTV")")
+cd "$(dirname "$0")/../.."
 
-# Distinct keys per budget dimension, as the controller's Keys struct requires.
-RESTORE_ROLE=$(cast keccak "held.restoration.role")
-WITHDRAW_KEY=$(cast keccak "held.normal.withdraw")
-RESTORE_KEY=$(cast keccak "held.restoration.amount")
-NORMAL_COUNT=$(cast keccak "held.normal.count")
-RESTORE_COUNT=$(cast keccak "held.restoration.count")
-
-OUT=$(forge create contracts/src/HeldController.sol:HeldController \
-  --rpc-url "$HELD_BASE_RPC" --private-key "$DEPLOYER_PK" --broadcast \
-  --constructor-args "$SAFE" "$ROLES" "$MORPHO" "$USDC" "$MARKET_ID" "$LINEAGE" \
-  "($ROLE_KEY,$RESTORE_ROLE,$ALLOW_KEY,$WITHDRAW_KEY,$RESTORE_KEY,$NORMAL_COUNT,$RESTORE_COUNT)" \
-  2>&1) || { echo "$OUT"; exit 1; }
-
-CONTROLLER=$(echo "$OUT" | grep -oE "Deployed to: 0x[0-9a-fA-F]{40}" | awk '{print $3}')
-[ -n "$CONTROLLER" ] || { echo "deploy failed"; echo "$OUT"; exit 1; }
-
-# Enable it as a Safe module so the installation is the one the checklist inspects.
+# The Safe is the owner of the Roles module and the avatar; every call in the script is an
+# owner act, so the whole thing broadcasts as the impersonated Safe.
 cast rpc anvil_impersonateAccount "$SAFE" --rpc-url "$HELD_BASE_RPC" >/dev/null
 cast rpc anvil_setBalance "$SAFE" 0xDE0B6B3A7640000 --rpc-url "$HELD_BASE_RPC" >/dev/null
-cast send "$SAFE" "enableModule(address)" "$CONTROLLER" \
-  --from "$SAFE" --unlocked --rpc-url "$HELD_BASE_RPC" >/dev/null
+
+HELD_SAFE="$SAFE" HELD_ROLES="$ROLES" HELD_ROLE_KEY="$ROLE_KEY" HELD_ALLOW_KEY="$ALLOW_KEY" \
+HELD_RETIRE_MEMBER="$RUNNER_A" \
+  forge script script/solidity/InstallPausedHeld.s.sol:InstallPausedHeld \
+    --rpc-url "$HELD_BASE_RPC" --broadcast --unlocked --sender "$SAFE" \
+    >/tmp/held_install_paused.log 2>&1 || { tail -30 /tmp/held_install_paused.log; exit 1; }
+
+MANIFEST=fixtures/generated/held-install-manifest.json
+[ -f "$MANIFEST" ] || { echo "the install script wrote no manifest"; exit 1; }
+CONTROLLER=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['controller'])")
+[ -n "$CONTROLLER" ] || { echo "no controller address in the manifest"; exit 1; }
 
 echo "export HELD_CONTROLLER=$CONTROLLER" >> /tmp/held_fixture.env
-echo "paused controller deployed at $CONTROLLER (active=$(cast call "$CONTROLLER" 'active()(bool)' --rpc-url "$HELD_BASE_RPC"))"
+echo "export HELD_INSTALL_MANIFEST=$(pwd)/$MANIFEST" >> /tmp/held_fixture.env
+
+ACTIVE=$(cast call "$CONTROLLER" 'active()(bool)' --rpc-url "$HELD_BASE_RPC")
+EPOCH=$(cast call "$CONTROLLER" 'epoch()(uint64)' --rpc-url "$HELD_BASE_RPC")
+echo "paused controller installed at $CONTROLLER (active=$ACTIVE epoch=$EPOCH)"
+echo "declared installation manifest: $MANIFEST"
