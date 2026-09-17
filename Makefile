@@ -55,6 +55,8 @@ check-phase-02:
 ## P04: authority inventory, owner fencing, change and handover, against the REAL
 ## pinned Safe/Roles/Morpho on the same Base-mainnet fork fixture as P02.
 check-phase-04:
+	@$(PY) tests/authority/test_authority_inventory.py
+	@$(PY) tests/handover/test_handover_machine.py
 	@./script/run_p04_fork_tests.sh
 
 ## P05: the private operator console -- the four operator jobs, authentication and
