@@ -9,7 +9,7 @@
   },
   "source_revision": "7d6f34ca6f8be5168404ddf063b2ce307fa087b2",
   "evidence_revision": "7d6f34ca6f8be5168404ddf063b2ce307fa087b2",
-  "manifest_commit": null,
+  "manifest_commit": "c81b3c0f45575f1923860273bddf681f44afbd07",
   "release_tag": null,
   "branch": "main",
   "tree_clean": false,
@@ -33,5 +33,6 @@
     "transaction_hash": null,
     "chain": null,
     "status": "NOT YET ESTABLISHED \u2014 no organisation credential in this environment"
-  }
+  },
+  "_stamped": "manifest_commit is the commit that CARRIES this file. It is necessarily later than source_revision and evidence_revision, which is why it is stamped in a second step rather than self-certified."
 }
