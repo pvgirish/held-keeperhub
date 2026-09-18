@@ -36,6 +36,9 @@ ARTIFACTS = (
     "evidence/P06/acceptance.json",
     "evidence/P03/acceptance.json",
     "evidence/P03/bootstrap-rehearsal.json",
+    # The handover-mode collection, which used to overwrite the line above and so was
+    # never separately frozen.
+    "evidence/P03/bootstrap-handover.json",
     "docs/baseline/native-measurements.json",
 )
 

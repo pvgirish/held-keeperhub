@@ -37,7 +37,16 @@ from typing import Any
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 COLLECTOR = os.path.join(ROOT, "script", "collect_bootstrap_evidence.py")
-REPORT = os.path.join("evidence", "P03", "bootstrap-rehearsal.json")
+# The two modes ask different questions and must not overwrite each other's answer. This
+# is the canonical mapping for the Python side; `collect()` passes the chosen path to the
+# collector as HELD_INVENTORY_OUT so the collector never has to guess.
+INITIAL_REPORT = os.path.join("evidence", "P03", "bootstrap-rehearsal.json")
+HANDOVER_REPORT = os.path.join("evidence", "P03", "bootstrap-handover.json")
+REPORTS_BY_MODE = {"initial": INITIAL_REPORT, "handover": HANDOVER_REPORT}
+
+#: Back-compatible alias. Callers that mean the initial-activation rehearsal specifically
+#: should prefer INITIAL_REPORT, which says so.
+REPORT = INITIAL_REPORT
 
 
 class InventoryError(Exception):
@@ -161,7 +170,14 @@ def collect(
     run_env = {**os.environ, **(env or {})}
     os.makedirs(os.path.join(workdir, "evidence", "P03"), exist_ok=True)
 
-    path = os.path.join(workdir, REPORT)
+    # Pin the output path to the mode being collected, and tell the collector explicitly
+    # rather than letting both modes race for one filename. An unrecognised mode is the
+    # collector's error to report, not ours to paper over with a default path.
+    mode = run_env.get("HELD_INVENTORY_MODE", "initial")
+    report_rel = REPORTS_BY_MODE.get(mode, INITIAL_REPORT)
+    run_env["HELD_INVENTORY_OUT"] = report_rel
+
+    path = os.path.join(workdir, report_rel)
     # A report left over from a previous run is NOT this run's evidence. Reading whatever
     # file happened to be on disk is how a stale inventory -- observed before the fence,
     # describing a state that has since changed -- got presented as a live collection.

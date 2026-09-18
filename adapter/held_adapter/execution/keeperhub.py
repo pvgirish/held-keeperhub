@@ -45,6 +45,13 @@ hosted result; `OfflineTransport` stamps `hosted=False`; `assert_hosted_evidence
 refuses a non-hosted result. A local test of this module establishes that Held forms the
 documented request and reads the documented answers. It does not establish L10.
 
+A credential arrived on 2026-09-18 and `organisation_keys()` confirmed it live, which is
+this repository's first `hosted=True` result. **L10's status did not change.** The layer
+asks whether the caller/payer accepts Held's outer controller call; a credential listing
+is not that call, and no controller is deployed to aim one at. The observed scope is
+`mcp:read`, so `assert_can_broadcast()` refuses a broadcast on this credential before it
+is sent rather than collecting the documented 403 `insufficient_scope` afterwards.
+
 ## Why the outcome vocabulary is what it is
 
 The dangerous failure is not "the send failed" but "the send may or may not have
@@ -71,7 +78,15 @@ from held_core.canonical import hex32, normalize_address
 DEFAULT_BASE_URL = "https://app.keeperhub.com"
 CONTRACT_CALL_PATH = "/api/execute/contract-call"
 CHAINS_PATH = "/api/chains"
+KEYS_PATH = "/api/keys"
 STATUS_PATH = "/api/execute/{execution_id}/status"
+
+# Documented scope vocabulary (https://docs.keeperhub.com/api/api-keys). `scope` arrives
+# as a SPACE-SEPARATED string, so a key may legitimately carry more than one.
+SCOPE_READ = "mcp:read"
+SCOPE_WRITE = "mcp:write"
+SCOPE_ADMIN = "mcp:admin"
+BROADCAST_SCOPES = (SCOPE_WRITE, SCOPE_ADMIN)
 
 IDEMPOTENCY_HEADER = "Idempotency-Key"
 POLL_HINT_HEADER = "X-Poll-Interval-Hint"
@@ -108,6 +123,14 @@ class CredentialError(KeeperHubError):
 
 class RequestIntegrityError(KeeperHubError):
     """The request would not encode to the calldata it is supposed to carry."""
+
+
+class InsufficientScope(KeeperHubError):
+    """The credential cannot do what is about to be attempted.
+
+    Raised BEFORE sending, from an observed scope, so that "this key cannot broadcast"
+    is a fact read off the organisation route rather than a 403 discovered afterwards.
+    """
 
 
 class SendOutcome(str, Enum):
@@ -295,6 +318,96 @@ class SendResult:
 
 
 @dataclass(frozen=True)
+class CredentialCheck:
+    """What the authenticated organisation route says about THIS credential.
+
+    Deliberately not a `SendResult`. A `SendResult` means something about a submission,
+    and `ACCEPTED` there means "KeeperHub owns this execution"; a credential check must
+    never be capable of being filed as one. `organisation_keys()` therefore returns this
+    type and no `SendResult` escapes it.
+
+    ## Nothing identifying survives construction
+
+    The documented response carries `keyPrefix`, `createdByName` and `createdByEmail`.
+    The prefix match is computed here, against the resolved secret, and only the BOOLEAN
+    survives; the names and the email are never copied into a field. `to_evidence()` is
+    therefore safe to write to a file that may become public.
+    """
+
+    hosted: bool
+    status_code: int | None
+    matched: bool                      # a listed key's prefix matches the configured secret
+    scopes: tuple[str, ...] = ()
+    key_count: int = 0
+    pages_read: int = 0
+    total_pages: int | None = None
+    expires_at: str | None = None
+    created_by_role: str | None = None
+    error: str | None = None
+
+    @property
+    def valid(self) -> bool:
+        """The route answered 200 AND the credential we hold is one of the listed keys.
+
+        A 200 alone is not enough. It would also be a 200 if the route had ignored the
+        Authorization header, which is exactly the failure mode that made `/api/chains`
+        unusable as a preflight.
+        """
+        return self.status_code == 200 and self.matched
+
+    @property
+    def can_broadcast(self) -> bool:
+        return any(s in self.scopes for s in BROADCAST_SCOPES)
+
+    def assert_hosted_evidence(self) -> "CredentialCheck":
+        if not self.hosted:
+            raise L10Blocked(
+                "this credential check came from a non-hosted transport, so it is "
+                "evidence about request construction and response parsing ONLY. It says "
+                "nothing about the real organisation route."
+            )
+        return self
+
+    def assert_can_broadcast(self) -> "CredentialCheck":
+        """Refuse a broadcast the observed scope cannot carry, before sending it.
+
+        `mcp:read` can read and simulate. Broadcasting needs `mcp:write` or `mcp:admin`.
+        Sending anyway would earn a documented 403 `insufficient_scope`, and a 403 is a
+        `REJECTED` that has to be reasoned about afterwards; refusing here keeps the
+        question in front of the operator instead.
+        """
+        if not self.valid:
+            raise L10Blocked(
+                f"the credential is not established as valid (status={self.status_code}, "
+                f"matched={self.matched}); nothing may be broadcast on it."
+            )
+        if not self.can_broadcast:
+            raise InsufficientScope(
+                f"this credential carries {list(self.scopes)}. Broadcasting requires one "
+                f"of {list(BROADCAST_SCOPES)}. A dry run is permitted; a real transaction "
+                "is not, and no local step can substitute for one."
+            )
+        return self
+
+    def to_evidence(self) -> dict[str, Any]:
+        """A record with no secret, no prefix, no operator name and no email in it."""
+        return {
+            "hosted": self.hosted,
+            "status_code": self.status_code,
+            "credential_matches_a_listed_organisation_key": self.matched,
+            "valid": self.valid,
+            "scopes": list(self.scopes),
+            "can_broadcast": self.can_broadcast,
+            "keys_listed": self.key_count,
+            "pages_read": self.pages_read,
+            "total_pages": self.total_pages,
+            "expires_at": self.expires_at,
+            "created_by_role": self.created_by_role,
+            "error": self.error,
+        }
+
+
+@dataclass(frozen=True)
 class HttpResponse:
     status_code: int
     body: bytes
@@ -387,6 +500,37 @@ class BackoffPolicy:
         return raw * (1.0 + random.uniform(-self.jitter, self.jitter))
 
 
+def _parse_scopes(raw: Any) -> tuple[str, ...]:
+    """Split a scope field on commas OR whitespace, and on both together.
+
+    `scope` is documented as a SPACE-SEPARATED string in the OAuth style, e.g.
+    `"mcp:read mcp:write"`. But the organisation's own key UI presents multi-scope keys
+    comma-joined -- `mcp:read,mcp:write,mcp:admin` -- and the only multi-scope key this
+    project has seen was read there, not off the wire. Splitting on whitespace alone would
+    turn that whole string into ONE token equal to no known scope, so `can_broadcast`
+    would be False and Held would refuse its own valid write key at the moment it mattered
+    most. Accepting a list is for the same reason: the field's exact wire shape for a
+    multi-scope key is not yet confirmed against the live route.
+
+    This is not a loosening. Every reading still compares whole tokens for equality
+    against `mcp:write`/`mcp:admin`, so `mcp:readwrite` and `mcp:write-pending` remain
+    non-matches. What changes is that a correct multi-scope value is now read correctly
+    under either delimiter.
+
+    Anything that is not a string or a list of strings yields NO scopes, so an unreadable
+    scope field can never be mistaken for write permission.
+    """
+    if isinstance(raw, (list, tuple)):
+        parts: list[str] = []
+        for item in raw:
+            if isinstance(item, str):
+                parts.extend(_parse_scopes(item))
+        return tuple(parts)
+    if not isinstance(raw, str):
+        return ()
+    return tuple(part for part in raw.replace(",", " ").split() if part)
+
+
 def _retry_after_seconds(resp: HttpResponse) -> float | None:
     raw = resp.header("Retry-After")
     if raw is None:
@@ -460,6 +604,101 @@ class KeeperHubClient:
         Exposed as its own method so nobody reaches for it as a substitute preflight.
         """
         return self._send("GET", CHAINS_PATH, None, None, authenticated=False)
+
+    def organisation_keys(self, *, page_limit: int = 10, page_size: int = 50) -> CredentialCheck:
+        """GET /api/keys. The authenticated, read-only, non-spending credential check.
+
+        This is the cheapest thing that produces a real fact instead of an assumption:
+        it needs no deployed contract, no funded Safe and no write scope, and it
+        broadcasts nothing. What it settles is narrow and worth stating exactly:
+
+          * that the organisation route accepts the configured credential,
+          * that the credential we hold is one of the keys the organisation lists,
+          * the scopes actually attached to it -- which is what decides whether a
+            broadcast is even possible.
+
+        What it does NOT settle is L10 as a whole. Whether the authenticated caller/payer
+        accepts Held's outer controller call is a different question, answered only by a
+        contract-call dry run against a real controller.
+
+        Pagination is followed rather than assumed away: the key we hold may not be on
+        the first page, and reporting `matched=False` because we only looked at page one
+        would be a false negative about a credential. If the listing is longer than
+        `page_limit` pages and no match was found, that is reported as an error, not as
+        a clean "no".
+        """
+        # Resolve first. An unset variable is L10Blocked, and it should be raised before
+        # a request is built rather than surfacing as a confusing 401.
+        secret = self.credential.resolve()
+        hosted = self.transport.hosted
+        seen = 0
+        total_pages: int | None = None
+        page = 1
+
+        while page <= max(page_limit, 1):
+            path = f"{KEYS_PATH}?page={page}&limit={page_size}"
+            result = self._send("GET", path, None, None)
+            if result.status_code != 200:
+                return CredentialCheck(
+                    hosted, result.status_code, matched=False, pages_read=page - 1,
+                    error=self._credential_error(result))
+
+            data = result.raw
+            items = data.get("items")
+            if not isinstance(items, list):
+                return CredentialCheck(
+                    hosted, 200, matched=False, pages_read=page,
+                    error="the organisation key listing had no `items` array; refusing to "
+                          "read a credential verdict out of an unrecognised response.")
+            seen += len(items)
+            meta = data.get("meta") if isinstance(data.get("meta"), Mapping) else {}
+            tp = meta.get("totalPages")
+            total_pages = tp if isinstance(tp, int) else total_pages
+
+            for item in items:
+                if not isinstance(item, Mapping):
+                    continue
+                prefix = item.get("keyPrefix")
+                # The documented prefix is the leading characters of the key itself, so
+                # this is the only available binding between the listing and the secret
+                # we hold. A listing entry that carries no prefix cannot be matched, and
+                # is skipped rather than assumed to be ours.
+                if not isinstance(prefix, str) or not prefix or not secret.startswith(prefix):
+                    continue
+                return CredentialCheck(
+                    hosted, 200, matched=True,
+                    scopes=_parse_scopes(item.get("scope")),
+                    key_count=seen, pages_read=page, total_pages=total_pages,
+                    expires_at=item.get("expiresAt"),
+                    created_by_role=item.get("createdByRole"))
+
+            if total_pages is not None and page >= total_pages:
+                return CredentialCheck(
+                    hosted, 200, matched=False, key_count=seen, pages_read=page,
+                    total_pages=total_pages,
+                    error="the configured credential is not among the organisation's "
+                          "listed keys. It is authenticated enough to read the listing "
+                          "but does not appear in it, which is a contradiction worth "
+                          "resolving before anything is submitted on it.")
+            if not items:
+                break
+            page += 1
+
+        return CredentialCheck(
+            hosted, 200, matched=False, key_count=seen, pages_read=page - 1,
+            total_pages=total_pages,
+            error=f"no matching key in the first {page - 1} page(s) of the listing; "
+                  "stopping rather than reporting an unverified credential as absent.")
+
+    @staticmethod
+    def _credential_error(result: SendResult) -> str:
+        if result.status_code == 401:
+            return ("401: the organisation credential was rejected. That is a real "
+                    f"answer about the route, not a transport problem. {result.error or ''}").strip()
+        if result.status_code == 403:
+            return ("403: the credential is known but not permitted to list organisation "
+                    f"keys. {result.error or ''}").strip()
+        return result.error or f"HTTP {result.status_code}"
 
     def preflight(self, probe: ContractCallRequest) -> SendResult:
         """The L10 check: a SIMULATE-mode call on the authenticated route.

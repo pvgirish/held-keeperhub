@@ -1,0 +1,320 @@
+{
+ "schema": "held.final-fork-rehearsal.v1",
+ "evidence_grade": "REAL LOCAL FORK",
+ "label": "FORK",
+ "is_public_mainnet_proof": false,
+ "recorded_utc": "2026-09-18T08:22:25Z",
+ "identities": {
+  "ownerA": "0x9c7bfBb4aBcF2C901a395B81cFcC3De4b214b522",
+  "ownerB": "0x29fcC6F012b580d4C67C128b8fDf84B105C9489C",
+  "ownerC": "0xD1665C7F598d3905CF76698cd35cC459555926a0",
+  "threshold": 2,
+  "runnerB": "0xEc31ACd93c694c21Db63918B442c73C224080A83",
+  "executor": "0x24192B75e297dC1c7a42DcB8C04227818E78acd0",
+  "saltNonce": 20260918,
+  "runner_used": "0xEc31ACd93c694c21Db63918B442c73C224080A83"
+ },
+ "steps": [
+  {
+   "step": "fork verified",
+   "chain": 8453,
+   "block": 51353212
+  },
+  {
+   "step": "Safe deployed",
+   "safe": "0x70784ec913e369b5ea7d2289791eb2be56435834",
+   "owners": 3,
+   "threshold": 2,
+   "version": "1.4.1"
+  },
+  {
+   "step": "Roles deployed",
+   "roles": "0x7e409c359ea2136959e11b6466da6eb20d10db88"
+  },
+  {
+   "step": "controller deployed paused",
+   "controller": "0x27D4dF2805D8e88bCc1D0C59f11dEff65a82fC45",
+   "active": "false",
+   "epoch": 0
+  },
+  {
+   "step": "Roles enabled",
+   "gas": 101048,
+   "signers": 2
+  },
+  {
+   "step": "ceremony complete",
+   "actions": 15,
+   "gas": 3994368
+  },
+  {
+   "step": "budgets bound",
+   "count": 5,
+   "all_non_refilling": true
+  },
+  {
+   "step": "Safe funded",
+   "usdc": 11000000,
+   "note": "fork storage write, NOT a transfer; no real USDC moved"
+  },
+  {
+   "step": "authority readback",
+   "complete": true,
+   "sections": 9,
+   "grade": "REAL LOCAL FORK"
+  },
+  {
+   "step": "activated",
+   "epoch": 1,
+   "runner": "0xEc31ACd93c694c21Db63918B442c73C224080A83",
+   "executor": "0x24192B75e297dC1c7a42DcB8C04227818E78acd0",
+   "gas": 308029
+  },
+  {
+   "step": "runner envelope signed",
+   "operation": "0x1cfe6bedf8bcad57...",
+   "runner": "0xEc31ACd93c694c21Db63918B442c73C224080A83",
+   "epoch": 1
+  },
+  {
+   "step": "first supply executed",
+   "moved": 10000000,
+   "usedSupply": 10000000,
+   "normalCount": 1,
+   "shares": 8987118700912,
+   "gas": 485779
+  },
+  {
+   "step": "second attempt refused",
+   "reason": "FloorViolated()"
+  },
+  {
+   "step": "replay refused, counters unmoved",
+   "reason": "OperationConsumed(bytes32)",
+   "usedSupply": 10000000
+  }
+ ],
+ "addresses": {
+  "safe": "0x70784ec913e369b5ea7d2289791eb2be56435834",
+  "roles": "0x7e409c359ea2136959e11b6466da6eb20d10db88",
+  "controller": "0x27D4dF2805D8e88bCc1D0C59f11dEff65a82fC45"
+ },
+ "gas": {
+  "safe_deploy": 283452,
+  "roles_deploy": 190822,
+  "enable_roles": 101048,
+  "ceremony_total": 3994368,
+  "ceremony_exec_only": 2410896,
+  "activate": 308029,
+  "execute_supply": 485779
+ },
+ "state": {
+  "safe": {
+   "owners": [
+    "0x9c7bfbb4abcf2c901a395b81cfcc3de4b214b522",
+    "0x29fcc6f012b580d4c67c128b8fdf84b105c9489c",
+    "0xd1665c7f598d3905cf76698cd35cc459555926a0"
+   ],
+   "threshold": 2,
+   "version": "1.4.1",
+   "saltNonce": 20260918
+  },
+  "roles": {
+   "owner": "0x70784ec913e369b5ea7d2289791eb2be56435834",
+   "avatar": "0x70784ec913e369b5ea7d2289791eb2be56435834",
+   "target": "0x70784ec913e369b5ea7d2289791eb2be56435834"
+  },
+  "controller_at_deploy": {
+   "active": false,
+   "epoch": 0,
+   "all_counters": 0,
+   "owner": "0x70784ec913e369b5ea7d2289791eb2be56435834"
+  },
+  "ceremony": {
+   "actions": 15,
+   "threshold_used": 2,
+   "signers": [
+    "0x29fcC6F012b580d4C67C128b8fDf84B105C9489C",
+    "0x9c7bfBb4aBcF2C901a395B81cFcC3De4b214b522"
+   ]
+  },
+  "allowances": {
+   "supply": {
+    "balance": 50000000000,
+    "maxRefill": 50000000000,
+    "refill": 0,
+    "period": 0,
+    "non_refilling": true
+   },
+   "normal_withdraw": {
+    "balance": 50000000000,
+    "maxRefill": 50000000000,
+    "refill": 0,
+    "period": 0,
+    "non_refilling": true
+   },
+   "restoration": {
+    "balance": 10000000000,
+    "maxRefill": 10000000000,
+    "refill": 0,
+    "period": 0,
+    "non_refilling": true
+   },
+   "normal_count": {
+    "balance": 10,
+    "maxRefill": 10,
+    "refill": 0,
+    "period": 0,
+    "non_refilling": true
+   },
+   "restoration_count": {
+    "balance": 5,
+    "maxRefill": 5,
+    "refill": 0,
+    "period": 0,
+    "non_refilling": true
+   }
+  },
+  "safe_usdc_at_funding": 11000000,
+  "inventory": {
+   "complete": true,
+   "sections": 9,
+   "incomplete": [],
+   "external_delegates": [],
+   "unsatisfied": [],
+   "block_number": 51353263,
+   "grade": "REAL LOCAL FORK"
+  },
+  "controller_after_activation": {
+   "active": true,
+   "epoch": 1,
+   "policyVersion": 1,
+   "runner": "0xEc31ACd93c694c21Db63918B442c73C224080A83",
+   "executor": "0x24192B75e297dC1c7a42DcB8C04227818E78acd0"
+  },
+  "policy": {
+   "Ls": 50000000000,
+   "Ln": 50000000000,
+   "Lr": 10000000000,
+   "Ms": 10000000,
+   "Mn": 100000000,
+   "Mr": 1000000,
+   "ms": 10000000,
+   "mn": 1000000,
+   "F": 1000000,
+   "H": 0,
+   "Nn": 10,
+   "Nr": 5,
+   "dn": 0,
+   "dr": 0
+  },
+  "first_supply": {
+   "operation_id": "0x1cfe6bedf8bcad576287df9cc4808d1e183a03f9bf2d2aa771df60d719600d73",
+   "tx": "0x9bd4af18e224916e84426e411b323e57b5e9fae6ae86e5275356153c5b714bb7",
+   "gas": 485779,
+   "safe_usdc_before": 11000000,
+   "safe_usdc_after": 1000000,
+   "moved": 10000000,
+   "usedSupply": 10000000,
+   "normalCount": 1,
+   "consumed_marker": "0x8ad40e1e3191568b03e88dfb51d0c3ad6b512a0f656d37812458049012ae0db1",
+   "morpho_supply_shares": 8987118700912
+  },
+  "safe_usdc_final": 1000000,
+  "morpho_position": {
+   "supply_shares": 8987118700912,
+   "onBehalf": "0x70784ec913e369b5ea7d2289791eb2be56435834",
+   "market": "0x13c42741a359ac4a8aa8287d2be109dcf28344484f91185f9a79bd5a805a55ae"
+  }
+ },
+ "refusals": {
+  "second_attempt": {
+   "succeeded": false,
+   "revert": "FloorViolated()",
+   "raw": "Error: execution reverted: FloorViolated\n\nContext:\n- server returned an error response: error code 3: execution reverted: custom error 0x6575b1e1, data: \"0x6575b1e1\"",
+   "safe_usdc": 1000000,
+   "why_expected": "the Safe holds 1.000000 USDC and the floor F is 1.000000 USDC, so `amount <= balanceBefore - F` admits nothing. The supply allowance is not the binding constraint here: 49,990 USDC of a non-refilling 50,000 remains."
+  },
+  "replay_same_envelope": {
+   "succeeded": false,
+   "revert": "OperationConsumed(bytes32)",
+   "raw": "Error: execution reverted: OperationConsumed(0x1cfe6bedf8bcad576287df9cc4808d1e183a03f9bf2d2aa771df60d719600d73)\n\nContext:\n- server returned an error response: error code 3: execution reverted: custom error 0xc647c7a5: 1cfe6bedf8bcad576287df9cc4808d1e183a03f9bf2d2aa771df60d719600d73, data: \"0xc647c7",
+   "usedSupply_after": 10000000,
+   "normalCount_after": 1
+  }
+ },
+ "claim_comparison": [
+  {
+   "claim": "Safe is 2-of-3 with the three final owners",
+   "held": true
+  },
+  {
+   "claim": "every owner act carried two of three signatures",
+   "held": true
+  },
+  {
+   "claim": "the ceremony is 15 actions, as the owner sheet says",
+   "held": true
+  },
+  {
+   "claim": "the Roles module was enabled by its own 2-of-3 owner act",
+   "held": true
+  },
+  {
+   "claim": "the controller is deployed paused at epoch 0, all counters zero",
+   "held": true
+  },
+  {
+   "claim": "all five budgets are NON-REFILLING",
+   "held": true
+  },
+  {
+   "claim": "the Safe was funded with exactly 11.000000 USDC",
+   "held": true
+  },
+  {
+   "claim": "activation set epoch 1, runner B and KeeperHub's executor",
+   "held": true
+  },
+  {
+   "claim": "exactly 10.000000 USDC moved, once",
+   "held": true
+  },
+  {
+   "claim": "a Morpho position exists on behalf of the Safe",
+   "held": true
+  },
+  {
+   "claim": "the second attempt was refused by the FLOOR guard, by name",
+   "held": true
+  },
+  {
+   "claim": "a replayed authorization was refused by OperationConsumed and moved no counter",
+   "held": true
+  },
+  {
+   "claim": "the Safe's final balance is 1.000000 USDC \u2014 the floor, untouched",
+   "held": true
+  },
+  {
+   "claim": "no row of this rehearsal is graded above REAL LOCAL FORK",
+   "held": true
+  }
+ ],
+ "problems": [],
+ "runner_is_final_identity": true,
+ "fork": {
+  "chain_id": 8453,
+  "block_number": 51353212,
+  "morpho_has_code": true,
+  "note": "an anvil fork of Base. No finality, no public state."
+ },
+ "completed": true,
+ "elapsed_seconds": 35.1,
+ "boundaries": [
+  "REAL LOCAL FORK. No address here exists on Base. Nothing was funded with real money; the USDC was written into fork storage, not transferred.",
+  "The owner actions used Safe's pre-validated signature form after a real approveHash from each impersonated owner. No owner private key was used, requested or held.",
+  "The executor path is KeeperHub-EQUIVALENT, not KeeperHub: the same address sent the call, but no KeeperHub API was involved and no idempotency key was issued. This is not evidence for M1, M2, P18 or P19.",
+  "An anvil fork has no finality, so no row may be promoted to PUBLIC CHAIN."
+ ]
+}

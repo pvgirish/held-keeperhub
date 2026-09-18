@@ -1,0 +1,30 @@
+{
+ "schema": "held.public-transaction-record.v1",
+ "label": "PREPARED",
+ "_status": "TEMPLATE \u2014 NOT EXECUTED",
+ "_how_to_use": "Replace every FILL: value with what the receipt actually says, then set label to \"PUBLIC MAINNET VERIFIED\". `make mainnet-evidence-gate` re-reads the transaction from a public Base RPC and refuses the record if it is not there. Writing a plausible value here does not produce a pass.",
+ "step": "06-fund-safe",
+ "title": "Fund the Safe with exactly 11.000000 USDC",
+ "sender": "external",
+ "call": "USDC.transfer(SAFE, 11000000)",
+ "irreversible": false,
+ "chainId": 8453,
+ "receipt": {
+  "transactionHash": "FILL:transactionHash",
+  "blockNumber": "FILL:blockNumber",
+  "blockHash": "FILL:blockHash",
+  "gasUsed": "FILL:gasUsed",
+  "effectiveGasPrice": "FILL:effectiveGasPrice",
+  "status": "FILL:status",
+  "timestamp": "FILL:timestamp",
+  "explorer_url": "FILL:explorer_url"
+ },
+ "readback": {
+  "what_must_be_true": "FILL:the readback this step's row in M1-OWNER-RUN-SEQUENCE.md requires",
+  "observed": "FILL:what was actually read, at a stated block"
+ },
+ "fork_rehearsal_reference": {
+  "note": "The same step, rehearsed on a fork with the final identities. REFERENCE ONLY: a fork result can never satisfy this record.",
+  "path": "evidence/M1/final-fork-rehearsal.json"
+ }
+}

@@ -11,7 +11,7 @@
     {
       "n": 1,
       "title": "Runner A is ACTIVE under customer-approved limits",
-      "at": 0.67,
+      "at": 0.64,
       "epoch": 1,
       "runner": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
       "status": "CONTRACT_ACTIVE"
@@ -19,7 +19,7 @@
     {
       "n": 2,
       "title": "Runner A executes a REAL supply through Held \u2014 budget is actually spent",
-      "at": 1.27,
+      "at": 1.24,
       "amount_usdc": "12.00",
       "supply_ceiling": 50000000000,
       "used": 12000000,
@@ -30,7 +30,7 @@
     {
       "n": 3,
       "title": "A REAL operation is dispatched; the server receives it and drops the connection",
-      "at": 1.36,
+      "at": 1.32,
       "operation": "0x37ac8a6892009552...",
       "journal_state": "UNKNOWN",
       "durable_attempt": "hero-interrupted-attempt-1",
@@ -43,7 +43,7 @@
     {
       "n": 4,
       "title": "Owner FENCES the controller on chain (Held prepared it; the owner sent it)",
-      "at": 2.36,
+      "at": 2.17,
       "selector": "0xf33a513e",
       "fence_block": 51353232,
       "status": "OWNER_FENCED",
@@ -52,7 +52,7 @@
     {
       "n": 5,
       "title": "Handover REFUSED while the outcome is unresolved",
-      "at": 2.58,
+      "at": 2.35,
       "operations_derived_from_journal": 1,
       "blockers": [
         "UNRESOLVED:0x37ac8a6892009552c1cbc5baabeb6a907ec0fd8f5147c66efaa7401c82776ce2"
@@ -62,7 +62,7 @@
     {
       "n": 6,
       "title": "Reconciled from the controller's own consumed[] record",
-      "at": 2.84,
+      "at": 2.57,
       "operations": 1,
       "verdict": "NOT_EXECUTED",
       "marker": "0x0000000000000000...",
@@ -72,7 +72,7 @@
     {
       "n": 7,
       "title": "Bounded authority inventory, collected LIVE at the fence",
-      "at": 3.9,
+      "at": 3.53,
       "mode": "handover",
       "sections": 9,
       "complete": true,
@@ -83,7 +83,7 @@
     {
       "n": 8,
       "title": "Runner B pinned against the consumption actually on chain",
-      "at": 4.12,
+      "at": 3.72,
       "runner_b": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
       "new_epoch": 2,
       "carried": [
@@ -97,14 +97,14 @@
     {
       "n": 9,
       "title": "Held PREPARES the activation and describes it; it does not sign it",
-      "at": 4.12,
+      "at": 3.72,
       "summary": "Activate epoch 2 with runner 0x976EA74026E726554dB657fA54763abd0C3a0aa9. Remaining capacity after this change: supply 49988000000, normal withdraw 50000000000, restoration 10000000000, counts 9/5.",
       "reverts_if": 4
     },
     {
       "n": 10,
       "title": "Runner B is ACTIVE \u2014 Held's verified consumption survived the handover",
-      "at": 4.6,
+      "at": 4.19,
       "epoch": 2,
       "runner": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
       "used_supply": 12000000,
@@ -114,7 +114,7 @@
     {
       "n": 11,
       "title": "Runner A ATTEMPTS its old authorization \u2014 the controller refuses it",
-      "at": 4.63,
+      "at": 4.22,
       "signed_for_epoch": 1,
       "current_epoch": 2,
       "rejected": true,
@@ -125,7 +125,7 @@
     {
       "n": 12,
       "title": "Runner B receives what it needs to continue \u2014 and no key material",
-      "at": 4.63,
+      "at": 4.22,
       "usable": true,
       "remaining_supply": 49988000000,
       "credential": "REFERENCED (env:HELD_RUNNER_B_KEY), never carried",
@@ -171,7 +171,7 @@
       ],
       "nativeConfigDigest": "0x6146a423ce4805349339c9dc7e29a5d4f14e4ee52974d8dc9aec7d53960f7d6c",
       "lineage": "0x0000000000000000000000000000000000000000000000000000000000000011",
-      "preparedAt": 1789700286
+      "preparedAt": 1789720827
     },
     "blockedFrom": null,
     "blockers": [],
@@ -182,7 +182,7 @@
       "chainId": 8453,
       "retiringEpoch": 1,
       "fenceBlock": 51353232,
-      "fenceBlockHash": "0xe8f149432f4bba063322a2f7c774b0a506df38783d72e25fcae13489778b219d",
+      "fenceBlockHash": "0xec268192f8eabcbc3903c4e62b89382743c3d615c8b98f29b70bdd762c4c962b",
       "resolutions": [
         {
           "operationId": "0x37ac8a6892009552c1cbc5baabeb6a907ec0fd8f5147c66efaa7401c82776ce2",
@@ -205,7 +205,7 @@
       },
       "evidenceBlock": 51353232,
       "finalized": false,
-      "builtAt": 1789700284,
+      "builtAt": 1789720826,
       "_derivation": "The operation set is derived from the durable journal for the retiring epoch. The machine re-derives it on acceptance, so a report that omits a known operation is refused."
     },
     "inventoryScope": {
@@ -218,27 +218,27 @@
     },
     "history": [
       {
-        "at": 1789700283,
+        "at": 1789720824,
         "event": "start",
         "state": "PROPOSED",
         "controller": "0x0620c56E23743ab7927Fc9A8d97ae777343C33db",
         "epoch": 1
       },
       {
-        "at": 1789700283,
+        "at": 1789720824,
         "event": "fence prepared",
         "state": "FENCE_PREPARED",
         "currentEpoch": 1
       },
       {
-        "at": 1789700283,
+        "at": 1789720825,
         "event": "fence confirmed on chain",
         "state": "FENCED",
         "epoch": 1,
         "blockNumber": 51353232
       },
       {
-        "at": 1789700284,
+        "at": 1789720825,
         "event": "blocked",
         "state": "BLOCKED",
         "reason": "1 operation(s) from the retiring epoch are unresolved. Activating a replacement now would either lose consumption that really happened or charge the customer twice for work that did not.",
@@ -247,7 +247,7 @@
         ]
       },
       {
-        "at": 1789700284,
+        "at": 1789720826,
         "event": "every operation of the retiring epoch is settled from chain evidence",
         "state": "RECONCILED",
         "operations": 1,
@@ -255,28 +255,28 @@
         "fenceBlock": 51353232
       },
       {
-        "at": 1789700286,
+        "at": 1789720827,
         "event": "candidate pinned",
         "state": "CANDIDATE_PREPARED",
         "runner": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
         "newEpoch": 2
       },
       {
-        "at": 1789700286,
+        "at": 1789720827,
         "event": "bounded authority inventory complete and scoped to this installation",
         "state": "CLEARED",
         "sections": 9,
         "observedAtBlock": 51353232
       },
       {
-        "at": 1789700286,
+        "at": 1789720827,
         "event": "activation prepared",
         "state": "ACTIVATION_PREPARED",
         "newEpoch": 2,
         "runner": "0x976EA74026E726554dB657fA54763abd0C3a0aa9"
       },
       {
-        "at": 1789700286,
+        "at": 1789720827,
         "event": "replacement active on chain",
         "state": "ACTIVE",
         "epoch": 2,

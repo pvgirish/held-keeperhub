@@ -1,0 +1,442 @@
+{
+  "observation": {
+    "read": true,
+    "complete": true,
+    "compatible": true,
+    "verdict": "COMPLETE",
+    "block_number": 51353232,
+    "block_hash": "0xec268192f8eabcbc3903c4e62b89382743c3d615c8b98f29b70bdd762c4c962b",
+    "chain_id": 8453,
+    "expected_chain_id": 8453,
+    "all_state_reads_pinned_to_block": true,
+    "mode": "handover",
+    "finality": "NONE \u2014 anvil fork. This is the observation point, not finalized evidence.",
+    "scope": "FORK REHEARSAL. Not the public installation, not the P04 automated service."
+  },
+  "declared_installation": {
+    "read": true,
+    "complete": true,
+    "compatible": true,
+    "verdict": "COMPLETE",
+    "manifest_path": "/Users/girish/Documents/Codex/2026-09-15/ha/held/fixtures/generated/held-install-manifest.json",
+    "error": null,
+    "missing_terms": [],
+    "declared": {
+      "_note": "DECLARED candidate installation, written by script/solidity/InstallPausedHeld.s.sol before activation. The amount/count limits are the NATIVE Roles allowances this installation configures; the controller's own policy is zero until an owner activates it. Not a reading of live state -- the checklist reads that separately and compares.",
+      "approvalValueBound": 40000000000,
+      "controller": "0x0620c56E23743ab7927Fc9A8d97ae777343C33db",
+      "lineage": "0x0000000000000000000000000000000000000000000000000000000000000011",
+      "marketId": "0x13c42741a359ac4a8aa8287d2be109dcf28344484f91185f9a79bd5a805a55ae",
+      "morpho": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+      "normalCountKey": "0xd1a3cff9379833a9717789833503118af84eed2cf5c696bfb48f36ceb84762ed",
+      "normalCountLimit": 10,
+      "normalRole": "0x68656c642d6f70657261746f722d763100000000000000000000000000000000",
+      "normalWithdrawKey": "0x75b80a4223ed54e07d15ae036ea29bbd579be7229b1f0f19c15349fb9419ba02",
+      "normalWithdrawLimit": 50000000000,
+      "restorationCountKey": "0xe342f32716a9c9637d8c5e7701681e4f37dd2270bf0f76dc69b00879567e00dc",
+      "restorationCountLimit": 5,
+      "restorationKey": "0x33b7a1087cc5f69fafc4dd1125f2c17abf70b277b5edcfe36dc930ea88a5f680",
+      "restorationLimit": 10000000000,
+      "restorationRole": "0xad5e119df756c7a61cf7391a44f6005729ca211e9d19d7c2d5e4b143cab049c9",
+      "retiredMember": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "roles": "0x3875311CC0D4017A033893a9653A0725378acA1C",
+      "safe": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180",
+      "supplyAmountKey": "0x68656c642d737570706c792d6361700000000000000000000000000000000000",
+      "supplyAmountLimit": 50000000000,
+      "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    },
+    "note": "The candidate installation, declared before activation by script/solidity/InstallPausedHeld.s.sol. Required configuration that is absent is INCOMPLETE and blocks; it is never inferred from live state, because inferring it would make the comparison circular."
+  },
+  "safe": {
+    "read": true,
+    "complete": true,
+    "compatible": true,
+    "verdict": "COMPLETE",
+    "owners": [
+      "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+    ],
+    "owner_count": 3,
+    "expected_owner_count": 3,
+    "threshold": 2,
+    "expected_threshold": 2,
+    "implementation_version": "1.4.1",
+    "implementation_supported": true,
+    "supported_versions": [
+      "1.4.1"
+    ],
+    "enabled_modules": [
+      "0x0620c56E23743ab7927Fc9A8d97ae777343C33db",
+      "0x3875311CC0D4017A033893a9653A0725378acA1C"
+    ],
+    "owners_wellformed": true,
+    "modules_wellformed": true,
+    "module_page_cursor": "0x0000000000000000000000000000000000000001",
+    "module_list_exhausted": true,
+    "roles_module_enabled": true,
+    "unrecognised_modules": [],
+    "guard": "0x0000000000000000000000000000000000000000",
+    "guard_is_unset": true,
+    "fallback_handler": "0x0000000000000000000000000000000000000000",
+    "fallback_supported": true,
+    "supported_fallback_handlers": [
+      "0x0000000000000000000000000000000000000000"
+    ],
+    "note": "The module page CURSOR must come back as the sentinel, or the enumeration is truncated and an unrecognised module could be sitting on a page nobody read. An address list with a member that does not parse is UNREADABLE, not a shorter list. An UNREADABLE guard or fallback is INCOMPLETE, not 'absent'. A readable one is not thereby approved: an unreviewed fallback handler extends the Safe's call surface and an unsupported implementation version is outside the profile this checklist was written against. Both block (V4 \u00a76)."
+  },
+  "roles": {
+    "read": true,
+    "complete": true,
+    "compatible": true,
+    "verdict": "COMPLETE",
+    "module": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+    "owner": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180",
+    "avatar": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180",
+    "target": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180",
+    "owner_is_safe": true,
+    "avatar_is_safe": true,
+    "target_is_safe": true,
+    "environment_role_key": "0x68656c642d6f70657261746f722d763100000000000000000000000000000000",
+    "environment_allowance_key": "0x68656c642d737570706c792d6361700000000000000000000000000000000000",
+    "budgets": {
+      "supply_amount": {
+        "key": "0x68656c642d737570706c792d6361700000000000000000000000000000000000",
+        "readable": true,
+        "refill": 0,
+        "maxRefill": 50000000000,
+        "period": 0,
+        "balance": 49988000000,
+        "timestamp": 1789495789,
+        "non_refilling": true,
+        "declared_limit": 50000000000,
+        "matches_declared": true
+      },
+      "normal_withdraw_amount": {
+        "key": "0x75b80a4223ed54e07d15ae036ea29bbd579be7229b1f0f19c15349fb9419ba02",
+        "readable": true,
+        "refill": 0,
+        "maxRefill": 50000000000,
+        "period": 0,
+        "balance": 50000000000,
+        "timestamp": 1789495789,
+        "non_refilling": true,
+        "declared_limit": 50000000000,
+        "matches_declared": true
+      },
+      "restoration_amount": {
+        "key": "0x33b7a1087cc5f69fafc4dd1125f2c17abf70b277b5edcfe36dc930ea88a5f680",
+        "readable": true,
+        "refill": 0,
+        "maxRefill": 10000000000,
+        "period": 0,
+        "balance": 10000000000,
+        "timestamp": 1789495789,
+        "non_refilling": true,
+        "declared_limit": 10000000000,
+        "matches_declared": true
+      },
+      "normal_count": {
+        "key": "0xd1a3cff9379833a9717789833503118af84eed2cf5c696bfb48f36ceb84762ed",
+        "readable": true,
+        "refill": 0,
+        "maxRefill": 10,
+        "period": 0,
+        "balance": 9,
+        "timestamp": 1789495789,
+        "non_refilling": true,
+        "declared_limit": 10,
+        "matches_declared": true
+      },
+      "restoration_count": {
+        "key": "0xe342f32716a9c9637d8c5e7701681e4f37dd2270bf0f76dc69b00879567e00dc",
+        "readable": true,
+        "refill": 0,
+        "maxRefill": 5,
+        "period": 0,
+        "balance": 5,
+        "timestamp": 1789495789,
+        "non_refilling": true,
+        "declared_limit": 5,
+        "matches_declared": true
+      }
+    },
+    "all_five_readable": true,
+    "all_five_match_declared": true,
+    "all_five_non_refilling": true,
+    "note": "All FIVE declared budget dimensions are read from the manifest's keys and compared with the declared limits. A tuple whose fields do not parse as integers is UNREADABLE, never zero. A refilling allowance is refused by the controller at activation; it is read back here rather than trusted."
+  },
+  "roles_membership_and_conditions": {
+    "read": true,
+    "complete": true,
+    "compatible": true,
+    "verdict": "COMPLETE",
+    "probes": {
+      "controller_normal_supply": {
+        "expect": [
+          "PERMITTED",
+          "PERMITTED_INNER_FAILED"
+        ],
+        "why": "the controller is the sole member of the normal role, and the supply tree permits this exact shape. The Safe holds no USDC approval at rest, so Morpho itself may revert -- that is PERMITTED_INNER_FAILED, not a permission failure",
+        "outcome": "PERMITTED_INNER_FAILED",
+        "selector": "0xd27b44a9",
+        "detail": "Error: server returned an error response: error code 3: execution reverted: custom error 0xd27b44a9, data: \"0xd27b44a9\""
+      },
+      "controller_restoration_withdraw": {
+        "expect": [
+          "PERMITTED",
+          "PERMITTED_INNER_FAILED"
+        ],
+        "why": "the restoration lane is a separate role, also controller-only",
+        "outcome": "PERMITTED"
+      },
+      "controller_normal_withdraw_wrong_receiver": {
+        "expect": [
+          "REFUSED_BY_CONDITION"
+        ],
+        "why": "the tight tree pins the receiver to the Safe. This is the CONDITION check and it must fail with ConditionViolation -- distinct from a membership failure and from an inner economic failure",
+        "outcome": "REFUSED_BY_CONDITION",
+        "selector": "0xd0a9bf58",
+        "detail": "Error: server returned an error response: error code 3: execution reverted: custom error 0xd0a9bf58: , data: \"0xd0a9bf5800000000000000000000000000000000000000000000000000000000000000070000000000000000"
+      },
+      "retired_member_normal_supply": {
+        "expect": [
+          "NO_MEMBERSHIP"
+        ],
+        "why": "the previous runner was retired as part of installing this lineage",
+        "outcome": "NO_MEMBERSHIP",
+        "selector": "0xfd8e9f28",
+        "detail": "Error: server returned an error response: error code 3: execution reverted: custom error 0xfd8e9f28, data: \"0xfd8e9f28\""
+      }
+    },
+    "method": "Read-only eth_call against the Roles module, from each candidate sender. Roles v2 keeps membership in an internal mapping with no getter, so what is established is the BEHAVIOUR that membership plus the condition tree produce. NO_MEMBERSHIP (0xfd8e9f28) and a condition revert are kept as distinct outcomes: collapsing them would let an unconfigured tree look like a refusal.",
+    "limitation": "The probe needs the sender to hold gas, because eth_call is balance-checked. On the fork the controller is given dust for exactly this. A PUBLIC installation whose controller holds no ETH cannot run this probe, and this section would be INCOMPLETE there rather than silently passing.",
+    "note": "Both roles are exercised, and a POSITIVE and a NEGATIVE case are required: a probe set that only ever refuses proves as little as one that only ever permits."
+  },
+  "morpho_grants": {
+    "read": true,
+    "complete": true,
+    "compatible": true,
+    "verdict": "COMPLETE",
+    "history_range": {
+      "from_block": 51353212,
+      "to_block": 51353232,
+      "readable": true,
+      "wellformed": true,
+      "base_from_env": null,
+      "base_usable": true
+    },
+    "topic": "0xd5e969f01efe921d3f766bdebad25f0a05e3f237311f56482bf132d0326309c0",
+    "decoded_events": [],
+    "events_for_this_safe": 0,
+    "malformed_entries": [],
+    "candidates": {
+      "safe_self": {
+        "address": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
+        "provenance": "known identity: the managed Safe"
+      },
+      "roles_module": {
+        "address": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+        "provenance": "known identity: the Zodiac Roles module"
+      },
+      "held_controller": {
+        "address": "0x0620c56E23743ab7927Fc9A8d97ae777343C33db",
+        "provenance": "known identity: the Held controller"
+      },
+      "held_executor": {
+        "address": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+        "provenance": "known identity: HELD_EXECUTOR"
+      }
+    },
+    "grants": {
+      "safe_self": false,
+      "roles_module": false,
+      "held_controller": false,
+      "held_executor": false
+    },
+    "unreadable": [],
+    "external_delegates": [],
+    "note": "Candidates come from DECODED SetAuthorization events whose authorizer is this Safe, plus known identities, then mapping readback at the observation block. Every candidate carries its provenance. An empty range is a legitimate answer and is distinguished from output that could not be decoded: the latter is MALFORMED and blocks. Malformed grant output is UNREADABLE, never False. BOUNDARY: completeness is bounded by the range above."
+  },
+  "token_approvals": {
+    "read": true,
+    "complete": true,
+    "compatible": true,
+    "verdict": "COMPLETE",
+    "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "allowances": {
+      "morpho": 0,
+      "roles": 0,
+      "permit2": 0,
+      "held_controller": 0
+    },
+    "unreadable": [],
+    "nonzero": [],
+    "note": "The managed Safe->Morpho allowance must be zero at rest; the controller also requires it zero on entry and exit of every operation. An allowance that does not parse as an integer is UNREADABLE, not zero."
+  },
+  "held_controller": {
+    "read": true,
+    "complete": true,
+    "compatible": true,
+    "verdict": "COMPLETE",
+    "address": "0x0620c56E23743ab7927Fc9A8d97ae777343C33db",
+    "active": false,
+    "epoch": 1,
+    "bindings": {
+      "safe": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180",
+      "roles": "0x3875311CC0D4017A033893a9653A0725378acA1C",
+      "morpho": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+      "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "owner": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180"
+    },
+    "scope": {
+      "marketId": "0x13c42741a359ac4a8aa8287d2be109dcf28344484f91185f9a79bd5a805a55ae",
+      "lineage": "0x0000000000000000000000000000000000000000000000000000000000000011"
+    },
+    "market_matches_declared": true,
+    "lineage_matches_declared": true,
+    "is_the_declared_controller": true,
+    "owner_is_safe": true,
+    "controller_keys": {
+      "normalRoleKey": "0x68656c642d6f70657261746f722d763100000000000000000000000000000000",
+      "restorationRoleKey": "0xad5e119df756c7a61cf7391a44f6005729ca211e9d19d7c2d5e4b143cab049c9",
+      "supplyAllowanceKey": "0x68656c642d737570706c792d6361700000000000000000000000000000000000",
+      "normalWithdrawAllowanceKey": "0x75b80a4223ed54e07d15ae036ea29bbd579be7229b1f0f19c15349fb9419ba02",
+      "restorationAllowanceKey": "0x33b7a1087cc5f69fafc4dd1125f2c17abf70b277b5edcfe36dc930ea88a5f680",
+      "normalCountKey": "0xd1a3cff9379833a9717789833503118af84eed2cf5c696bfb48f36ceb84762ed",
+      "restorationCountKey": "0xe342f32716a9c9637d8c5e7701681e4f37dd2270bf0f76dc69b00879567e00dc"
+    },
+    "key_mismatches": [],
+    "consumption": {
+      "usedSupply": 12000000,
+      "usedNormalWithdraw": 0,
+      "usedRestoration": 0,
+      "normalCount": 1,
+      "restorationCount": 0
+    },
+    "consumption_all_zero": false,
+    "mode": "handover",
+    "note": "HANDOVER MODE: this controller is expected to have run. Its bindings, keys, market and lineage are checked; its epoch and consumption are read, not required to be zero. It must still be PAUSED: an inventory collected while the controller is live describes a state the runner can change underneath it. Initial activation requires a PAUSED, never-active controller at epoch 0 with zero consumption across ALL FIVE dimensions, immutable bindings pointing at this installation, and the market and lineage the installation declared (V4 \u00a76). The controller's seven key immutables are compared with the declared keys: a controller bound to budget keys the Roles side never configured would read zero everywhere and look clean."
+  },
+  "identities": {
+    "read": true,
+    "complete": true,
+    "compatible": true,
+    "verdict": "COMPLETE",
+    "selected_operating_identities": {
+      "runner": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+      "executor": "0x976EA74026E726554dB657fA54763abd0C3a0aa9"
+    },
+    "missing": [],
+    "public_chain_facts": {
+      "safe_owners": [
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+      ],
+      "threshold": 2,
+      "roles_owner": "0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180"
+    },
+    "attested_not_verified": {
+      "statement": "Control of the runner and executor keys, and of any KeeperHub organisation credential, is ATTESTED and NOT verified here.",
+      "why": "Public chain data cannot prove private-key ownership. V4 \u00a76 requires this distinction to be explicit rather than folded into the chain findings.",
+      "fork_note": "Every key in this fixture is a well-known anvil account. It is not custody and proves nothing about a production installation."
+    },
+    "note": "An installation whose operating identities have not been SELECTED is incomplete, and says so, rather than reporting the Safe's owners and calling that the same question. The KeeperHub organisation identity is unresolved (L10), so this section is expected to be INCOMPLETE until it is chosen and separately attested."
+  },
+  "clause_to_evidence": [
+    {
+      "obligation": "One stated observation block for every state read",
+      "section": "observation",
+      "satisfied": true,
+      "evidence": "block 51353232 on chain 8453; every call/storage read pinned to it"
+    },
+    {
+      "obligation": "The intended installation is declared in advance, not inferred",
+      "section": "declared_installation",
+      "satisfied": true,
+      "evidence": "/Users/girish/Documents/Codex/2026-09-15/ha/held/fixtures/generated/held-install-manifest.json: all required terms present"
+    },
+    {
+      "obligation": "Safe ownership, threshold and implementation are read and within the profile",
+      "section": "safe",
+      "satisfied": true,
+      "evidence": "3 owners, threshold 2, version '1.4.1'"
+    },
+    {
+      "obligation": "Enabled modules, guard and fallback handler are enumerated and judged",
+      "section": "safe",
+      "satisfied": true,
+      "evidence": "modules ['0x0620c56E23743ab7927Fc9A8d97ae777343C33db', '0x3875311CC0D4017A033893a9653A0725378acA1C']; guard 0x0000000000000000000000000000000000000000; fallback 0x0000000000000000000000000000000000000000"
+    },
+    {
+      "obligation": "Roles implementation owner/avatar/target belong to this Safe",
+      "section": "roles",
+      "satisfied": true,
+      "evidence": "owner 0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180, avatar 0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180, target 0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180"
+    },
+    {
+      "obligation": "All five native amount/count budgets are read and match the declared installation",
+      "section": "roles",
+      "satisfied": true,
+      "evidence": "5/5 readable, 5/5 match, 5/5 non-refilling"
+    },
+    {
+      "obligation": "Both Zodiac roles have the intended member, and the condition trees bind",
+      "section": "roles_membership_and_conditions",
+      "satisfied": true,
+      "evidence": "controller_normal_supply=PERMITTED_INNER_FAILED; controller_restoration_withdraw=PERMITTED; controller_normal_withdraw_wrong_receiver=REFUSED_BY_CONDITION; retired_member_normal_supply=NO_MEMBERSHIP"
+    },
+    {
+      "obligation": "Morpho authorization history is decoded from the pinned event, not scraped",
+      "section": "morpho_grants",
+      "satisfied": true,
+      "evidence": "topic 0xd5e969f01e..., 0 decoded event(s), 0 malformed"
+    },
+    {
+      "obligation": "Every grant candidate is confirmed by mapping readback at the same block",
+      "section": "morpho_grants",
+      "satisfied": true,
+      "evidence": "4 candidate(s) read back; external delegates []"
+    },
+    {
+      "obligation": "Relevant token approvals and delegated spend paths are enumerated",
+      "section": "token_approvals",
+      "satisfied": true,
+      "evidence": "USDC allowances {'morpho': 0, 'roles': 0, 'permit2': 0, 'held_controller': 0}"
+    },
+    {
+      "obligation": "The controller is PAUSED, with epoch and all five counters readable",
+      "section": "held_controller",
+      "satisfied": true,
+      "evidence": "active=False, epoch=1, consumption={'usedSupply': 12000000, 'usedNormalWithdraw': 0, 'usedRestoration': 0, 'normalCount': 1, 'restorationCount': 0} (HANDOVER mode: a controller mid-life has spent budget, and that is the history the handover must carry, not a defect)"
+    },
+    {
+      "obligation": "The controller inspected IS the declared one, owned by this Safe",
+      "section": "held_controller",
+      "satisfied": true,
+      "evidence": "declared 0x0620c56E23743ab7927Fc9A8d97ae777343C33db, inspected 0x0620c56E23743ab7927Fc9A8d97ae777343C33db, owner 0x08deEDA0Ba1eb4B6B4b5cc4DD0c4BC689EA37180"
+    },
+    {
+      "obligation": "Controller scope, market, lineage and all seven budget keys match the declaration",
+      "section": "held_controller",
+      "satisfied": true,
+      "evidence": "market True, lineage True, key mismatches []"
+    },
+    {
+      "obligation": "Selected runner/executor identities are stated, with attested control kept distinct",
+      "section": "identities",
+      "satisfied": true,
+      "evidence": "selected {'runner': '0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65', 'executor': '0x976EA74026E726554dB657fA54763abd0C3a0aa9'}; missing []"
+    }
+  ],
+  "verdict": {
+    "all_sections_complete": true,
+    "incomplete_sections": [],
+    "obligations_total": 14,
+    "obligations_satisfied": 14,
+    "obligations_unsatisfied": [],
+    "activation_would_be": "PERMITTED BY THIS CHECKLIST",
+    "important": "'PERMITTED BY THIS CHECKLIST' means the declared sections read clean at this observation point on a FORK, within the declared history range. It is not authorization, not finality, and not evidence about the public installation."
+  }
+}

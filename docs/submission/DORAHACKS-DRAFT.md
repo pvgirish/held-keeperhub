@@ -32,7 +32,10 @@ handover, so a new runner inherits the spent budget rather than a fresh one.
 `GET /api/execute/{id}/status`, and the public `GET /api/chains` catalog. Built and
 wire-tested against the documented schema.
 
-**Not yet called with a credential** — see "what remains unfinished".
+**The execution route has not been called with a credential.** As of 2026-09-18 an
+organisation credential exists and the authenticated `GET /api/keys` route accepts it, but
+it is scoped `mcp:read` and no contract call has been submitted on it — see "what remains
+unfinished".
 
 ## Network
 
@@ -46,10 +49,12 @@ paused-by-default typed controller. The demo moves 12 USDC for real on the fork.
 
 ## What transaction proves it?
 
-**NOT YET ESTABLISHED.** No public transaction exists. The KeeperHub route requires an
-organisation API credential that is not available, so the authenticated call has never been
-made. It is neither stubbed nor simulated, and a local result is structurally prevented from
-being filed as a hosted one.
+**NOT YET ESTABLISHED.** No public transaction exists. An organisation credential arrived on
+2026-09-18 and the authenticated route accepts it, which is real but is a fact about a
+credential, not a transaction: the key is scoped `mcp:read`, which the API documents as
+read-and-simulate only, and there is no deployed controller to aim a call at. So no
+authenticated execution has been made. It is neither stubbed nor simulated, and a local
+result is structurally prevented from being filed as a hosted one.
 
 ## Working proof available today
 

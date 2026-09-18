@@ -23,7 +23,12 @@ set -uo pipefail
 export PATH="$HOME/.foundry/bin:$PATH"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$HERE"
+# INITIAL mode, and therefore the initial-activation path. Handover collection (hero-demo,
+# p06-comparison) writes evidence/P03/bootstrap-handover.json instead; the two used to
+# overwrite each other under this one name. See collect_bootstrap_evidence.py.
+export HELD_INVENTORY_MODE="${HELD_INVENTORY_MODE:-initial}"
 OUT="evidence/P03/bootstrap-rehearsal.json"
+[ "$HELD_INVENTORY_MODE" = "initial" ] || OUT="evidence/P03/bootstrap-handover.json"
 
 ./fixtures/with_fork.sh bash -c '
   set -uo pipefail

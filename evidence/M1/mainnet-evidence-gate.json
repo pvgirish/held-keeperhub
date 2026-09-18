@@ -1,0 +1,75 @@
+{
+ "schema": "held.mainnet-evidence-gate.v1",
+ "recorded_utc": "2026-09-18T08:56:34Z",
+ "public_rpc": "https://mainnet.base.org",
+ "fork_block_pin": 51353212,
+ "min_mainnet_block": 51354212,
+ "labelled_records_seen": 12,
+ "confirmed_on_public_base": 0,
+ "refused": [],
+ "findings": [
+  {
+   "path": "/Users/girish/Documents/Codex/2026-09-15/ha/held/evidence/M1/final-fork-rehearsal.json",
+   "verdict": "ok",
+   "detail": "FORK; makes no mainnet claim"
+  },
+  {
+   "path": "/Users/girish/Documents/Codex/2026-09-15/ha/held/evidence/M1/stale-audit.json",
+   "verdict": "ok",
+   "detail": "PREPARED; makes no mainnet claim"
+  },
+  {
+   "path": "/Users/girish/Documents/Codex/2026-09-15/ha/held/evidence/M1/templates/01-safe-deploy.json",
+   "verdict": "ok",
+   "detail": "PREPARED; makes no mainnet claim"
+  },
+  {
+   "path": "/Users/girish/Documents/Codex/2026-09-15/ha/held/evidence/M1/templates/02a-roles-deploy.json",
+   "verdict": "ok",
+   "detail": "PREPARED; makes no mainnet claim"
+  },
+  {
+   "path": "/Users/girish/Documents/Codex/2026-09-15/ha/held/evidence/M1/templates/02b-enable-roles.json",
+   "verdict": "ok",
+   "detail": "PREPARED; makes no mainnet claim"
+  },
+  {
+   "path": "/Users/girish/Documents/Codex/2026-09-15/ha/held/evidence/M1/templates/04-controller-deploy.json",
+   "verdict": "ok",
+   "detail": "PREPARED; makes no mainnet claim"
+  },
+  {
+   "path": "/Users/girish/Documents/Codex/2026-09-15/ha/held/evidence/M1/templates/05-ceremony.json",
+   "verdict": "ok",
+   "detail": "PREPARED; makes no mainnet claim"
+  },
+  {
+   "path": "/Users/girish/Documents/Codex/2026-09-15/ha/held/evidence/M1/templates/06-fund-safe.json",
+   "verdict": "ok",
+   "detail": "PREPARED; makes no mainnet claim"
+  },
+  {
+   "path": "/Users/girish/Documents/Codex/2026-09-15/ha/held/evidence/M1/templates/08-activate.json",
+   "verdict": "ok",
+   "detail": "PREPARED; makes no mainnet claim"
+  },
+  {
+   "path": "/Users/girish/Documents/Codex/2026-09-15/ha/held/evidence/M1/templates/12-execute-supply.json",
+   "verdict": "ok",
+   "detail": "PREPARED; makes no mainnet claim"
+  },
+  {
+   "path": "/Users/girish/Documents/Codex/2026-09-15/ha/held/evidence/M1/templates/M1-report.json",
+   "verdict": "ok",
+   "detail": "PREPARED; makes no mainnet claim"
+  },
+  {
+   "path": "/Users/girish/Documents/Codex/2026-09-15/ha/held/evidence/M1/templates/M2-report.json",
+   "verdict": "ok",
+   "detail": "PREPARED; makes no mainnet claim"
+  }
+ ],
+ "M1": "NOT YET ESTABLISHED",
+ "M2": "NOT YET ESTABLISHED",
+ "why": "M1 and M2 require at least one record CONFIRMED against public Base. Fork records are counted separately and can never contribute."
+}

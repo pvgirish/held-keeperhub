@@ -1,31 +1,57 @@
 # Held
 
-**Customer-approved operating limits and recoverable runner handover for Almanak
-strategies.** KeeperHub is the intended execution layer and the client is built and
-wire-tested against it — but **Held has not yet executed through KeeperHub**, because the
-organisation credential that route requires does not exist here. That is stated up front
-rather than implied away.
+### Customer-approved operating limits and recoverable runner handover for Almanak strategies.
+
+An autonomous strategy that can move real money needs answers to three questions before
+anyone sensible funds it. **What is the worst it can do today? What happens when it goes
+quiet mid-execution? Who can move my money right now?**
+
+Held answers all three, and enforces the first one on-chain — so the guarantee does not
+depend on Held behaving.
 
 ```
-Almanak  →  Held  →  KeeperHub  →  HeldController  →  Zodiac Roles  →  Safe  →  Morpho
-                                                                                   │
-                            reconciliation back to Almanak  ←────────────────────┘
+Owner  ─approves limits─▶  Held  ─▶  KeeperHub  ─▶  HeldController  ─▶  Zodiac Roles  ─▶  Safe  ─▶  Morpho
+  ▲                          │                      (epoch, signature)   (5 budgets)     (2-of-3)
+  └──── can fence and revoke ┘                                                   funds never leave the owner
 ```
+
+**The customer sets ceilings, per-action maximums, a cash floor and a count limit. A Zodiac
+Roles module and a Safe enforce them. Held holds no key and no funds.**
+
+Watch what that buys, from the rehearsal:
 
 | | |
 |---|---|
-| **Demo** | `make hero-demo` — 12 steps, ~3s, against a pinned Base-mainnet fork |
-| **KeeperHub execution** | **NOT YET ESTABLISHED** — see [Limitations](#what-is-not-established) |
-| **Explorer transaction** | **NOT YET ESTABLISHED** |
-| **Reproduce** | [Run it locally](#run-it-locally) |
-| **Evidence index** | [docs/submission/EVIDENCE-INDEX.md](docs/submission/EVIDENCE-INDEX.md) |
-| **Current limitations** | [What is not established](#what-is-not-established) |
+| First approved action | **10.000000 USDC** moves into Morpho. Signed by the runner, broadcast by the executor, allowed by the chain. |
+| Second attempt | **Refused — `FloorViolated()`.** The Safe is at its 1 USDC floor. Not a warning; a revert. |
+| Replayed authorization | **Refused — `OperationConsumed(bytes32)`.** Every counter unmoved. |
+| Limits | **Non-refilling.** A spent budget stays spent until an owner re-sets it. No waiting it out. |
+| Runner goes quiet | Handover **blocks** on the unresolved operation until it is reconciled against the chain. |
 
-> Those two `NOT YET ESTABLISHED` rows are not placeholders waiting to be filled with
-> something equivalent. Held's KeeperHub route needs an organisation API credential that
-> does not exist in this environment, so the authenticated call has never been made. It is
-> neither stubbed nor simulated, and a local result is structurally prevented from being
-> filed as a hosted one. See [`evidence/P03/public-action-request.json`](evidence/P03/public-action-request.json).
+### Status, honestly
+
+| | |
+|---|---|
+| **Demo** | `make hero-demo` — 12 steps, ~3s, pinned Base-mainnet fork |
+| **Full ceremony rehearsal** | `make final-rehearsal` — **14/14 claims matched**, final identities, real 2-of-3 |
+| **Public Base transaction** | **NOT YET ESTABLISHED** — nothing deployed, funded or broadcast |
+| **KeeperHub execution** | **NOT YET ESTABLISHED** — the route accepts our credential; we have not executed |
+| **Demo video** | **NOT RECORDED** — script ready, see [VIDEO-SCRIPT.md](docs/submission/VIDEO-SCRIPT.md) |
+| **Licence** | [MIT](LICENSE) |
+
+> Those `NOT YET ESTABLISHED` rows are not placeholders waiting for something equivalent.
+> Nothing in this repository is graded above `REAL LOCAL FORK`, and
+> [`make mainnet-evidence-gate`](script/mainnet_evidence_gate.py) exists specifically to
+> stop our own fork evidence from being read as mainnet evidence — it re-reads any such
+> claim from a public Base RPC. 15 tests attack it.
+
+| Read next | |
+|---|---|
+| What it does and why it matters | [Submission pack](docs/submission/SUBMISSION-PACK.md) |
+| Who can move the money | [Threat model](docs/submission/THREAT-MODEL.md) |
+| Every claim, its command, its grade | [Evidence index](docs/submission/EVIDENCE-INDEX.md) |
+| What is claimed and what is withdrawn | [Claim ledger](docs/submission/CLAIM-LEDGER.md) |
+| Run it yourself | [Run it locally](#run-it-locally) |
 
 ---
 
@@ -92,18 +118,29 @@ that the inventory does not contain and the owner never approved.
 
 ## What the KeeperHub integration actually is
 
-Held's execution path is a KeeperHub direct contract call. The client is built against the
-documented `POST /api/execute/contract-call` route and is wire-tested in 28 tests:
-documented request body, the `Idempotency-Key` **header**, `GET /api/execute/{id}/status`
-with the poll hint, 202 as the documented write success, and the two documented 409 codes
-kept as opposite outcomes rather than one branch.
+Held's execution path is a KeeperHub **direct contract call** — not the workflow builder.
+The client is built against the documented `POST /api/execute/contract-call` route and is
+wire-tested in 46 tests: documented request body, the `Idempotency-Key` **header** derived
+from `keccak(domain ‖ operationId ‖ attemptId)`, `GET /api/execute/{id}/status` with the
+poll hint, 202 as the documented write success, and the two documented 409 codes kept as
+opposite outcomes rather than one branch.
 
-**It has not been called with a credential.** Every one of those tests runs against
-`OfflineTransport`, which stamps `hosted=false`, and `SendResult.assert_hosted_evidence()`
-refuses a non-hosted result — so no local fixture can be filed as a hosted one. Three tests
-exist solely to prove that. Whether KeeperHub's server-side encoder reproduces Held's
-intended calldata is recorded as **unknown**, because settling it needs one authenticated
-dry run that has not happened.
+**The credential is real; the execution is not.** `make check-l10-route-proof` performs a
+live authenticated `GET /api/keys`: 200, `hosted=true`, the configured secret matches a
+listed organisation key by its documented `keyPrefix`, scope `mcp:read`. That is claim
+**P30**, and it is a fact about a *credential*, not an execution.
+
+Broadcasting needs `mcp:write` or `mcp:admin`. The organisation holds such a key and it is
+**deliberately not configured** — swapping it in is a distinct, reversible owner action.
+Until then Held's production path refuses to broadcast *before writing anything to the
+journal*: 24 tests hold that refusal, including that the journal is left byte-identical and
+the identical call succeeds later with no repair.
+
+Every other KeeperHub result runs against `OfflineTransport`, which stamps `hosted=false`,
+and `assert_hosted_evidence()` refuses a non-hosted result — so no local fixture can be
+filed as a hosted one. Four tests exist solely to prove that. Whether KeeperHub's
+server-side encoder reproduces Held's intended calldata (**P19**) is recorded as
+**unknown**: settling it needs one authenticated dry run against a deployed controller.
 
 ## Reliability and recovery
 
@@ -189,14 +226,55 @@ Every claim in this repository carries one, and they are never promoted:
 | Grade | Meaning |
 |---|---|
 | `PUBLIC CHAIN` | A real transaction on a public network. **Held has none yet.** |
-| `AUTHENTICATED HOSTED` | A real authenticated KeeperHub call. **Held has none yet.** |
+| `AUTHENTICATED HOSTED` | A real authenticated KeeperHub call. **One row: P30, a credential check — not an execution.** |
 | `REAL LOCAL FORK` | Real pinned contracts on an anvil fork. No finality, not public. |
 | `REAL OFFLINE SDK` | The real pinned Almanak SDK, in-process. |
 | `SYNTHETIC` | A model or scripted double. Control-flow evidence only. |
 
 A test, a mock, a fork result or an `OfflineTransport` result is never presented as a
-KeeperHub execution. Three tests exist specifically to prove a local result cannot be filed
-as hosted evidence.
+KeeperHub execution. Four tests exist specifically to prove a local result cannot be filed
+as hosted evidence, and `make mainnet-evidence-gate` goes further: any record claiming
+`PUBLIC MAINNET VERIFIED` is re-read from a **public** Base RPC and refused unless the
+transaction is really in Base's history. A fork transaction is not, whatever the file says.
+15 tests attack that gate the way a deadline would.
+
+### FORK VERIFIED vs PUBLIC MAINNET VERIFIED
+
+Every record in `evidence/` carries exactly one of three labels. The distinction is the
+most important thing in this repository.
+
+| Label | Means | Held today |
+|---|---|---|
+| **FORK VERIFIED** | Real pinned contracts, real protocol, on an anvil fork of Base. Proves behaviour. Proves nothing about mainnet. | **Almost everything** |
+| **PREPARED** | Calldata, parameters, gas estimates. Nothing executed. | The M1 templates and parameter sheets |
+| **PUBLIC MAINNET VERIFIED** | A transaction that exists in Base's history and was re-read from a public RPC by the gate. | **Nothing yet** |
+
+A FORK record can never satisfy a mainnet claim. That is enforced, not promised: relabel
+one and `make mainnet-evidence-gate` asks a public Base RPC for the transaction, which is
+not there. Run it — it refuses, and says why.
+
+### What is FORK VERIFIED
+
+The whole M1 ceremony, rehearsed with the final identities (`make final-rehearsal`):
+2-of-3 Safe deploy → Roles deploy → `enableModule` → controller deploy (paused) →
+**15-action owner ceremony, every action through a real `execTransaction`** → exact 11
+USDC funding → bounded authority inventory COMPLETE → activation → runner-B envelope →
+executor path → **10 USDC supplied** → second attempt `FloorViolated()` → replay
+`OperationConsumed(bytes32)`. 14 of 14 claims matched, 0 problems.
+
+No owner private key was used, requested or held: owners approve by `approveHash` and the
+Safe accepts its pre-validated signature form.
+
+## Security model
+
+The short version: **five parties, and none of them can move funds alone.** Held holds no
+key — if Held is compromised, the worst it can do is build a request that still needs a
+runner signature it cannot produce and still faces every on-chain check. A stolen runner
+key can only cause actions the owner already approved, up to ceilings the owner already
+set, into the market the owner already chose; recovery is one owner ceremony.
+
+Full analysis, including the four things deliberately **not** defended against:
+**[docs/submission/THREAT-MODEL.md](docs/submission/THREAT-MODEL.md)**.
 
 ## Run it locally
 
@@ -216,6 +294,18 @@ The full gates:
 HELD_PRICE_MODE=testing-only make check-phase-02 check-phase-03-local check-phase-04
 ```
 
+The whole M1 ceremony, rehearsed on a fresh fork with the **final** identities — the three
+real owners at threshold 2, runner B, KeeperHub's managed signer — every owner act through
+a real 2-of-3 `execTransaction`:
+
+```bash
+make final-rehearsal
+```
+
+It deploys nothing publicly, funds nothing and broadcasts nothing. No owner private key is
+used, requested or held: the owners approve by `approveHash` and the Safe accepts its
+pre-validated signature form.
+
 `check-phase-03` deliberately exits non-zero: it runs every local check and then reports
 INCOMPLETE, because the required KeeperHub execution has not been performed. A gate that
 went green without it would be lying.
@@ -226,9 +316,14 @@ Stated plainly, because a submission that hides these is worse than one that lac
 
 - **No public-chain execution.** Nothing is deployed, funded or broadcast on any public
   network. Every controller result is from a Base-mainnet fork at block 51353212.
-- **No authenticated KeeperHub call.** L10 is open: no organisation API credential exists in
-  this environment. Whether KeeperHub's server-side encoder reproduces Held's intended
-  calldata is recorded as unknown, not assumed.
+- **No authenticated KeeperHub *execution*.** Corrected 2026-09-18: an organisation
+  credential now exists and the authenticated route accepts it — `make check-l10-route-proof`
+  gets 200 on a live `GET /api/keys` and reads its scope. That is a fact about a credential,
+  not about an execution, and **L10 is still open**: nothing has been submitted to the
+  caller/payer, because no controller is deployed to aim a call at. The credential is scoped
+  `mcp:read`, which the API documents as read-and-simulate only, so no transaction can be
+  broadcast on it at all. Whether KeeperHub's server-side encoder reproduces Held's intended
+  calldata is still recorded as unknown, not assumed.
 - **P03 is PARTIAL.** Its local half is complete and regressed; the hosted half does not
   exist.
 - **P05 console**: `--state-source live` reads real sources and refuses to fall back to
@@ -268,5 +363,46 @@ enforcement and per-operation evidence, and charges setup for them.
 | P06 adversarial + comparison | 23/24 cases; comparison **measured** | REAL LOCAL FORK | pending |
 | P07 clean install | `make clean-install` passes from an isolated clone | — | pending |
 | P08 submission package | assembled; gate **BLOCKED** on mandatory items | — | pending |
+| M1 rehearsal, final identities | full ceremony, 14/14 claims matched | REAL LOCAL FORK | pending |
 
 Nothing in this repository is independently accepted. Self-testing is not acceptance.
+
+## Demo video and on-chain links
+
+Every link below is a placeholder. Filling one in without a matching public transaction is
+refused by `make mainnet-evidence-gate`, which re-reads the record from a public Base RPC.
+
+| | Status |
+|---|---|
+| **Demo video** | *not recorded* — narration and 20-shot list in [VIDEO-SCRIPT.md](docs/submission/VIDEO-SCRIPT.md) |
+| Safe | *not deployed* — `https://basescan.org/address/…` |
+| Zodiac Roles module | *not deployed* — `https://basescan.org/address/…` |
+| HeldController | *not deployed* — `https://basescan.org/address/…` |
+| Owner ceremony (15 tx) | *not executed* |
+| Activation | *not executed* — `https://basescan.org/tx/…` |
+| **The supply transaction (M1)** | *not executed* — `https://basescan.org/tx/…` |
+| KeeperHub execution id | *not executed* |
+| Morpho position | *not created* — `https://basescan.org/address/…` |
+
+Fill-on-execution templates for all of the above: [`evidence/M1/templates/`](evidence/M1/templates/).
+
+## Licence
+
+[MIT](LICENSE). Dependencies are pinned git submodules and external packages — referenced,
+never vendored — and keep their own licences: OpenZeppelin (MIT), forge-std
+(MIT OR Apache-2.0), the Almanak SDK (external, pinned, not redistributed). Every Solidity
+file authored here carries `SPDX-License-Identifier: MIT`.
+
+## Reading further
+
+| | |
+|---|---|
+| What is claimed, and what is withdrawn | [`docs/submission/CLAIM-LEDGER.md`](docs/submission/CLAIM-LEDGER.md) |
+| Every claim's command and grade | [`docs/submission/EVIDENCE-INDEX.md`](docs/submission/EVIDENCE-INDEX.md) |
+| Who can move the money, and what breaks | [`docs/submission/THREAT-MODEL.md`](docs/submission/THREAT-MODEL.md) |
+| The submission text itself | [`docs/submission/SUBMISSION-PACK.md`](docs/submission/SUBMISSION-PACK.md) |
+| The demo narration and shot list | [`docs/submission/VIDEO-SCRIPT.md`](docs/submission/VIDEO-SCRIPT.md) |
+| Running the demo, step by step | [`docs/submission/DEMO-RUNBOOK.md`](docs/submission/DEMO-RUNBOOK.md) |
+| Likely judge questions, answered | [`docs/submission/FINALIST-QA.md`](docs/submission/FINALIST-QA.md) |
+| The public execution, step by step | [`docs/submission/M1-OWNER-RUN-SEQUENCE.md`](docs/submission/M1-OWNER-RUN-SEQUENCE.md) |
+| The one irreversible action | [`docs/submission/M1-IRREVERSIBLE-PREFLIGHT.md`](docs/submission/M1-IRREVERSIBLE-PREFLIGHT.md) |

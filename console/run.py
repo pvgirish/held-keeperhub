@@ -127,26 +127,35 @@ class LiveSources:
         so a report collected against something else, or long before, would have rendered
         as though it described the live Safe.
         """
-        path = os.path.join(ROOT, "evidence", "P03", "bootstrap-rehearsal.json")
-        if not os.path.exists(path):
-            return None
-        try:
-            import json
+        import json
 
-            from held_authority import from_report
-            with open(path) as fh:
-                inv = from_report(json.load(fh))
-        except Exception:  # noqa: BLE001
-            return None
+        from held_authority import HANDOVER_REPORT, INITIAL_REPORT, from_report
 
-        problems = inv.scope_problems(chain_id=self.chain_id, controller=self.controller,
-                                      safe=self.safe)
-        if problems:
+        # The two collection modes now write separate files. A live console describes an
+        # installation that may be mid-life, so the handover report is preferred when one
+        # exists; the initial-activation rehearsal is the fallback. Whichever is read, the
+        # scope check below still has to pass -- preferring a file is not trusting it.
+        last = None
+        for rel in (HANDOVER_REPORT, INITIAL_REPORT):
+            path = os.path.join(ROOT, rel)
+            if not os.path.exists(path):
+                continue
+            try:
+                with open(path) as fh:
+                    inv = from_report(json.load(fh))
+            except Exception:  # noqa: BLE001
+                continue
+
+            problems = inv.scope_problems(chain_id=self.chain_id,
+                                          controller=self.controller, safe=self.safe)
+            if not problems:
+                return inv
             # Out of scope for this installation. Surfaced as incomplete rather than shown.
             inv.incomplete_sections = list(inv.incomplete_sections) + [
                 f"stored report out of scope: {p}" for p in problems]
             inv.complete = False
-        return inv
+            last = last or inv
+        return last
 
     def handover(self):
         if not self.handover_id:

@@ -1,0 +1,8 @@
+{
+ "schema": "held.stale-audit.v1",
+ "label": "PREPARED",
+ "audited_utc": "2026-09-18T08:56:34Z",
+ "m1_open": true,
+ "counts": {},
+ "findings": []
+}

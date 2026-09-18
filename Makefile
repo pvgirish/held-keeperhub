@@ -4,7 +4,7 @@ SDK ?= $(HOME)/src/sdk
 export PY
 export SDK
 
-.PHONY: check-plan-digests check-phase-00 check-phase-01 check-phase-02 check-phase-03-local check-phase-03 check-phase-03-composed check-bootstrap-rehearsal check-phase-04 check-phase-05 check-manifests check-probe \
+.PHONY: m1-cost check-plan-digests check-phase-00 check-phase-01 check-phase-02 check-phase-03-local check-phase-03 check-phase-03-composed check-l10-route-proof m1-prebroadcast-gate final-rehearsal mainnet-evidence-gate emit-evidence-templates stale-audit check-bootstrap-rehearsal check-phase-04 check-phase-05 check-manifests check-probe \
         check-baseline check-native-workflow gate-tests hero-demo clean-install submission-gate p06-comparison console-live freeze-candidate
 
 check-phase-00:
@@ -113,12 +113,86 @@ check-phase-03-local:
 	@$(PY) tests/integration/test_p03_recovery.py
 	@$(PY) tests/integration/test_p03_native_checkpoint.py
 	@$(PY) tests/integration/test_p03_bootstrap_collector.py
+	@$(PY) tests/integration/test_p03_broadcast_capability.py
+	@$(PY) tests/integration/test_m1_prebroadcast_gate.py
+	@$(PY) tests/integration/test_mainnet_evidence_gate.py
 
 ## P03 required work 6, REHEARSAL: the bounded bootstrap checklist collected manually
 ## against the FORK fixture. Not public-Safe activation evidence and not the P04
 ## automated authority service. Exits non-zero if any section is INCOMPLETE.
 check-bootstrap-rehearsal:
 	@./script/collect_bootstrap_evidence.sh
+
+## The ONE target in this repository that talks to the real KeeperHub organisation route
+## with a real credential. It performs an authenticated GET /api/keys: it broadcasts
+## nothing, deploys nothing and spends nothing, and there is no path in it that can
+## submit a contract call.
+##
+## It establishes that the credential is accepted and WHICH SCOPES it carries. It does
+## NOT establish L10 (that needs a dry run against a deployed controller) and it does NOT
+## establish M1 (a real transaction). Requires $HELD_KEEPERHUB_API_KEY and egress.
+check-l10-route-proof:
+	@$(PY) script/collect_route_proof.py
+
+## The gate on the ONE irreversible action in this project: the M1 executeSupply
+## broadcast. It judges the PREPARED request -- chain 8453, the declared controller, a
+## supported entry point, arguments that re-encode to the signed calldata -- together with
+## the executor the controller will accept and whether the configured credential can
+## broadcast at all. It fails closed: an unevaluable check is BLOCKED and BLOCKED exits
+## non-zero exactly as FAIL does.
+##
+## It cannot broadcast. NoBroadcastTransport refuses, at the wire boundary, any contract
+## call that is not strictly simulate=true and any request carrying an Idempotency-Key,
+## and NoBroadcastClient does not implement broadcast(). 26 regression tests hold those
+## refusals (tests/integration/test_m1_prebroadcast_gate.py, in check-phase-03-local).
+##
+##   make m1-prebroadcast-gate ARGS="--journal PATH --attempt ID"
+m1-prebroadcast-gate:
+	@$(PY) script/m1_prebroadcast_gate.py $(ARGS)
+
+## The FINAL M1 ceremony, rehearsed end to end on a fresh pinned Base fork with the FINAL
+## identities: the three real owners at threshold 2, runner B, KeeperHub's managed signer,
+## saltNonce 20260918. Every owner act goes through a real 2-of-3 execTransaction using
+## Safe's pre-validated signature form after approveHash -- no owner private key is used,
+## requested or held. Deploys nothing publicly, funds nothing, broadcasts nothing.
+## REAL LOCAL FORK evidence. Not a public-chain result and never promotable to one.
+final-rehearsal:
+	@./script/run_final_rehearsal.sh
+
+## Find the contradictions a reader would find first: broken paths and make targets,
+## claims of absence that are now false, grade inflation, stale test counts, future dates.
+## Exits non-zero on any finding -- a contradiction is not a warning.
+stale-audit:
+	@$(PY) script/stale_audit.py
+
+## The evidence pack for the public execution, and the gate that keeps it honest.
+## Every labelled record is checked; a record claiming PUBLIC MAINNET VERIFIED is re-read
+## from a PUBLIC Base RPC and refused unless the transaction is really in Base's history.
+## A fork record therefore cannot satisfy a mainnet claim, however it is labelled.
+## Reads only. Deploys nothing, funds nothing, broadcasts nothing.
+mainnet-evidence-gate:
+	@$(PY) script/mainnet_evidence_gate.py
+
+## (Re)write the fill-on-execution templates. They ship labelled PREPARED with FILL:
+## sentinels; a template is never evidence.
+emit-evidence-templates:
+	@$(PY) script/mainnet_evidence_gate.py --emit
+
+## Cost the M1 mainnet ceremony by RUNNING it against the pinned fork and reading gasUsed
+## out of the receipts, then pricing that against live Base fees and the on-chain Chainlink
+## ETH/USD feed. `evidence/P03/public-action-request.json` requires a finite, non-guessed
+## gas ceiling before the public execution may be requested; this is how it stops being a
+## guess. Nothing is deployed publicly and nothing is spent.
+## Both halves are measured. The ceremony is what the OWNER EOA pays; the one executeSupply
+## is what KEEPERHUB's wallet pays, and it is a separate script because it needs the
+## composed run's own bytes rather than the fixture ceremony. The pricing step reads both
+## out of evidence/P03/mainnet-gas-measurement.json, so it must come last.
+##
+## Needs HELD_PRICE_MODE=testing-only, because measuring executeSupply runs the composed
+## producer to build the bytes it measures.
+m1-cost:
+	@./script/measure_mainnet_gas.sh
+	@./script/measure_execute_supply_gas.sh
 
 ## The composed LOCAL run: real compiler -> admitted -> signed -> typed request ->
 ## executed by the REAL controller on the fork -> journal reconciled from that reading.

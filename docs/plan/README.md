@@ -1,3 +1,20 @@
+> ### If you are evaluating this project, you are in the wrong directory.
+>
+> This is Held's **internal requirements corpus** — the specification the implementation is
+> built against and checked by `make check-plan-digests`. It is authoritative for *what
+> Held must do*, and it is deliberately preserved unedited.
+>
+> It is **not** product documentation, and "V3" / "V4" in these filenames are revisions of
+> the *specification*, not releases of the product. There is exactly one version of Held.
+>
+> **Read instead:** [the README](../../README.md) · [submission pack](../submission/SUBMISSION-PACK.md) ·
+> [threat model](../submission/THREAT-MODEL.md) · [evidence index](../submission/EVIDENCE-INDEX.md)
+>
+> Some cross-references inside these files point at documents from the original supplied
+> packet that were **not** restored here (`04_Held_Locked_V3.md`,
+> `16_P00_Amendments_and_Explainer_Review.md`, and two others). Those links are dead on
+> purpose: only the files this directory lists were restored and digest-verified.
+
 # The authoritative plan corpus
 
 **This directory is the source of truth for requirements. Do not derive a requirement from

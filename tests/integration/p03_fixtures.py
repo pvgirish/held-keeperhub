@@ -22,7 +22,11 @@ from held_adapter.execution.keeperhub import (  # noqa: E402
     KeeperHubClient,
     OfflineTransport,
 )
-from held_adapter.execution.submit import ChainEvidence, Submitter  # noqa: E402
+from held_adapter.execution.submit import (  # noqa: E402
+    AssumedBroadcastCapability,
+    ChainEvidence,
+    Submitter,
+)
 from held_adapter.signing.runner_signer import RunnerSigner  # noqa: E402
 from held_core.identity import (  # noqa: E402
     ActionFamily,
@@ -143,7 +147,8 @@ def response(body: dict, status: int = 200, headers: dict | None = None) -> Http
     return HttpResponse(status, json.dumps(body).encode(), headers or {})
 
 
-def rig(responses, *, path: str, transport=None, attempt_ids=None, now=None):
+def rig(responses, *, path: str, transport=None, attempt_ids=None, now=None,
+        use_default_capability: bool = False):
     """Journal + offline transport + submitter over a REAL SQLite file at `path`."""
     os.environ[API_ENV] = FAKE_CREDENTIAL
     os.environ["HELD_RUNNER_KEY"] = RUNNER_KEY
@@ -152,6 +157,14 @@ def rig(responses, *, path: str, transport=None, attempt_ids=None, now=None):
     c = KeeperHubClient(transport=t, sleep=lambda _: None)
     s = RunnerSigner("env:HELD_RUNNER_KEY", RUNNER)
     ids = iter(attempt_ids or [f"attempt-{i}" for i in range(1, 200)])
+    # These suites are about journal, idempotency and reconciliation semantics, not
+    # about credentials: every one of them runs on OfflineTransport, which has no
+    # organisation route to ask. The capability is therefore DECLARED here, loudly.
+    # test_p03_broadcast_capability.py is the suite that tests the real one, and it
+    # asserts that the DEFAULT (no capability argument) fails closed.
     sub = Submitter(j, c, s, CONTROLLER, CHAIN_ID, MARKET_PARAMS,
-                    new_attempt_id=lambda: next(ids), now=now)
+                    new_attempt_id=lambda: next(ids), now=now,
+                    capability=None if use_default_capability
+                    else AssumedBroadcastCapability(
+                        "offline wire-contract fixture; no organisation route exists"))
     return j, t, sub

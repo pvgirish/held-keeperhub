@@ -27,25 +27,135 @@
    "how_to_create_it": "KeeperHub UI: Settings -> Developer -> API keys -> Organisation keys. Create a DEDICATED key with mcp:read only -- not write, not admin, not an unspecified scope.",
    "how_the_secret_is_supplied": "Place it in the environment as HELD_KEEPERHUB_API_KEY. NOT in chat, NOT in git. The client resolves it by reference and never persists, logs or reprs it.",
    "what_it_does_not_authorize": "Deployment, funding, broadcast, or any scope upgrade. Supplying a read-only key is not consent to spend.",
-   "recommended": "Grant this first. It is free, reversible, narrowly scoped, and it is the smallest step that produces a real fact instead of an assumption."
+   "recommended": "Grant this first. It is free, reversible, narrowly scoped, and it is the smallest step that produces a real fact instead of an assumption.",
+   "status_2026_09_18": {
+    "granted": true,
+    "performed": true,
+    "how": "make check-l10-route-proof -> script/collect_route_proof.py. Evidence: evidence/P03/l10-route-proof.json.",
+    "deviation_from_the_request": "The request named GET /api/keys and that is exactly what was called. No other authenticated endpoint was touched, and no contract call was submitted on the credential.",
+    "result": "HTTP 200 over HttpsTransport (hosted=true). The configured secret matches a listed organisation key by its documented keyPrefix. Scope: mcp:read. Role: owner. No expiry.",
+    "what_it_established": [
+     "The organisation route accepts the credential -- the two things this request said it would show, and no more.",
+     "The scope attached to it."
+    ],
+    "what_it_did_not_establish": "Exactly what this request said it would not: L10 as a whole, byte-for-byte encoder agreement, and broadcast caller/payer behaviour. All three remain open.",
+    "consequence_for_request_B": "SHARPENED. mcp:read cannot broadcast (documented: mcp:write or mcp:admin is required). So request B now additionally requires a scope upgrade or a second credential. Supplying the read-only key was explicitly not consent to spend, and is not read as such.",
+    "consequence_for_request_A2": "UNBLOCKED ON ITS CREDENTIAL, STILL BLOCKED ON ITS TARGET. A simulate-mode call needs only mcp:read, which now exists. It still needs a deployed HeldController to aim at, and none exists on any public chain."
+   }
   },
   "request_B_public_deployment_and_execution": {
    "title": "Deploy a controller to Base mainnet, fund a Safe, and execute one supply.",
-   "status": "NOT REQUESTED YET. Listed so the cost and ordering are visible, not because it should be granted now.",
-   "blocked_on": "Request A. Deploying and funding before knowing whether the authenticated route accepts Held's call would spend real money to discover something a free simulation answers.",
+   "status": "NOW FORMALLY REQUESTED, 2026-09-18, on Girish's instruction to escalate to a real M1. The cost ceilings this request previously refused to guess are now MEASURED and fixed below. Still NOT AUTHORIZED TO EXECUTE: four preconditions remain and three of them are Girish's to clear.",
+   "blocked_on": "RESOLVED. Request A is granted and performed (see request_A_credential_only.status_2026_09_18).",
    "also_blocked_on": "CORRECTED. The earlier version said this was blocked on P04's automated authority inventory service. That was stricter than the plan requires and created a false sequencing obstacle. P03 required work 6 explicitly permits MANUAL bounded evidence collection for the initial dedicated Safe -- complete supported authority and configuration evidence with independent readback at a stated finalized block/hash -- and says only that P04's automated inventory must not be claimed to exist yet. So the real precondition is COMPLETE BOOTSTRAP AUTHORITY EVIDENCE, manually collected if necessary, not the finished P04 product.",
-   "estimated_cost": "Base mainnet gas for one controller deployment, one Safe deployment, one Roles module deployment, three to four owner ceremony transactions, and one supply execution. Plus the USDC funded into the Safe, which remains customer-owned throughout and is recoverable by the Safe owners.",
-   "cost_ceiling_required_before_asking": "A finite gas ceiling and a finite funded amount must be fixed and stated here before this is requested. They are deliberately NOT guessed now.",
+   "estimated_cost": {
+    "superseded": "The prose estimate this replaces named no numbers. These are measured.",
+    "method": "script/measure_mainnet_gas.sh ran the REAL bootstrap ceremony against the pinned Base-mainnet fork and read gasUsed out of 33 receipts; script/measure_execute_supply_gas.sh then measured the ONE executeSupply on the same fork; script/price_mainnet_gas.py priced both against live Base base-fee/priority-fee and the on-chain Chainlink ETH/USD feed. Evidence: evidence/P03/mainnet-gas-measurement.json, evidence/P03/m1-cost-ceiling.json.",
+    "ceremony_gas_measured": 7587624,
+    "ceremony_gas_caveat": "This is the FIXTURE ceremony, which is a superset of the minimal mainnet path: it also builds genuine consumption history and a quota-isolation case. As a CEILING that is the right direction to err in, and it is not presented as the exact mainnet figure.",
+    "execute_supply_gas": 474975,
+    "execute_supply_gas_superseded": {
+     "value": 1200000,
+     "was": "NOT MEASURED \u2014 a stated upper bound, flagged so it could not be read as a measurement.",
+     "replaced_utc": "2026-09-18",
+     "by": "script/measure_execute_supply_gas.sh + test/contracts/HeldExecuteSupplyGas.t.sol"
+    },
+    "execute_supply_gas_caveat": "MEASURED on the pinned Base-mainnet fork, on the SAME bytes the composed run executes (fixtures/generated/composed-call.json, built from the real pinned Almanak compiler output). 447,799 fork-measured execution gas + 27,176 COMPUTED intrinsic gas over 644 calldata bytes. It is NOT a receipt: a receipt needs a real transaction, which on the fork would require the controller deployed AND activated on anvil rather than inside the forge VM. It errs HIGH \u2014 EIP-3529 refunds are applied at the end of a real transaction and can only make a receipt lower. Detail: mainnet-gas-measurement.json -> gas_execute_supply_detail.",
+    "known_gap_l1_data_fee": "Base is an OP-stack chain and charges an L1 data fee on top of gasUsed * gasPrice. It is in NEITHER the ceremony figure nor the executeSupply figure, and is therefore not in any ceiling below. Recorded as a gap rather than silently omitted; it should be settled before the ceremony begins.",
+    "priced_at": {
+     "rpc": "https://mainnet.base.org",
+     "chain_id": 8453,
+     "block": 51459077,
+     "base_fee_wei_max_of_20": 5000000,
+     "priority_fee_wei_p90": 38444487,
+     "gas_price_wei_used": 43444487,
+     "eth_usd": 2478.46,
+     "eth_usd_source": "Chainlink ETH/USD aggregator 0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70 on Base",
+     "eth_usd_age_seconds": 72
+    },
+    "cost_at_that_price_usd": {
+     "ceremony": 0.82,
+     "one_execute_supply": 0.05,
+     "total": 0.87
+    }
+   },
+   "cost_ceiling_required_before_asking": {
+    "status": "SATISFIED. Fixed, finite, and measured rather than guessed. Both components are now measured: the last unmeasured figure (executeSupply) was replaced 2026-09-18.",
+    "headroom_multiple": 3.0,
+    "owner_eoa_gas_ceiling_eth": 0.000989,
+    "keeperhub_wallet_gas_ceiling_eth": 0.000062,
+    "total_gas_ceiling_usd_at_observed_price": 2.6,
+    "price_snapshot_warning": "These ceilings are priced at one observed moment and are stale immediately. price_mainnet_gas.py must be re-run before the ceremony begins; the GAS is stable, the PRICE is not.",
+    "usdc_amount": "NOT FIXED. This is Girish's decision and is deliberately left blank rather than inherited from the fixture's 100.000000 USDC. It is capital, not spend: the Safe owns the Morpho position, onBehalf is the Safe, and a withdraw can only pay the Safe.",
+    "restated": "Gas on Base is small enough that it is not the real decision. The real decision is the USDC amount and the willingness to hold a Morpho position."
+   },
    "actual_preconditions": [
-    "Request A: a valid organisation credential.",
-    "The P00 bounded bootstrap checklist completed against the actual dedicated fixture Safe at a stated finalized block/hash, with independent readback and owner authority. Manual collection is permitted; INCOMPLETE evidence blocks activation.",
-    "A fixed, finite USDC amount and a finite gas ceiling, agreed in advance and written here before this request is made."
+    "SUPERSEDED by preconditions_still_open above, which names an owner for each and fixes the numbers. The bootstrap-evidence precondition is unchanged and still stands: the P00 bounded bootstrap checklist completed against the actual dedicated Safe at a stated finalized block/hash, with independent readback and owner authority. Manual collection is permitted; INCOMPLETE evidence blocks activation."
    ],
-   "not_a_precondition": "The P04 automated authority-inventory product. Its absence does not block P03's initial activation, and claiming it does would be waiving nothing but inventing a blocker."
+   "not_a_precondition": "The P04 automated authority-inventory product. Its absence does not block P03's initial activation, and claiming it does would be waiving nothing but inventing a blocker.",
+   "two_separate_gas_payers": {
+    "owner_eoa": "Pays the ceremony: Safe, Roles module and controller deployment, the owner scoping ceremony, and activation. Must be funded with ETH on Base before step 1.",
+    "keeperhub_org_turnkey_wallet": "Pays the ONE executeSupply broadcast. KeeperHub documents that transactions are broadcast from the organisation's Turnkey wallet and that it must hold enough ETH on the chain. This is a second pot and is funded through KeeperHub, not by this repository."
+   },
+   "preconditions_still_open": [
+    {
+     "id": "B1",
+     "owner": "Girish",
+     "status": "NOT CLEARED.",
+     "what": "A KeeperHub credential scoped mcp:write or mcp:admin, SUPPLIED TO THIS REPOSITORY.",
+     "why": "The configured key is mcp:read. The documentation states a read key can read and simulate but cannot broadcast, so M1 is unreachable on it. Held refuses a broadcast on a read-only scope before sending (KeeperHubClient.assert_can_broadcast), so this fails closed rather than collecting a 403.",
+     "observed_2026_09_18": {
+      "how": "make check-l10-route-proof, re-run against the live authenticated GET /api/keys. The organisation key listing was read and the scopes on each listed key were inspected in memory. No secret, key prefix, operator name or email was printed or recorded.",
+      "organisation_lists": 2,
+      "a_write_capable_key_EXISTS": true,
+      "write_capable_key_scopes": ["mcp:read", "mcp:write", "mcp:admin"],
+      "configured_HELD_KEEPERHUB_API_KEY_is_that_key": false,
+      "configured_HELD_KEEPERHUB_API_KEY_scopes": ["mcp:read"],
+      "therefore": "B1 IS STILL NOT CLEARED. The organisation possesses a broadcast-capable credential, but the one resolved from the environment is read-only, and it is the configured credential -- not the organisation's inventory -- that decides what this repository can do. A write-capable key existing somewhere is not a write-capable key being held.",
+      "deliberate": "Confirmed by the operator on 2026-09-18: the read-only key is to remain configured for now. Supplying a read-only key was explicitly not consent to spend, and the presence of a write-capable key in the organisation is not consent either.",
+      "consequence": "Every pre-B4 step remains available -- mcp:read is the scope the step 8 simulate preflight needs. Step 9, the broadcast, remains unreachable."
+     },
+     "how": "KeeperHub UI: Settings -> Developer -> API keys. Supply it the same way, by environment reference only. Clearing B1 means CHANGING WHAT $HELD_KEEPERHUB_API_KEY RESOLVES TO, not creating another key."
+    },
+    {
+     "id": "B2",
+     "owner": "Girish",
+     "status": "NOT CLEARED. Attempted read-only resolution on 2026-09-18 and it is NOT OBTAINABLE from this repository.",
+     "resolution_attempt_2026_09_18": {
+      "question": "Can the Turnkey wallet address be read with the configured mcp:read organisation credential, without deploying anything?",
+      "answer": "No.",
+      "what_was_checked": [
+       "https://docs.keeperhub.com/api/api-keys -- documents only /api/keys and /api/api-keys. No wallet endpoint.",
+       "https://docs.keeperhub.com/api -- the API reference index documents NO endpoint under wallets, organization or accounts that returns a wallet address.",
+       "https://docs.keeperhub.com/wallet-management/turnkey -- documents the UI location and no REST equivalent.",
+       "https://docs.keeperhub.com/api/direct-execution -- the simulate response DOES carry a `from` field, documented as 'the org's wallet address used as the sender'."
+      ],
+      "why_the_simulate_route_was_not_used": "It would need a POST to the execution route against a contract that does not exist. The documentation says simulation runs estimateGas and call against the chain, so a non-existent target is expected to fail before a `from` is returned; and an invalid-target probe is precisely the over-claim this request already corrected itself for once (see request_A_credential_only.corrected_from). No un-requested call was made to the hosted execution route.",
+      "blocking_documentation_quote": "The organisation API key (kh_) is documented as 'Not accepted on user-account, wallet write, OAuth-account-bound, or per-user endpoints', so even an undocumented wallet route would reject this credential type.",
+      "how_the_owner_must_obtain_it": "KeeperHub web UI: Settings -> Organization -> Wallets. Read the address for chain 8453 (Base).",
+      "consequence": "B2 is an owner action with no programmatic substitute available before deployment. It is a REQUIRED INPUT to step 7, so it must be supplied before activation, not discovered during it."
+     },
+     "what": "The organisation's Turnkey wallet ADDRESS on Base, and enough ETH in it.",
+     "why": "HARD CONSTRUCTOR-LEVEL DEPENDENCY, newly established. KeeperHub broadcasts from the organisation's Turnkey wallet, and HeldController.executeSupply reverts NotExecutor unless msg.sender == executor. `executor` is set at activate(), so this address is a REQUIRED INPUT to activation (step 7). Activating with the wrong address costs gas and produces a controller that refuses every call until it is re-activated. It is not fund-threatening, but it is the single most likely way to waste the ceremony.",
+     "how": "Read it from KeeperHub's wallet-management UI, or observe it as the `from` field of an authenticated simulate-mode response."
+    },
+    {
+     "id": "B3",
+     "owner": "Girish",
+     "what": "A funded owner EOA on Base and a fixed USDC amount.",
+     "why": "The owner EOA pays the ceremony. The USDC amount must be agreed in advance, not inherited from a fixture."
+    },
+    {
+     "id": "B4",
+     "owner": "Girish",
+     "what": "Explicit authorization to deploy a contract and spend funds.",
+     "why": "Choosing to escalate toward M1 is not that authorization. It is requested here against fixed numbers so it can be granted against something specific."
+    }
+   ]
   },
   "request_A2_held_simulation": {
    "title": "A simulate-mode contract call against a real Held controller. NOT REQUESTED YET.",
-   "blocked_on": "Request A, plus a deployed controller to aim at (a meaningful target and state). Listed so the sequence is visible.",
+   "blocked_on": "NO LONGER blocked on request A: the credential exists and carries mcp:read, which is the scope a dry run needs. Blocked ONLY on a deployed controller to aim at (a meaningful target and state).",
    "what_it_would_add": "The first genuine evidence about whether the authenticated route accepts Held's call shape. Still not proof of broadcast caller/payer.",
    "spends": "Nothing, if mcp:read only."
   }

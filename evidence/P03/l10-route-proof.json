@@ -1,0 +1,58 @@
+{
+ "schema": "held.l10-route-proof.v1",
+ "gate": "L10-authenticated-caller-payer",
+ "step": "request A \u2014 authenticated organisation credential check",
+ "recorded_utc": "2026-09-18T04:43:54Z",
+ "call": {
+  "method": "GET",
+  "url": "https://app.keeperhub.com/api/keys",
+  "authenticated": true,
+  "credential_ref": "env:HELD_KEEPERHUB_API_KEY",
+  "broadcasts": false,
+  "spends": "nothing \u2014 no gas, no funds, no contract call"
+ },
+ "transport": {
+  "class": "HttpsTransport",
+  "hosted": true,
+  "why_it_matters": "OfflineTransport stamps hosted=false and every other KeeperHub result in this repository carries that stamp. This is the first hosted=true result."
+ },
+ "result": {
+  "hosted": true,
+  "status_code": 200,
+  "credential_matches_a_listed_organisation_key": true,
+  "valid": true,
+  "scopes": [
+   "mcp:read"
+  ],
+  "can_broadcast": false,
+  "keys_listed": 2,
+  "pages_read": 1,
+  "total_pages": 1,
+  "expires_at": null,
+  "created_by_role": "owner",
+  "error": null
+ },
+ "establishes": [
+  "The live organisation route accepts the configured credential.",
+  "The credential held here is one of the keys the organisation lists, matched by the documented keyPrefix against the resolved secret.",
+  "The scopes actually attached to that credential."
+ ],
+ "does_not_establish": {
+  "M1": "M1 is a real transaction executed through KeeperHub. A credential listing is not a transaction. M1 remains NOT YET ESTABLISHED.",
+  "L10": "Whether the authenticated caller/payer accepts Held's outer controller call is unanswered. It needs a simulate-mode contract call against a DEPLOYED HeldController, and no controller exists on any public chain.",
+  "P18": "Held has not executed anything through KeeperHub.",
+  "P19": "Nothing here shows KeeperHub's server-side encoder reproduces Held's intended calldata."
+ },
+ "remaining_for_M1": [
+  "A credential carrying one of ['mcp:write', 'mcp:admin']. The observed scope is ['mcp:read'], which the documentation says can read and simulate but cannot broadcast.",
+  "A HeldController deployed to Base mainnet, with its Safe and Zodiac Roles module, scoped and activated by the owners. None exists.",
+  "A funded Safe, at an amount agreed in advance.",
+  "A simulate-mode contract call against that controller, passing, before any broadcast (evidence/P03/public-action-request.json step 8).",
+  "Explicit authorization to deploy a contract and spend funds, which has not been given."
+ ],
+ "boundaries": [
+  "This is evidence about a CREDENTIAL, not about an EXECUTION.",
+  "GET /api/chains is public and answers 200 with no credential; it was never usable as an authentication check and is not what was called here.",
+  "No secret, key prefix, operator name or email is recorded in this file."
+ ]
+}

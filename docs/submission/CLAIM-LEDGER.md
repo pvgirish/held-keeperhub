@@ -22,13 +22,41 @@ Evidence grades are never promoted: `PUBLIC CHAIN` > `AUTHENTICATED HOSTED` >
 
 | # | Claim | Status | Grade | Evidence |
 |---|---|---|---|---|
-| M1 | A real transaction executed through KeeperHub | **NOT YET ESTABLISHED** | — | No organisation credential exists in this environment. `evidence/P03/public-action-request.json` |
+| M1 | A real transaction executed through KeeperHub | **NOT YET ESTABLISHED** | — | **The public mainnet proof has not been executed.** No contract is deployed, no Safe is funded and nothing has been broadcast. The credential half is settled: the organisation route accepts Held's key (P30), and the organisation holds a write-capable key which is deliberately not the one configured. `evidence/P03/l10-route-proof.json` |
 | M2 | The transaction corresponds to the integrated workflow | **NOT YET ESTABLISHED** | — | Depends on M1 |
 | M3 | Source is public and accessible | PARTIAL | — | Repository is private; visibility change is not authorized |
 | M4 | A working demo video | **NOT YET ESTABLISHED** | — | Runbook drafted, not recorded |
 
 **M1 is a mandatory submission requirement. While it is NOT YET ESTABLISHED the entry is
 incomplete under the official rules, regardless of the engineering below.**
+
+**Why M1 is open, stated precisely — corrected 2026-09-18.** This section previously read
+as though M1 were blocked on obtaining a credential. **It is not.** The credential question
+is answered:
+
+- The organisation holds two organisation API keys. One carries `mcp:read`; the other
+  carries `mcp:write,mcp:admin`.
+- `$HELD_KEEPERHUB_API_KEY` resolves to the **read-only** key, and that key is validated
+  live against the organisation route (P30, `hosted=true`, 200, scope `mcp:read`).
+- The write-capable key is **deliberately not configured.** Held's broadcast path cannot
+  reach it, by choice, and swapping it in is a distinct owner action recorded as step 11 of
+  `M1-IRREVERSIBLE-PREFLIGHT.md`.
+
+A credential arriving was never M1 moving, and neither is the existence of a write key.
+**M1 is open because the public mainnet proof has not been executed.** What that needs, and
+none of it exists:
+
+| Missing | State |
+|---|---|
+| A `HeldController` deployed to Base mainnet, with its Safe and Roles module scoped and activated | not deployed |
+| A funded owner EOA and a funded KeeperHub signer | **funding is pending separately (KYC)** |
+| A Safe holding the agreed 11.000000 USDC | not funded |
+| The authenticated SIMULATE preflight passing against that controller | cannot run — no controller |
+| The write key swapped into `$HELD_KEEPERHUB_API_KEY` | deliberately not done |
+| Explicit owner authorization to deploy, fund and spend | not given |
+
+Nothing below may be promoted on the strength of the credential alone, and no row may
+describe M1 as credential-blocked.
 
 ## Product claims
 
@@ -60,8 +88,9 @@ incomplete under the official rules, regardless of the engineering below.**
 | P28 | Handover-mode inventory still requires a PAUSED controller | VERIFIED | SYNTHETIC | `HELD_INVENTORY_MODE=handover` relaxes epoch-0 and zero-consumption only; an active controller blocks |
 | P29 | The console renders the four V4 §8 views from live sources over HTTP | VERIFIED | REAL LOCAL FORK | `make console-live` drives `Console.handle()`: auth, CSRF, four views, live policy read off the controller, dead RPC → UNAVAILABLE with no substitution, out-of-scope stored inventory marked incomplete, redaction |
 | P17 | The native Almanak state machine acknowledges Held's result | VERIFIED | REAL OFFLINE SDK | Composed run: the actual pinned consumer reaches COMPLETED |
-| P18 | Held executes through KeeperHub | **NOT YET ESTABLISHED** | — | L10. The client is built and wire-tested against documented schema only |
-| P19 | KeeperHub's server-side encoder reproduces Held's intended calldata | **NOT YET ESTABLISHED** | — | Needs one authenticated dry run |
+| P30 | The authenticated KeeperHub organisation route accepts Held's credential | VERIFIED | AUTHENTICATED HOSTED | `make check-l10-route-proof` → `evidence/P03/l10-route-proof.json`. Live `GET /api/keys` answers 200 over `HttpsTransport` (`hosted=true`), the configured secret matches a listed organisation key by its documented `keyPrefix`, and the scope reads `mcp:read`. This is a claim about a CREDENTIAL, not about an execution |
+| P18 | Held executes through KeeperHub | **NOT YET ESTABLISHED** | — | L10 is narrowed, not closed. P30 shows the credential is accepted; it does not show the caller/payer accepts Held's outer controller call, which needs a simulate-mode contract call against a deployed controller. None is deployed |
+| P19 | KeeperHub's server-side encoder reproduces Held's intended calldata | **NOT YET ESTABLISHED** | — | Needs one authenticated dry run against a deployed controller. The `mcp:read` credential permits such a dry run; the controller to aim it at does not exist |
 | P20 | The operator console shows real service state | PARTIAL | SYNTHETIC | `--state-source live` implemented and refuses to fall back to demo data; HTML rendering of the four views is still prototype |
 
 ## Comparison claims

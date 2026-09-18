@@ -62,6 +62,7 @@ from held_core.journal import Journal, OperationState, StateTransitionError
 
 from .controller_abi import build_execute_call, function_abi
 from .keeperhub import (
+    BROADCAST_SCOPES,
     IDEMPOTENCY_WINDOW_SECONDS,
     ContractCallRequest,
     KeeperHubClient,
@@ -77,6 +78,119 @@ class SubmissionError(Exception):
 
 class NotReconcilable(SubmissionError):
     """There is no chain evidence available, so no verdict may be reported."""
+
+
+class BroadcastNotPermitted(SubmissionError):
+    """The configured credential is not ESTABLISHED as able to broadcast.
+
+    One exception for every way the question can fail to get a yes -- the variable is
+    unset, the route refused, the scope is read-only, the network broke, the answer came
+    from a transport that proves nothing. A caller that had to distinguish "no" from "we
+    could not ask" before deciding not to spend money would get it wrong eventually, so
+    the two are deliberately the same refusal. The message says which it was.
+    """
+
+
+class BroadcastCapability:
+    """May the configured credential broadcast at all? Asked of the organisation route.
+
+    `CredentialCheck.assert_can_broadcast()` existed, was documented, and had no caller
+    outside its own tests: `Submitter.broadcast` claimed a journal row and sent. Nothing
+    bad had happened because the read-only key would have earned a documented 403 -- but a
+    403 arrives AFTER the operation is DISPATCHED and the idempotency key is spent, which
+    turns a question that should have been asked into an outcome that has to be reasoned
+    about. This is that method wired to the path it was written for.
+
+    ## Where it runs
+
+    Before the FIRST journal mutation of a submission, not merely before the send. By the
+    time a row is claimed the attempt exists, and an attempt that can never be sent is
+    still an attempt somebody has to resolve.
+
+    ## What counts as established
+
+    A 200 from the hosted organisation route, listing a key whose prefix matches the
+    configured secret, carrying `mcp:write` or `mcp:admin`. A non-hosted transport is
+    refused outright: `OfflineTransport` can be handed any response at all, so a
+    capability "established" by one is established by nothing.
+
+    ## Asked once
+
+    Cached on success only. Every failure is re-asked next time, so a transient network
+    fault never becomes a sticky refusal and a refusal never becomes a sticky pass. A
+    credential whose scope is revoked mid-run is not defended against here; KeeperHub's
+    own 403 remains the backstop for that.
+    """
+
+    def __init__(self, client: KeeperHubClient) -> None:
+        self._client = client
+        self._verified = False
+
+    def __repr__(self) -> str:
+        return f"BroadcastCapability(verified={self._verified})"
+
+    @property
+    def assumed(self) -> bool:
+        return False
+
+    def require(self) -> None:
+        if self._verified:
+            return
+        try:
+            check = self._client.organisation_keys()
+        except Exception as exc:  # noqa: BLE001 - every failure is the same refusal
+            raise BroadcastNotPermitted(
+                "the credential's broadcast capability could not be established, so "
+                f"nothing may be broadcast: {type(exc).__name__}: {exc}") from exc
+
+        if check.status_code is None:
+            # `_send` converts a transport failure into an UNKNOWN result rather than
+            # raising, so this is what a dead network looks like from here.
+            raise BroadcastNotPermitted(
+                "the organisation route could not be reached, so the credential's "
+                f"broadcast capability could not be established: {check.error}")
+        if not check.hosted:
+            raise BroadcastNotPermitted(
+                "the capability answer came from a non-hosted transport, which can be "
+                "handed any response at all. A capability established that way is "
+                "established by nothing.")
+        try:
+            check.assert_can_broadcast()
+        except Exception as exc:  # noqa: BLE001
+            raise BroadcastNotPermitted(
+                f"the configured credential may not broadcast: {exc}") from exc
+        self._verified = True
+
+
+class AssumedBroadcastCapability:
+    """A DECLARED capability, for fork rehearsals and tests. Never for a public chain.
+
+    A fork has no organisation route to ask, and the sixty-odd tests that exercise journal
+    and idempotency semantics are not about credentials. Both need to say "assume the key
+    could broadcast" without that becoming a way to reach mainnet unverified.
+
+    The guard is the TRANSPORT, not the chain id: an anvil fork of Base answers 8453, so a
+    chain-id rule would refuse every legitimate rehearsal while a mainnet fork would still
+    look like mainnet. `Submitter` therefore refuses an assumed capability whenever the
+    client's transport is hosted -- you may assume a capability only when you are demonstrably
+    not talking to the real KeeperHub. The reason is mandatory and appears in the repr.
+    """
+
+    def __init__(self, reason: str) -> None:
+        if not reason or not isinstance(reason, str):
+            raise BroadcastNotPermitted(
+                "an assumed broadcast capability must state why it is acceptable here")
+        self.reason = reason
+
+    def __repr__(self) -> str:
+        return f"AssumedBroadcastCapability(ASSUMED, NOT VERIFIED: {self.reason!r})"
+
+    @property
+    def assumed(self) -> bool:
+        return True
+
+    def require(self) -> None:
+        return None
 
 
 class ResumeRequired(SubmissionError):
@@ -186,6 +300,7 @@ class Submitter:
         *,
         new_attempt_id: Callable[[], str] = lambda: uuid.uuid4().hex,
         now: Callable[[], float] = None,
+        capability: "BroadcastCapability | AssumedBroadcastCapability | None" = None,
     ) -> None:
         import time
 
@@ -197,6 +312,15 @@ class Submitter:
         self.market_params = tuple(market_params)
         self._new_attempt_id = new_attempt_id
         self._now = now or time.time
+        # Default is the live check. A caller who wants the assumed one has to say so,
+        # and saying so is refused on a public chain.
+        self.capability = capability or BroadcastCapability(client)
+        if getattr(self.capability, "assumed", False) and getattr(
+                getattr(client, "transport", None), "hosted", False):
+            raise BroadcastNotPermitted(
+                f"this submitter talks to the REAL KeeperHub route and was given "
+                f"{self.capability!r}. A hosted broadcast capability is asked of the "
+                "organisation route, never declared by the caller.")
 
     # ------------------------------------------------------------------ sending --
     def _require_consistent_scope(self, admitted, envelope) -> None:
@@ -242,6 +366,12 @@ class Submitter:
         authorization cannot be two unrelated objects.
         """
         self._require_consistent_scope(admitted, envelope)
+        # BEFORE create_or_reopen, which is this method's first journal mutation. A
+        # refusal here leaves the journal exactly as it was found: no row created, no
+        # state advanced, no attempt to resolve, no idempotency key minted or spent. The
+        # same call may be retried unchanged once the credential can broadcast.
+        self.capability.require()
+
         operation_id = hex32(admitted.operation_id)
         payload_hash = hex32(admitted.payload_hash)
 
@@ -422,6 +552,14 @@ class Submitter:
                 "would be a SECOND submission rather than a deduplicated retry. Fence and "
                 "advance the epoch to retire the authorization, then reauthorize the same "
                 "id and payload. Remaining blocked.")
+
+        # Deliberately here rather than at the top of resume(). Everything above this line
+        # is RECONCILIATION -- reading the chain, retiring an authorization the controller
+        # can no longer accept, resolving an operation that already executed -- and all of
+        # it must keep working on a read-only credential. This is the first line that
+        # leads to a send, so this is where the capability is required. Nothing above has
+        # advanced the attempt into a sent or submitted state.
+        self.capability.require()
 
         body = json.loads(attempt["request_body"])
         request = _request_from_payload(body, attempt["calldata"])

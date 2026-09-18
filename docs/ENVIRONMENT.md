@@ -34,7 +34,7 @@ travels, never the value.
 | `HELD_COMPOSED_RUNNER_KEY` | The composed local run's runner key. On a fork this is an anvil deterministic account — public, well known, never custody. | fixture |
 | `HELD_HERO_KEY` | Set by `script/hero_demo.py` for its own signing. Anvil account, fork only. | fixture |
 | `HELD_KEYSTORE_PASSPHRASE` | Passphrase for a `keystore:/path` reference, when that form is used instead of `env:`. | **yes** |
-| `HELD_KEEPERHUB_API_KEY` | The KeeperHub organisation credential. **Does not exist in this environment** — L10 is open, so the authenticated route has never been called. See `evidence/P03/public-action-request.json`. | **yes** |
+| `HELD_KEEPERHUB_API_KEY` | The KeeperHub organisation credential, and **the only variable any KeeperHub code path reads.** Currently resolves to the organisation's `mcp:read` key, validated live (`make check-l10-route-proof` → `evidence/P03/l10-route-proof.json`). Broadcasting needs `mcp:write` or `mcp:admin`; there is **no separate write-key variable**, so a broadcast means the owner temporarily swaps the write key into this same name (`M1-IRREVERSIBLE-PREFLIGHT.md` step 11) and swaps it back. | **yes** |
 
 ## Console
 

@@ -74,7 +74,7 @@
   "blockedOn": [],
   "usable": true,
   "evidenceGrade": "REAL LOCAL FORK",
-  "exportedAt": 1789700286,
+  "exportedAt": 1789720827,
   "_credentials": "REFERENCED, NOT CARRIED. No private key, API key or secret appears in this file. B resolves the reference in its own environment.",
   "_consumption": "CARRIED FORWARD. B inherits the budget the retiring runner spent from; it does not get a fresh one. That is the point of a handover as opposed to a redeployment.",
   "_usable": "usable=true means the replacement has everything this supported continuation requires AND the controller was observed active at the replacement epoch with the replacement runner. An export that is missing checkpoints, settled history or a real configuration digest is NOT usable, however complete it looks."

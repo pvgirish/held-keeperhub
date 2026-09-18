@@ -1,0 +1,11 @@
+{
+  "amount": 100000000,
+  "calldata_bytes": 644,
+  "chain_id": 8453,
+  "controller": "0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f",
+  "execution_gas": 447799,
+  "fork_block": 51353228,
+  "intrinsic_gas": 27176,
+  "superseded_upper_bound": 1200000,
+  "total_gas": 474975
+}

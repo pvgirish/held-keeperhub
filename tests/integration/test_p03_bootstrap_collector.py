@@ -263,6 +263,10 @@ print(best)
                 env[k] = v
         for stray in ("HELD_RUNNER_A", "HELD_RUNNER_B"):
             env.pop(stray, None)
+        # Pin the output path explicitly. Both collection modes are exercised here and
+        # they write to different files by default; this harness owns one path and reads
+        # exactly what this run wrote, whatever the mode.
+        env["HELD_INVENTORY_OUT"] = os.path.join("evidence", "P03", "bootstrap-rehearsal.json")
         proc = subprocess.run([sys.executable, COLLECTOR], env=env, cwd=work,
                               capture_output=True, text=True)
         out = os.path.join(work, "evidence", "P03", "bootstrap-rehearsal.json")
@@ -412,6 +416,7 @@ print(b)
                     "HELD_ALLOW_KEY": ALLOW_KEY})
         env.pop("HELD_CONTROLLER", None)
         work = os.path.join(d, "w"); os.makedirs(os.path.join(work, "evidence", "P03"))
+        env["HELD_INVENTORY_OUT"] = os.path.join("evidence", "P03", "bootstrap-rehearsal.json")
         p = subprocess.run([sys.executable, COLLECTOR], env=env, cwd=work,
                            capture_output=True, text=True)
         out = os.path.join(work, "evidence", "P03", "bootstrap-rehearsal.json")

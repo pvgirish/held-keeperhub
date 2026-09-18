@@ -1,0 +1,294 @@
+{
+ "schema": "held.mainnet-gas-measurement.v1",
+ "what": "The M1 bootstrap ceremony, run against the pinned Base-mainnet fork, with gasUsed read out of the receipts. Measured, not estimated.",
+ "not": "NOT a mainnet transaction. Nothing was deployed publicly and nothing was spent.",
+ "covers": "Fixture scripts 01, 02, 03, 03b and 03d: Safe deployment, Roles module deployment and enablement, role scoping, non-refilling allowance binding with genuine consumption history, and the paused controller deployment. It does NOT cover the executeSupply broadcast, which KeeperHub's own wallet pays for.",
+ "fork_block": 51353212,
+ "transaction_count": 33,
+ "contract_deployments": 1,
+ "gas_total_ceremony": 7587624,
+ "gas_max_single_tx": 3292017,
+ "transactions": [
+  {
+   "block": 51353213,
+   "hash": "0xe789f7b3fd9ff9a66ca65cd0bcae1916f4fb42a93601999b8e7d12c622408811",
+   "to": "0x4e1dcf7ad4e460cfd30791ccc4f9c8a4f820ec67",
+   "contractAddress": null,
+   "gasUsed": 283440,
+   "status": 1
+  },
+  {
+   "block": 51353214,
+   "hash": "0x3b369e5d757833c4ddc344fae41cc78b13b7674bb74fc9b521a0647f8a686417",
+   "to": "0x000000000000addb49795b0f9ba5bc298cdda236",
+   "contractAddress": null,
+   "gasUsed": 190822,
+   "status": 1
+  },
+  {
+   "block": 51353215,
+   "hash": "0xe2ed76d05c475408f69ce52d54eb9a63397427c5d13ec9dc1b66e2ddc5068cf1",
+   "to": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
+   "contractAddress": null,
+   "gasUsed": 104096,
+   "status": 1
+  },
+  {
+   "block": 51353216,
+   "hash": "0x432e42aceeae28b673c0db2c63bb66c239e5ba347a2c7cf1a42d2cd246526e0c",
+   "to": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
+   "contractAddress": null,
+   "gasUsed": 121870,
+   "status": 1
+  },
+  {
+   "block": 51353217,
+   "hash": "0x1735abed41d4a1ec73687ea43bd9e80d4c12ffe8ae4903e0f908c96c07f9c5f0",
+   "to": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
+   "contractAddress": null,
+   "gasUsed": 89319,
+   "status": 1
+  },
+  {
+   "block": 51353218,
+   "hash": "0x5409c44e4341f4ccc5ed3c3a936a1a10220e539896e7115253a6195e62d4fdc1",
+   "to": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
+   "contractAddress": null,
+   "gasUsed": 114633,
+   "status": 1
+  },
+  {
+   "block": 51353219,
+   "hash": "0x7087104a1594b8ee1c538022b6a96c6524d0ae93a4f0c43d64b1f3e692be1871",
+   "to": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
+   "contractAddress": null,
+   "gasUsed": 80433,
+   "status": 1
+  },
+  {
+   "block": 51353220,
+   "hash": "0xc624ad50a230833d495306d785e9ed0af0e2f0790e9d94610475c28ecb0c5059",
+   "to": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
+   "contractAddress": null,
+   "gasUsed": 278681,
+   "status": 1
+  },
+  {
+   "block": 51353221,
+   "hash": "0x1e0a6923b7d4a5cddf44d6d11b4b2d31f76d77a2bd9526c8c362e504501b7ad5",
+   "to": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
+   "contractAddress": null,
+   "gasUsed": 89307,
+   "status": 1
+  },
+  {
+   "block": 51353222,
+   "hash": "0x32a82660ad0632df9cbd3863f6325ef49b93dccbfdbd2ff2decbdb3b4016eecf",
+   "to": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
+   "contractAddress": null,
+   "gasUsed": 140866,
+   "status": 1
+  },
+  {
+   "block": 51353223,
+   "hash": "0x8563167953364ae6212e9b848bc33a48d2da65623093e11d12cb150a5737e6c1",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 110383,
+   "status": 1
+  },
+  {
+   "block": 51353224,
+   "hash": "0xceaff3ffbbbab990287d522cf3a5e6d13e2e22fb146f050bf0653e4857ac0559",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 223571,
+   "status": 1
+  },
+  {
+   "block": 51353225,
+   "hash": "0x89b6dee44ed312a101c2a8f2da46dabb0942aefd76ff0e9168d658a262bc6e2e",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 110383,
+   "status": 1
+  },
+  {
+   "block": 51353226,
+   "hash": "0xa871c91ca6796c86169efd914edb8d3a8cdf2cf60ec1536b462ca7d73aa0ccdb",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 206453,
+   "status": 1
+  },
+  {
+   "block": 51353227,
+   "hash": "0x4a1126fa4d008f65d44ad2cd1d46c4bc1ac90410abf452ba618da77c3452c3d0",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 110383,
+   "status": 1
+  },
+  {
+   "block": 51353228,
+   "hash": "0x380e8c6f6216341d96ef5a29b663e19b9742e5a918a6c5337373bd004f78e7dc",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 206453,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0xc93ad2f5db91cf1dfab7071070b6f5ac69bb9513e7ddb9994e7db8f7a0f69303",
+   "to": null,
+   "contractAddress": "0x0620c56e23743ab7927fc9a8d97ae777343c33db",
+   "gasUsed": 3292017,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0x2e8b3edb207a9adaee65694dd586a65826d94b41b9f9a3ec915a381084d59922",
+   "to": "0x08deeda0ba1eb4b6b4b5cc4dd0c4bc689ea37180",
+   "contractAddress": null,
+   "gasUsed": 55790,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0xc2524402543b35ce1ec7d8c3cafdbb496ba74f7a759eae4422dbef4892238a46",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 83536,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0x64275b554a65fa8b5b8c04f7261e8c948367a1d78b4d8a3db867e1fc47d5e61c",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 56658,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0x87087c87f5c24d142941a16383647609353ef9dc270e71d09186caa344e3fb2a",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 63624,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0x9c632966cdfb4eaf41c65e769b8851327200ba9d1c1addf4fc704e9fda21b31c",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 31192,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0x09c1bd7ad60394dadd729f64f4237da1f683d0c7512bae7e6397e435f32d362d",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 31192,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0x07586906e223c1de39f400942198b3d6f826075f82da94aab2c98f53fedb2c45",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 315113,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0xb058d3cae1e4e00207cc456e182b8eb052d229bf1cbb6e725d7963ae7c35a597",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 137423,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0x7478968642f125dc87c6cad8ec168fa1f81afb653bb6cdac2fa42545331b8e04",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 39320,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0x93218d1ac8429ebd5133216ffe14cffa5b1702dd74e2f846f58e375efebd6328",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 331643,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0x7f75fbf7cc7b9a9aa7b2045a5350577ce2e223f373ce1373f416efc251f4d7f5",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 76524,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0x50befa4067d99570e4370e25c8899b5e372f7f456e463154d35fd57e64664b14",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 51272,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0xbb10f1a8f5ccdea9d94df22bc992db7aa07fb1fff4938e09a82a38cfb71a46b6",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 331811,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0x54fe69860d9c8fa282bf7857648ebf1bc6e7b6e2329d9dbed36041295a11e4fe",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 76524,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0xae09cc711ce699b06eb0cece19792f05a355cd8a9e5b3befb2f6ee92cdefa9db",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 76452,
+   "status": 1
+  },
+  {
+   "block": 51353229,
+   "hash": "0xcf7a63ac1e6f8a9120718c8197d27928e6050f9b9226445559406788202da359",
+   "to": "0x3875311cc0d4017a033893a9653a0725378aca1c",
+   "contractAddress": null,
+   "gasUsed": 76440,
+   "status": 1
+  }
+ ],
+ "gas_execute_supply": 474975,
+ "gas_execute_supply_detail": {
+  "execution_gas": 447799,
+  "execution_gas_source": "a gasleft() delta across the outer call in test/contracts/HeldExecuteSupplyGas.t.sol, executing fixtures/generated/composed-call.json -- the real pinned compiler's bytes -- against the real controller on the pinned Base-mainnet fork.",
+  "intrinsic_gas": 27176,
+  "intrinsic_gas_source": "COMPUTED, not measured: 21000 + 16 per non-zero and 4 per zero byte over the 644 calldata bytes (EIP-2028). A gasleft() delta cannot observe it.",
+  "calldata_bytes": 644,
+  "amount": 100000000,
+  "fork_block": 51353228,
+  "supersedes": {
+   "value": 1200000,
+   "was": "NOT MEASURED -- a stated upper bound."
+  },
+  "not_a_receipt": "A receipt needs a real transaction. Producing one on the fork would require the controller deployed AND activated on anvil rather than inside the forge VM, with the composed calldata rebuilt against that address, because the EIP-712 domain separator commits to it. That path was not invented for a figure of this size.",
+  "errs_high_by_design": "EIP-3529 storage refunds are applied at the end of a real transaction and can only make a receipt LOWER than this.",
+  "known_gap_l1_data_fee": "Base is an OP-stack chain and charges an L1 data fee on top of gasUsed * gasPrice. It is not part of any gas figure and is NOT included here -- exactly as it is not included in the ceremony measurement above. Recorded as a gap, not omitted."
+ }
+}

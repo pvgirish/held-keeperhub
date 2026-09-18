@@ -1,0 +1,60 @@
+{
+ "schema": "held.m1-cost-ceiling.v1",
+ "recorded_utc": "2026-09-18T04:58:23Z",
+ "status": "A COSTING, NOT AN AUTHORIZATION. Nothing here has been spent or approved.",
+ "live_inputs": {
+  "rpc": "https://mainnet.base.org",
+  "chain_id": 8453,
+  "block": 51459077,
+  "base_fee_wei_max_of_20": 5000000,
+  "priority_fee_wei_p90": 38444487,
+  "gas_price_wei_used": 43444487,
+  "eth_usd": 2478.46,
+  "eth_usd_source": "Chainlink ETH/USD aggregator 0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70 on Base",
+  "eth_usd_age_seconds": 72
+ },
+ "measured_gas": {
+  "ceremony_total": 7587624,
+  "ceremony_source": "evidence/P03/mainnet-gas-measurement.json \u2014 receipts from the real ceremony on the pinned Base-mainnet fork",
+  "one_execute_supply": 474975,
+  "one_execute_supply_source": "evidence/P03/mainnet-gas-measurement.json \u2014 the real pinned compiler's own bytes executed against the real controller on the pinned Base-mainnet fork. See gas_execute_supply_detail there: it is fork-measured execution gas plus COMPUTED intrinsic gas, it is NOT a receipt, and it errs high.",
+  "one_execute_supply_detail": {
+   "execution_gas": 447799,
+   "execution_gas_source": "a gasleft() delta across the outer call in test/contracts/HeldExecuteSupplyGas.t.sol, executing fixtures/generated/composed-call.json -- the real pinned compiler's bytes -- against the real controller on the pinned Base-mainnet fork.",
+   "intrinsic_gas": 27176,
+   "intrinsic_gas_source": "COMPUTED, not measured: 21000 + 16 per non-zero and 4 per zero byte over the 644 calldata bytes (EIP-2028). A gasleft() delta cannot observe it.",
+   "calldata_bytes": 644,
+   "amount": 100000000,
+   "fork_block": 51353228,
+   "supersedes": {
+    "value": 1200000,
+    "was": "NOT MEASURED -- a stated upper bound."
+   },
+   "not_a_receipt": "A receipt needs a real transaction. Producing one on the fork would require the controller deployed AND activated on anvil rather than inside the forge VM, with the composed calldata rebuilt against that address, because the EIP-712 domain separator commits to it. That path was not invented for a figure of this size.",
+   "errs_high_by_design": "EIP-3529 storage refunds are applied at the end of a real transaction and can only make a receipt LOWER than this.",
+   "known_gap_l1_data_fee": "Base is an OP-stack chain and charges an L1 data fee on top of gasUsed * gasPrice. It is not part of any gas figure and is NOT included here -- exactly as it is not included in the ceremony measurement above. Recorded as a gap, not omitted."
+  }
+ },
+ "two_separate_gas_payers": {
+  "owner_eoa": "Pays the ceremony: Safe, Roles module and controller deployment, the owner scoping ceremony, and activation. Must be funded with ETH on Base before step 1.",
+  "keeperhub_org_turnkey_wallet": "Pays the ONE executeSupply broadcast. KeeperHub documents that transactions are broadcast from the organisation's Turnkey wallet and that it must hold enough ETH on the chain. This is a second pot and is funded through KeeperHub, not by this repository."
+ },
+ "cost_at_observed_price_usd": {
+  "ceremony": 0.82,
+  "one_execute_supply": 0.05,
+  "total": 0.87
+ },
+ "proposed_ceilings": {
+  "headroom_multiple": 3.0,
+  "why": "Base fees move. A ceiling with no headroom is exceeded by an ordinary busy block, and a ceiling that is routinely exceeded stops being a control.",
+  "owner_eoa_eth": 0.000989,
+  "owner_eoa_usd": 2.45,
+  "keeperhub_wallet_eth": 6.2e-05,
+  "keeperhub_wallet_usd": 0.15,
+  "total_gas_usd": 2.6
+ },
+ "not_included": {
+  "usdc_supplied": "The supplied USDC is NOT a cost. It remains customer-owned: the Safe owns the Morpho position, onBehalf is the Safe, and a withdraw can only pay the Safe. It is capital at protocol risk, not spend, and its amount is a separate decision.",
+  "price_volatility": "This is a snapshot. It is stale immediately and must be re-run before the ceremony actually begins."
+ }
+}

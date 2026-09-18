@@ -28,7 +28,7 @@ reviewed by anyone but their author.
 | **P00** — route evidence + measured native baseline | Local gates reported passing. **Independent acceptance pending.** |
 | **P01** — types, identity, journal, result/ack | Local gates reported passing (31 tests). **Independent acceptance pending.** |
 | **P02** — typed controller + native Roles enforcement | Local gates reported passing (50 tests in three stages), including property/fuzz coverage and the exact Morpho rounding/share-effect contract. **Independent acceptance pending.** |
-| **P03** — native interception → signing → KeeperHub → reconciliation | **PARTIAL.** 172 local tests + 16 composed checks. The 67eed71 review's local findings **N1–N3 and B1–B4 are closed and regressed** (2026-09-17); the composed PUBLIC execution remains blocked on **L10**. Neither stubbed nor simulated. **Independent acceptance pending for everything, including the corrections.** |
+| **P03** — native interception → signing → KeeperHub → reconciliation | **PARTIAL.** 189 local tests + 16 composed checks. The 67eed71 review's local findings **N1–N3 and B1–B4 are closed and regressed** (2026-09-17). An organisation credential arrived 2026-09-18 and the authenticated route accepts it — the repository's first `hosted=true` result — but it is scoped `mcp:read`, so **L10 is narrowed, not closed**, and the composed PUBLIC execution remains blocked. Neither stubbed nor simulated. **Independent acceptance pending for everything, including the corrections.** |
 | **P04** — authority inventory, owner fencing, change, handover | **PARTIAL PREPARATION** — fork contract tests only; the required runtime service does not exist. |
 | **P05** — the private operator console | **PARTIAL PREPARATION** — interface prototype, not connected to real service state. |
 
@@ -82,7 +82,8 @@ been called.
 | `HELD_PRICE_MODE=testing-only make check-phase-00` | PASS (6 gates) | `evidence/P00/`, `docs/baseline/native-measurements.json` |
 | `make check-phase-01` | PASS, 31 tests | `evidence/P01/report.md`, `tests/core/run_tests.py` |
 | `make check-phase-02` | PASS, 50 tests in three stages | `evidence/P02/report.md` |
-| `make check-phase-03-local` | PASS, **172** tests in eight files | `evidence/P03/acceptance.json` |
+| `make check-phase-03-local` | PASS, **189** tests in eight files | `evidence/P03/acceptance.json` |
+| `make check-l10-route-proof` | PASS — live authenticated `GET /api/keys`, `hosted=true`, scope `mcp:read` | `evidence/P03/l10-route-proof.json` |
 | `make check-phase-03-composed` | PASS, **16** checks (3 fork tests + 5 Python), local only | `evidence/P03/acceptance.json` |
 | `make check-phase-03` | **INCOMPLETE by design** — runs every local check, then exits non-zero because the hosted execution has not been performed | `evidence/P03/acceptance.json` |
 | `docs/plan/review-67eed71/test_native_checkpoint.py` | 12 cases — 9 fixed controls pass, **3 findings reproduced** | `docs/plan/review-67eed71/PROVENANCE.md` |
@@ -103,15 +104,16 @@ native USDC on a fork. The evidence classes are kept separate on purpose and mus
 conflated.
 
 `check-phase-03-local` is 17 interception + 9 native-bundle (against the REAL pinned
-compiler) + 18 signing + 28 KeeperHub client + 18 submission binding/reconciliation + 20
-crash-restart recovery + 19 native decision/recovery + 43 bootstrap-collector decisions =
-**172**. The collector suite runs the real collector as a subprocess against a scripted
+compiler) + 18 signing + 43 KeeperHub client + 18 submission binding/reconciliation + 20
+crash-restart recovery + 19 native decision/recovery + 45 bootstrap-collector decisions =
+**189**. The collector suite runs the real collector as a subprocess against a scripted
 `cast` shim and includes positive controls; the native decision/recovery suite uses a
 synthetic journal and machine and is a control-flow test, not a substitute for the composed
 run.
 Every KeeperHub test runs against `OfflineTransport`, which stamps `hosted=false`; **none of
-them establish L10**, and three exist specifically to prove a local result cannot be filed as
-if they did.
+them establish L10**, and four exist specifically to prove a local result cannot be filed as
+if they did. The one live call is `make check-l10-route-proof`, which is not part of that
+gate and is described below.
 
 Two cross-language checks run in opposite directions. The action hash goes Python →
 Solidity via `fixtures/crosslang-vectors.json`, which carries its own provenance and is
@@ -128,21 +130,44 @@ Python signer reproduces the signature **byte for byte**.
 2. P06 composed adversarial faults, P07 install/release evidence, P08 assembly. **P04 and P05
    are partial preparation, not done** — P04 has fork contract tests but no runtime service;
    P05 is an unconnected interface prototype.
-3. **L10** — authenticated KeeperHub organisation caller/payer. Blocks P03's public
-   execution. Nothing about it is stubbed or simulated, and executing
-   `evidence/P03/execution-manifest.json` would additionally require authorization to
-   deploy a contract and spend funds, which has not been given.
+3. **L10** — authenticated KeeperHub organisation caller/payer. **Narrowed 2026-09-18, not
+   closed.** The credential half is done: `make check-l10-route-proof` performed one live
+   authenticated `GET /api/keys`, got 200 over `HttpsTransport`, matched the configured
+   secret against a listed organisation key by its documented `keyPrefix`, and read the
+   scope. That is the first `hosted=true` result in this repository, and it is a fact about
+   a credential, not about an execution. The layer's actual question — does the caller/payer
+   accept Held's outer controller call — is untouched, so its status in
+   `docs/decisions/route-evidence.json` is deliberately still `BLOCKED-UNKNOWN`; the closed
+   status vocabulary was not widened to accommodate a partial result.
+   Still blocks P03's public execution. Nothing about it is stubbed or simulated, and
+   executing `evidence/P03/execution-manifest.json` would additionally require authorization
+   to deploy a contract and spend funds, which has not been given.
 4. Independent review of every phase. The review of `67eed71` covers that one commit's
    native adapter and collector; it is not phase acceptance and grants no repository write,
    public action, credential use or spending.
 
 ## Open unknowns recorded rather than guessed
 
-- KeeperHub's catalog exposes an internal string chain id alongside the numeric `chainId`.
-  Which one `POST /api/execute/contract-call` expects cannot be established without an org
-  credential. Held sends `chainId`; the alternative is recorded in the client.
-- The authenticated response schema has not been observed, so the execution id and
-  transaction hash fields are read defensively.
+- ~~KeeperHub's catalog exposes an internal string chain id alongside the numeric
+  `chainId`.~~ **CLOSED 2026-09-18, from the documentation rather than from a live call.**
+  `https://docs.keeperhub.com/api/direct-execution` documents `chainId` as the numeric
+  chain id, accepted as a number or a numeric string, with a deprecated `network` field for
+  chain names. Held sends the numeric `chainId`, which is correct. The catalog's string id
+  is a listing identifier. This has **not** been tested against the live execution route.
+- The authenticated response schema of the **execution** route has still not been observed,
+  so the execution id and transaction hash fields are still read defensively. The `/api/keys`
+  response schema has now been observed and matches the documentation.
+
+## What the credential does and does not change
+
+The credential is real, the route accepts it, and that is genuinely the first hosted fact
+this project has. It is also scoped `mcp:read`. The API documents a read-only key as able
+to read and simulate but **not** to broadcast, so **M1 — a real transaction executed
+through KeeperHub — is not merely unperformed on this credential, it is unreachable on
+it.** M1, M2, P18 and P19 are all unchanged in the claim ledger. What would close M1, in
+order: a credential scoped `mcp:write` or `mcp:admin`; a deployed controller with its Safe
+and Roles module; a funded Safe at an agreed amount; a passing simulate-mode preflight; and
+explicit authorization to deploy and spend, which has not been given.
 
 ## Exact next task
 
@@ -150,11 +175,22 @@ Python signer reproduces the signature **byte for byte**.
 which is what made it look next, but it is not next: the review of this commit left local
 P03 work open, and P04's own record already reads PARTIAL PREPARATION.
 
-**Updated 2026-09-17: N1–N3 and B1–B4 are done.** The next task is the bounded
+**Updated 2026-09-17: N1–N3 and B1–B4 are done.** The next task was the bounded
 L10 / public-action request, once the corrections have been independently reviewed.
 `evidence/P03/execution-manifest.json` is the concrete public execution, written before the
 fact; executing it needs authorization to deploy a contract and spend funds, which has not
 been given.
+
+**Updated 2026-09-18: request A of that bounded request is granted and performed** —
+`make check-l10-route-proof`. Its two successors are now separable and neither is started:
+
+- **A2, the simulate-mode preflight against a real controller.** Its credential blocker is
+  gone (`mcp:read` is the scope a dry run needs). Its target blocker is not: there is no
+  deployed HeldController to aim at. This is the step that would produce the first genuine
+  evidence about L10's actual question, and about P19.
+- **B, deployment and one public execution.** Now additionally requires a scope upgrade,
+  because `mcp:read` cannot broadcast. Supplying a read-only key was explicitly not consent
+  to spend and is not read as such.
 
 Do not require full P04 early and do not reopen P00's native comparison.
 

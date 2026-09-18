@@ -78,6 +78,21 @@ if MODE not in ("initial", "handover"):
     sys.exit(2)
 INITIAL = MODE == "initial"
 
+# WHERE THE REPORT GOES, and why it is not one fixed path.
+#
+# Both modes used to write `evidence/P03/bootstrap-rehearsal.json`. Three targets run this
+# collector -- `make check-bootstrap-rehearsal` in INITIAL mode, `make hero-demo` and
+# `make p06-comparison` in HANDOVER mode -- so the file's content depended on whichever
+# target ran last, while EVIDENCE-INDEX.md attributed it to the initial-mode command. Two
+# different questions were overwriting each other's answers under one name.
+#
+# Programmatic callers set HELD_INVENTORY_OUT and own the path (see
+# held_authority.inventory, which is canonical for the Python side). These defaults are for
+# direct CLI and `make` use.
+OUT = os.environ.get("HELD_INVENTORY_OUT") or (
+    "evidence/P03/bootstrap-rehearsal.json" if INITIAL
+    else "evidence/P03/bootstrap-handover.json")
+
 MORPHO = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
 USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 COLL = "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452"
@@ -969,10 +984,10 @@ for c in clauses:
 print()
 print(f"verdict: {report['verdict']['activation_would_be']}")
 
-os.makedirs("evidence/P03", exist_ok=True)
-with open("evidence/P03/bootstrap-rehearsal.json", "w") as fh:
+os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
+with open(OUT, "w") as fh:
     json.dump(report, fh, indent=2, sort_keys=False)
     fh.write("\n")
-print("wrote evidence/P03/bootstrap-rehearsal.json")
+print(f"wrote {OUT}")
 
 sys.exit(1 if failures else 0)

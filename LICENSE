@@ -1,0 +1,46 @@
+MIT License
+
+Copyright (c) 2026 Held contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+THIRD-PARTY COMPONENTS
+
+This licence covers the code in this repository only. Dependencies are pinned
+git submodules and external packages; they are referenced, never vendored, and
+they keep their own licences and copyright notices. Nothing below is relicensed
+by this file.
+
+  lib/openzeppelin-contracts   MIT             — see lib/openzeppelin-contracts/LICENSE
+  lib/forge-std                MIT OR Apache-2.0
+                                               — see lib/forge-std/LICENSE-MIT
+                                                 and lib/forge-std/LICENSE-APACHE
+
+  Almanak SDK                  external, pinned at 6e83e00edcaef02b0cb1f2a783f9c6b9ed90a938.
+                               Not redistributed here; installed separately.
+  eth-abi, eth-account,
+  eth-utils                    MIT — installed from PyPI, not vendored.
+
+The contracts this project interacts with on Base — Safe 1.4.1, Zodiac Roles v2,
+Morpho Blue, USDC — are already deployed and are not redistributed here.
+
+Every Solidity file authored by this project carries `SPDX-License-Identifier: MIT`,
+which this file matches.

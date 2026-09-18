@@ -320,7 +320,7 @@ def interrupt_a_real_submission(live, journal) -> dict:
     server that receives it and closes without responding.
     """
     from held_adapter.execution.keeperhub import KeeperHubClient
-    from held_adapter.execution.submit import Submitter
+    from held_adapter.execution.submit import AssumedBroadcastCapability, Submitter
     from held_adapter.signing.runner_signer import RunnerSigner
 
     admitted, env, _calldata = _build_supply(
@@ -341,7 +341,11 @@ def interrupt_a_real_submission(live, journal) -> dict:
                         KeeperHubClient(transport=transport, sleep=lambda _: None),
                         RunnerSigner("env:HELD_HERO_KEY", RUNNER_A),
                         CONTROLLER, CHAIN, market,
-                        new_attempt_id=lambda: "hero-interrupted-attempt-1")
+                        new_attempt_id=lambda: "hero-interrupted-attempt-1",
+                        # The demo runs against a local socket, not KeeperHub: there
+                        # is no organisation route here to ask about scopes.
+                        capability=AssumedBroadcastCapability(
+                            "hero demo on a local fork; the server is a local socket"))
         submission = sub.submit(admitted, env)
         outcome = submission.send.outcome.name
     finally:

@@ -42,6 +42,7 @@ from held_adapter.execution.keeperhub import (  # noqa: E402
     CredentialReference,
     HttpResponse,
     HttpsTransport,
+    InsufficientScope,
     KeeperHubClient,
     KeeperHubError,
     L10Blocked,
@@ -431,6 +432,191 @@ def _():
         chain_id=CHAIN_ID, contract_address=CONTROLLER, function_name="executeSupply",
         function_args=args, abi=function_abi("executeSupply"),
         expected_calldata=encode_call("executeSupply", args), value_ether="0.5")
+
+
+# ------------------------- C6: the authenticated organisation credential check --
+# `organisation_keys()` is the one call in this client that runs for real against the
+# live route (script/collect_route_proof.py). These tests are still offline and still
+# establish nothing about L10; they establish that the request is the documented one and
+# that every unreadable answer fails CLOSED rather than into "valid".
+
+def keys_page(items, *, page=1, total_pages=1, status=200):
+    return response(
+        {"items": items, "meta": {"total": len(items), "page": page,
+                                  "pageSize": 50, "totalPages": total_pages}}, status)
+
+
+def listed(prefix=FAKE_CREDENTIAL[:8], scope="mcp:read", **kw):
+    item = {"id": "k1", "name": "test key", "keyPrefix": prefix, "createdAt": "2026-09-18T00:00:00Z",
+            "lastUsedAt": None, "expiresAt": None, "scope": scope,
+            "createdByName": "Test Person", "createdByEmail": "test@example.com",
+            "createdByRole": "owner"}
+    item.update(kw)
+    return item
+
+
+@test("C6: the credential check is an authenticated GET on /api/keys, with no idempotency key")
+def _():
+    c, t = client([keys_page([listed()])])
+    c.organisation_keys()
+    call = t.calls[0]
+    assert call["method"] == "GET" and "/api/keys" in call["url"], call
+    assert call["body"] is None
+    assert call["headers"]["Authorization"] == f"Bearer {FAKE_CREDENTIAL}"
+    assert IDEMPOTENCY_HEADER not in call["headers"], "a read is not an idempotent submission"
+
+
+@test("C6: a listing containing this credential's prefix is valid, with its scopes read")
+def _():
+    c, _ = client([keys_page([listed(scope="mcp:read")])])
+    r = c.organisation_keys()
+    assert r.matched and r.valid and r.scopes == ("mcp:read",)
+    assert r.can_broadcast is False
+
+
+@test("C6: `scope` is space-separated, so a read+write key is read as BOTH")
+def _():
+    c, _ = client([keys_page([listed(scope="mcp:read mcp:write")])])
+    r = c.organisation_keys()
+    assert r.scopes == ("mcp:read", "mcp:write") and r.can_broadcast is True
+
+
+@test("C6: an unreadable `scope` yields NO scopes, never write permission")
+def _():
+    c, _ = client([keys_page([listed(scope={"mcp:write": True})])])
+    r = c.organisation_keys()
+    assert r.scopes == () and r.can_broadcast is False
+    assert "carries []" in expect(InsufficientScope, r.assert_can_broadcast)
+
+
+@test("C6: a multi-scope key is read under EITHER delimiter")
+def _():
+    # The organisation's key UI presents multi-scope keys comma-joined, and the only
+    # multi-scope key this project has seen was read there rather than off the wire.
+    # Splitting on whitespace alone made `mcp:read,mcp:write,mcp:admin` one token equal to
+    # no known scope, so `can_broadcast` was False -- Held refusing its own valid write
+    # key, at the one moment a refusal is most expensive to diagnose.
+    for scope in ("mcp:read,mcp:write,mcp:admin",
+                  "mcp:read mcp:write mcp:admin",
+                  "mcp:read, mcp:write",
+                  ["mcp:read", "mcp:write"],
+                  ["mcp:read,mcp:write"]):
+        c, _ = client([keys_page([listed(scope=scope)])])
+        r = c.organisation_keys()
+        assert "mcp:write" in r.scopes, (scope, r.scopes)
+        assert r.can_broadcast is True, (scope, r.scopes)
+
+
+@test("C6: reading a delimiter is not a licence to match a substring")
+def _():
+    # The delimiter fix must not become a loosening. Every reading still compares whole
+    # tokens for equality, so nothing that merely contains "write" acquires permission.
+    for scope in ("mcp:readwrite", "mcp:write-pending", "notmcp:write", "write",
+                  "mcp:read,mcp:writeish", ["mcp:readwrite"]):
+        c, _ = client([keys_page([listed(scope=scope)])])
+        r = c.organisation_keys()
+        assert r.can_broadcast is False, (scope, r.scopes)
+        expect(InsufficientScope, r.assert_can_broadcast)
+
+
+@test("C6: a non-string inside a scope list contributes nothing")
+def _():
+    c, _ = client([keys_page([listed(scope=["mcp:read", {"mcp:write": True}, None])])])
+    r = c.organisation_keys()
+    assert r.scopes == ("mcp:read",) and r.can_broadcast is False
+
+
+@test("C6: mcp:read refuses a broadcast BEFORE sending it, rather than earning a 403")
+def _():
+    c, _ = client([keys_page([listed(scope="mcp:read")])])
+    msg = expect(InsufficientScope, c.organisation_keys().assert_can_broadcast)
+    assert "mcp:write" in msg and "mcp:admin" in msg
+
+
+@test("C6: a credential absent from the listing is NOT valid")
+def _():
+    c, _ = client([keys_page([listed(prefix="kh_someoneelse")])])
+    r = c.organisation_keys()
+    assert r.matched is False and r.valid is False
+    assert "not among the organisation's listed keys" in (r.error or "")
+    assert "not established as valid" in expect(L10Blocked, r.assert_can_broadcast)
+
+
+@test("C6: an entry with no keyPrefix is skipped, not assumed to be ours")
+def _():
+    c, _ = client([keys_page([{"id": "k1", "scope": "mcp:write"}])])
+    r = c.organisation_keys()
+    assert r.matched is False and r.can_broadcast is False
+
+
+@test("C6: the credential is found when it is on a later page")
+def _():
+    c, t = client([
+        keys_page([listed(prefix="kh_other")], page=1, total_pages=2),
+        keys_page([listed(scope="mcp:read")], page=2, total_pages=2),
+    ])
+    r = c.organisation_keys()
+    assert r.valid and r.pages_read == 2 and r.key_count == 2
+    assert "page=2" in t.calls[1]["url"]
+
+
+@test("C6: exhausting the pages without a match reports absence, not a partial read")
+def _():
+    c, _ = client([keys_page([listed(prefix="kh_other")], page=1, total_pages=1)])
+    r = c.organisation_keys()
+    assert r.valid is False and r.total_pages == 1
+    assert "not among" in (r.error or "")
+
+
+@test("C6: 401 is recorded as a real answer about the route")
+def _():
+    c, _ = client([response({"message": "invalid api key"}, 401)])
+    r = c.organisation_keys()
+    assert r.valid is False and r.status_code == 401 and "401" in (r.error or "")
+
+
+@test("C6: a 200 with no `items` array yields no verdict at all")
+def _():
+    c, _ = client([response({"unexpected": True}, 200)])
+    r = c.organisation_keys()
+    assert r.valid is False and "no `items` array" in (r.error or "")
+
+
+@test("C6: an offline credential check can never be filed as hosted evidence")
+def _():
+    c, _ = client([keys_page([listed()])])
+    r = c.organisation_keys()
+    assert r.hosted is False
+    assert "non-hosted transport" in expect(L10Blocked, r.assert_hosted_evidence)
+
+
+@test("C6: the evidence record carries no secret, prefix, name or email")
+def _():
+    c, _ = client([keys_page([listed()])])
+    blob = json.dumps(c.organisation_keys().to_evidence())
+    for forbidden in (FAKE_CREDENTIAL, FAKE_CREDENTIAL[:8], "Test Person", "test@example.com"):
+        assert forbidden not in blob, forbidden
+    assert_no_secrets(blob, "credential_check_evidence")
+
+
+@test("C6: an unset credential is L10Blocked before any request is built")
+def _():
+    c, t = client([keys_page([listed()])])
+    os.environ.pop(API_ENV, None)
+    try:
+        assert "is unset" in expect(L10Blocked, c.organisation_keys)
+        assert t.calls == [], "no request may be made without a credential"
+    finally:
+        os.environ[API_ENV] = FAKE_CREDENTIAL
+
+
+@test("C6: a credential check is not a SendResult and cannot become an execution record")
+def _():
+    from held_adapter.execution.keeperhub import CredentialCheck, SendResult
+    c, _ = client([keys_page([listed()])])
+    r = c.organisation_keys()
+    assert isinstance(r, CredentialCheck) and not isinstance(r, SendResult)
+    assert not hasattr(r, "outcome"), "no path may read ACCEPTED off a credential listing"
 
 
 def main() -> int:

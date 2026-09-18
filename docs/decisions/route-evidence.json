@@ -34,7 +34,8 @@
     "when_utc": "2026-09-16",
     "finding": "Re-read live. GET https://app.keeperhub.com/api/chains answers 200; chain 8453 Base isEnabled true, 84532 Base Sepolia isEnabled true. Matches the P00 reading, and confirms the base URL and path the P03 client builds.",
     "new_boundary": "The endpoint answers WITHOUT any credential. It is therefore not usable as an authentication preflight. An earlier draft of the P03 client used it as one, which would have reported 'preflight passed' for an invalid key and for no key at all; that was replaced with a SIMULATE-mode call on the authenticated contract-call route.",
-    "new_unknown": "The catalog exposes an internal string id per chain (Base = '9wr4m6zv2dwflb1trbzsx') alongside the numeric chainId. Which of the two POST /api/execute/contract-call expects is NOT established, because that route requires the org credential. Held sends chainId; the alternative is recorded in adapter/held_adapter/execution/keeperhub.py rather than guessed silently."
+    "new_unknown": "The catalog exposes an internal string id per chain (Base = '9wr4m6zv2dwflb1trbzsx') alongside the numeric chainId. Which of the two POST /api/execute/contract-call expects is NOT established, because that route requires the org credential. Held sends chainId; the alternative is recorded in adapter/held_adapter/execution/keeperhub.py rather than guessed silently.",
+    "unknown_resolved_2026_09_18": "The string-vs-numeric chain id unknown is CLOSED, from the documentation rather than from a live execution call: https://docs.keeperhub.com/api/direct-execution documents `chainId` as the numeric chain id, accepted as a number or a numeric string, with a deprecated `network` field for chain names. Held sends the numeric chainId, which is correct. The internal catalog string id is a listing identifier and is not what the execution route expects. NOT tested against the live execution route -- no contract call has been made on it."
    }
   },
   {
@@ -89,13 +90,31 @@
    "id": "L10-authenticated-caller-payer",
    "question": "Does the actual org caller/payer route accept the outer controller call?",
    "status": "BLOCKED-UNKNOWN",
-   "finding": "Not attempted. Requires a KeeperHub org API key and an authenticated preflight.",
-   "boundary": "Catalog presence (L3) does not prove this. Remains open into P03.",
-   "source": null,
+   "finding": "STILL NOT ANSWERED. This layer asks whether the caller/payer accepts Held's OUTER CONTROLLER CALL, and nothing has been submitted to it. What changed on 2026-09-18 is a PRECONDITION, not the answer: the missing organisation credential now exists and the authenticated route accepts it (see m1_route_proof). The status is deliberately unchanged. A closed status vocabulary was not widened to make room for a partial result, because the partial result is about a credential and this layer is about a call.",
+   "boundary": "Catalog presence (L3) does not prove this, and neither does a credential listing. The question this layer asks is about the CONTROLLER CALL, and that is still unanswered.",
+   "source": "evidence/P03/l10-route-proof.json",
    "p03_status": {
-    "still": "BLOCKED-UNKNOWN. Unchanged. No org API key; nothing local closes this.",
+    "still": "Was 'BLOCKED-UNKNOWN. Unchanged. No org API key; nothing local closes this.' The first clause is superseded by m1_route_proof below; the second remains exactly true -- nothing local closes this.",
     "what_p03_built": "The client that would exercise it: adapter/held_adapter/execution/keeperhub.py. preflight() is a SIMULATE-mode call on the authenticated route, so a 2xx there would be the first genuine evidence about L10 this project has.",
-    "anti_simulation": "Only HttpsTransport can produce hosted=True, and it requires an https:// origin with a real credential. OfflineTransport stamps hosted=False, and SendResult.assert_hosted_evidence() refuses a non-hosted result, so a local fixture cannot be filed as an L10 pass. 28 local tests cover request construction, execution keys, backoff and response classification; none of them establish L10, and three exist specifically to prove they cannot."
+    "anti_simulation": "Only HttpsTransport can produce hosted=True, and it requires an https:// origin with a real credential. OfflineTransport stamps hosted=False, and SendResult.assert_hosted_evidence() refuses a non-hosted result, so a local fixture cannot be filed as an L10 pass. 43 local tests cover request construction, execution keys, backoff, response classification and the credential check; none of them establish L10, and four exist specifically to prove they cannot."
+   },
+   "m1_route_proof": {
+    "when_utc": "2026-09-18",
+    "what_ran": "make check-l10-route-proof -> script/collect_route_proof.py. One authenticated GET https://app.keeperhub.com/api/keys over HttpsTransport. No broadcast, no deployment, no funds; the script has no code path that can submit a contract call.",
+    "observed": "HTTP 200, hosted=true. The organisation lists one key; the configured secret matches it by the documented keyPrefix, so the 200 is attributable to THIS credential rather than to an endpoint that ignores the Authorization header. Scope reads 'mcp:read'. Role owner, no expiry.",
+    "why_this_is_the_first_hosted_result": "Every prior KeeperHub result in this repository came from OfflineTransport and carried hosted=false. This is the first hosted=true one.",
+    "what_it_establishes": [
+     "The live organisation route accepts Held's credential -- a fact no local test could produce, and one GET /api/chains could never produce either, since that route answers 200 with no credential at all.",
+     "The scopes actually attached to the credential."
+    ],
+    "what_it_does_NOT_establish": [
+     "L10 itself. The question is whether the authenticated caller/payer accepts Held's OUTER CONTROLLER CALL. A credential listing says nothing about that, and answering it needs a simulate-mode contract call against a DEPLOYED HeldController. None is deployed on any public chain.",
+     "M1. M1 is a real transaction executed through KeeperHub. A credential listing is not a transaction.",
+     "P19, server-side encoder agreement. Untouched."
+    ],
+    "hard_consequence": "The scope is mcp:read. The documentation states a mcp:read key can read and simulate but cannot broadcast, and that broadcasting requires mcp:write or mcp:admin. So M1 is not merely unperformed on this credential -- it is unreachable on it. KeeperHubClient.assert_can_broadcast() now refuses a broadcast on an observed read-only scope BEFORE sending it, rather than discovering the documented 403 insufficient_scope afterwards.",
+    "chain_id_unknown_closed": "The CHECKPOINT open unknown about the catalog's internal string chain id versus the numeric chainId is closed from the documentation, not from this call: https://docs.keeperhub.com/api/direct-execution documents chainId as the numeric id, as a number or a numeric string, with a deprecated `network` field for chain names. Held sends the numeric chainId, which is correct. This was NOT tested against the live execution route.",
+    "authenticated_response_schema_unknown": "Still open for the EXECUTION route. The /api/keys response schema is now observed; the contract-call response schema is not."
    }
   },
   {
@@ -120,7 +139,8 @@
   "local_verification_vehicle": "chain=base + Network.ANVIL forking Base mainnet (L8).",
   "public_criterion_2_evidence": "Base MAINNET, small value. Requires explicit Girish authorisation. NOT taken in P00.",
   "note": "This supersedes Claude's earlier 'the Morpho plugin is mainnet-only' reasoning, which was wrong (L4). The real constraint is the SDK's per-chain-name address registry.",
-  "rpc_status": "UNBLOCKED - see L11. G3 is now RUNNABLE."
+  "rpc_status": "UNBLOCKED - see L11. G3 is now RUNNABLE.",
+  "keeperhub_credential": "An organisation credential exists as of 2026-09-18 and the authenticated route accepts it (L10.m1_route_proof). Its scope is mcp:read, so it can read and simulate but cannot broadcast. Criterion 2 public evidence still requires a mcp:write or mcp:admin credential, a deployed controller, a funded Safe and explicit authorisation to spend."
  },
- "updated_utc": "2026-09-15T18:18:45Z"
+ "updated_utc": "2026-09-18T03:40:00Z"
 }

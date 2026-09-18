@@ -1,0 +1,91 @@
+{
+ "schema": "held.m1-prebroadcast-gate.v1",
+ "recorded_utc": "2026-09-18T08:41:20Z",
+ "question": "May the single irreversible executeSupply broadcast proceed?",
+ "verdict": "DO NOT BROADCAST",
+ "expected": {
+  "chain_id": 8453,
+  "executor": "0x24192B75e297dC1c7a42DcB8C04227818E78acd0",
+  "broadcast_scopes": [
+   "mcp:write",
+   "mcp:admin"
+  ],
+  "credential_ref": "env:HELD_KEEPERHUB_API_KEY"
+ },
+ "counts": {
+  "PASS": 2,
+  "FAIL": 0,
+  "BLOCKED": 10
+ },
+ "checks": [
+  {
+   "check": "request-present",
+   "verdict": "BLOCKED",
+   "detail": "no prepared request. Pass --journal PATH --attempt ID (the authoritative source) or --request FILE"
+  },
+  {
+   "check": "payload-schema",
+   "verdict": "BLOCKED",
+   "detail": "no prepared request. Pass --journal PATH --attempt ID (the authoritative source) or --request FILE"
+  },
+  {
+   "check": "chain-8453",
+   "verdict": "BLOCKED",
+   "detail": "no prepared request. Pass --journal PATH --attempt ID (the authoritative source) or --request FILE"
+  },
+  {
+   "check": "controller-target",
+   "verdict": "BLOCKED",
+   "detail": "no prepared request. Pass --journal PATH --attempt ID (the authoritative source) or --request FILE"
+  },
+  {
+   "check": "function-supported",
+   "verdict": "BLOCKED",
+   "detail": "no prepared request. Pass --journal PATH --attempt ID (the authoritative source) or --request FILE"
+  },
+  {
+   "check": "calldata-reencodes",
+   "verdict": "BLOCKED",
+   "detail": "no prepared request. Pass --journal PATH --attempt ID (the authoritative source) or --request FILE"
+  },
+  {
+   "check": "value-zero",
+   "verdict": "BLOCKED",
+   "detail": "no prepared request. Pass --journal PATH --attempt ID (the authoritative source) or --request FILE"
+  },
+  {
+   "check": "payload-is-a-broadcast",
+   "verdict": "BLOCKED",
+   "detail": "no prepared request. Pass --journal PATH --attempt ID (the authoritative source) or --request FILE"
+  },
+  {
+   "check": "executor-declared",
+   "verdict": "PASS",
+   "detail": "0x24192B75e297dC1c7a42DcB8C04227818E78acd0 \u2014 KeeperHub's managed signer",
+   "expected": "0x24192B75e297dC1c7a42DcB8C04227818E78acd0",
+   "observed": "0x24192B75e297dC1c7a42DcB8C04227818E78acd0"
+  },
+  {
+   "check": "executor-on-chain",
+   "verdict": "BLOCKED",
+   "detail": "needs $HELD_M1_CONTROLLER and $HELD_BASE_RPC. Until the controller is deployed and activated there is no on-chain executor to compare, and the declared value stands unconfirmed"
+  },
+  {
+   "check": "credential-write-scope",
+   "verdict": "BLOCKED",
+   "detail": "L10 is not satisfied: $HELD_KEEPERHUB_API_KEY is unset, so there is no authenticated KeeperHub organisation caller/payer. This gate is not stubbed or simulated; without a real org credential the hosted route cannot be exercised."
+  },
+  {
+   "check": "no-broadcast",
+   "verdict": "PASS",
+   "detail": "0 request(s) left this gate, none of them a contract call and none carrying an idempotency key",
+   "requests": [],
+   "refusals": []
+  }
+ ],
+ "boundaries": [
+  "A PASS here is permission to attempt, not a prediction of success. Whether the call reverts is answered by the authenticated SIMULATE preflight (M1-IRREVERSIBLE-PREFLIGHT step 10), which this gate does not perform.",
+  "This gate has no code path that can broadcast: NoBroadcastTransport refuses a non-simulate contract call and any request carrying an idempotency key, and NoBroadcastClient does not implement broadcast().",
+  "BLOCKED is not a soft pass. The exit status treats it exactly as a failure."
+ ]
+}

@@ -62,6 +62,7 @@ from held_adapter.execution.native_boundary import (  # noqa: E402
     admit_native_bundle,
 )
 from held_adapter.execution.submit import (  # noqa: E402
+    AssumedBroadcastCapability,
     ChainEvidence,
     ResumeRequired,
     SubmissionError,
@@ -418,7 +419,9 @@ def _():
             journal, KeeperHubClient(transport=transport, sleep=lambda _: None),
             RunnerSigner("env:HELD_COMPOSED_RUNNER_KEY", v["runner"]),
             v["controller"], int(v["chainId"]), market,
-            new_attempt_id=lambda: "composed-attempt-1")
+            new_attempt_id=lambda: "composed-attempt-1",
+            capability=AssumedBroadcastCapability(
+                "local fork rehearsal; the capture transport is not KeeperHub"))
 
         submission = sub.submit(ADMITTED, env)
         assert submission.send.outcome is SendOutcome.UNKNOWN, (
@@ -455,7 +458,9 @@ def _():
             Submitter(
                 journal, KeeperHubClient(transport=OfflineTransport([]), sleep=lambda _: None),
                 RunnerSigner("env:HELD_COMPOSED_RUNNER_KEY", v["runner"]),
-                v["controller"], int(v["chainId"]), market).submit(ADMITTED, env)
+                v["controller"], int(v["chainId"]), market,
+                capability=AssumedBroadcastCapability(
+                    "local fork rehearsal; offline transport")).submit(ADMITTED, env)
             raise AssertionError("a second claim was allowed on a live operation")
         except ResumeRequired:
             pass

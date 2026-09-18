@@ -1,0 +1,32 @@
+{
+ "schema": "held.mandatory-claim-report.v1",
+ "label": "PREPARED",
+ "_status": "TEMPLATE \u2014 NOT EXECUTED",
+ "claim": "The transaction corresponds to the integrated workflow",
+ "claim_id": "M2",
+ "status": "NOT YET ESTABLISHED",
+ "depends_on": "M1, plus the journal reconciliation against the on-chain reading",
+ "established_on_fork": {
+  "label": "FORK",
+  "path": "evidence/M1/final-fork-rehearsal.json",
+  "what_it_shows": [
+   "The full sequence runs with the final owners, runner and executor.",
+   "Every owner act carried two of three signatures.",
+   "Exactly 10.000000 USDC moved, once, and a Morpho position exists.",
+   "A second attempt is refused by FloorViolated().",
+   "A replayed authorization is refused by OperationConsumed(bytes32)."
+  ],
+  "what_it_cannot_show": "Anything about public Base. No address here exists on chain, nothing was funded with real money, and no KeeperHub API was involved."
+ },
+ "blank_until_public_execution": {
+  "transactionHash": "FILL:the public Base transaction hash",
+  "blockNumber": "FILL:the block it landed in",
+  "explorer_url": "FILL:https://basescan.org/tx/\u2026",
+  "keeperhub_execution_id": "FILL:the executionId KeeperHub returned",
+  "keeperhub_idempotency_key": "FILL:the Idempotency-Key that was sent",
+  "from_address": "FILL:must equal the KeeperHub managed signer",
+  "safe_usdc_after": "FILL:must be 1000000",
+  "consumed_marker": "FILL:consumed[operationId], read on public Base"
+ },
+ "_note": "Only the fields above are blank. Everything else this claim needs is already established and referenced. A FORK record may not be moved into the blanks; see script/mainnet_evidence_gate.py."
+}
