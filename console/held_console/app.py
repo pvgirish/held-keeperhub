@@ -224,6 +224,44 @@ def render_dashboard(state: LiveState, interruptions: list[Interruption]) -> str
     )
 
 
+def _render_views(views: dict) -> str:
+    """The four V4 section 8 views, each carrying its own truthfulness.
+
+    A view that could not be built renders as a stated failure, not as a blank panel and
+    never as demonstration numbers. The evidence grade is shown on every one, because a
+    figure without its grade invites exactly the promotion this project refuses.
+    """
+    order = (("terms", "Terms"), ("activity", "Activity"),
+             ("unresolved", "Unresolved / recovery"), ("authority", "Authority &amp; handover"))
+    out = ["<h1>Operator views</h1>"]
+    for key, title in order:
+        v = views.get(key)
+        if v is None:
+            continue
+        if not v.loaded:
+            out.append(
+                f"<section><h2>{title}</h2>"
+                f"<p class=b>UNAVAILABLE — {esc(v.summary)}</p>"
+                + "".join(f"<p class=b>{esc(p)}</p>" for p in v.problems)
+                + "<p><small>No substitute data is shown. Fix the source.</small></p>"
+                "</section>")
+            continue
+        rows = "".join(
+            "<tr>" + "".join(f"<td>{esc(val)}</td>" for val in r.values()) + "</tr>"
+            for r in v.rows)
+        head = ("<tr>" + "".join(f"<th>{esc(k)}</th>" for k in v.rows[0]) + "</tr>"
+                if v.rows else "")
+        problems = "".join(f"<li>{esc(p)}</li>" for p in v.problems)
+        out.append(
+            f"<section><h2>{title}</h2>"
+            f"<p><strong>evidence grade:</strong> {esc(v.grade)}</p>"
+            f"<p>{esc(v.summary)}</p>"
+            + (f"<table>{head}{rows}</table>" if v.rows else "<p><em>nothing to show</em></p>")
+            + (f"<ul class=b>{problems}</ul>" if problems else "")
+            + "</section>")
+    return "".join(out)
+
+
 def render_prepared(change: PreparedChange, csrf: str, back: str) -> str:
     def ul(items, cls=""):
         return f"<ul class='{cls}'>" + "".join(f"<li>{esc(i)}</li>" for i in items) + "</ul>"
@@ -289,6 +327,9 @@ class Console:
         self._secret = _secret_from_reference(secret_ref)
         self.sessions = sessions or Sessions()
         self._last_prepared: PreparedChange | None = None
+        # Set by run.py in live mode: a callable returning the four V4 section 8 views
+        # assembled from REAL sources. Absent in demo mode, where the banner says so.
+        self.views: Callable[[], dict] | None = None
 
     # ---- auth
     def login(self, password: str) -> str | None:
@@ -352,6 +393,22 @@ class Console:
                 return 200, {}, page("Prepared",
                                      render_prepared(self._last_prepared, csrf, "/runner"))
             return 200, {}, page("Replace runner", _runner_form(self._state(), csrf))
+
+        if path == "/views":
+            if self.views is None:
+                return 200, {}, page(
+                    "Operator views",
+                    "<p class=b>DEMONSTRATION STATE — no live sources are configured, so "
+                    "the four operator views are not available. Start the console with "
+                    "<code>--state-source live</code>.</p>")
+            return 200, {}, page("Operator views", _render_views(self.views()))
+
+        if path == "/views.json":
+            if self.views is None:
+                return 404, {"Content-Type": "application/json"}, b'{"error":"demo mode"}'
+            body = json.dumps({k: v.to_dict() for k, v in self.views().items()},
+                              indent=2).encode()
+            return 200, {"Content-Type": "application/json"}, body
 
         if path == "/prepared.json":
             if self._last_prepared is None:

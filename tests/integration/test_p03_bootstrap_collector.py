@@ -757,6 +757,35 @@ def _():
     assert code == 0, data["verdict"]["incomplete_sections"]
 
 
+@test("R2-4: handover mode still requires a PAUSED controller")
+def _():
+    # Handover mode relaxes epoch-0 and zero-consumption, because a controller mid-life has
+    # both. It must NOT relax paused: an inventory collected while the controller is LIVE
+    # describes a state the runner can change underneath it.
+    expect_blocked("active controller in handover mode", lambda r: r.update({
+        f"call {CONTROLLER} active": "true",
+        f"call {CONTROLLER} epoch": "1",
+        f"call {CONTROLLER} usedSupply": "30000000000"}),
+        env_override={"HELD_INVENTORY_MODE": "handover"},
+        section="held_controller")
+
+
+@test("R2-4 CONTROL: a PAUSED mid-life controller passes in handover mode")
+def _():
+    # The counterpart: handover mode must still accept the state a real handover is in --
+    # fenced, with an epoch and spent budget -- or it would block every handover forever.
+    r = baseline()
+    r.update({f"call {CONTROLLER} epoch": "1",
+              f"call {CONTROLLER} usedSupply": "30000000000",
+              f"call {ROLES} allowances {SUPPLY_KEY}": "0\n50000000000\n0\n20000000000\n0"})
+    code, data = run(r, env_override={"HELD_INVENTORY_MODE": "handover"})
+    assert code == 0, (
+        f"a paused mid-life controller was blocked in handover mode: "
+        f"{data.get('verdict', {}).get('incomplete_sections')}")
+    assert data["held_controller"]["mode"] == "handover"
+    assert data["held_controller"]["epoch"] == 1
+
+
 def main() -> int:
     print("---")
     if FAILED:

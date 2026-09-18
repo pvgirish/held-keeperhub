@@ -4,8 +4,8 @@
     "complete": true,
     "compatible": true,
     "verdict": "COMPLETE",
-    "block_number": 51353232,
-    "block_hash": "0x027cb58a92638d2c0223515a6f211e3fd7be29eedbd2063ce143818b18eaccf0",
+    "block_number": 51353234,
+    "block_hash": "0xd620edeaae7426f230be87b1b19ab4fddedd499ab4c66b00a18ee8c45e738061",
     "chain_id": 8453,
     "expected_chain_id": 8453,
     "all_state_reads_pinned_to_block": true,
@@ -106,8 +106,8 @@
         "refill": 0,
         "maxRefill": 50000000000,
         "period": 0,
-        "balance": 49988000000,
-        "timestamp": 1789495788,
+        "balance": 20000000000,
+        "timestamp": 1789495785,
         "non_refilling": true,
         "declared_limit": 50000000000,
         "matches_declared": true
@@ -119,7 +119,7 @@
         "maxRefill": 50000000000,
         "period": 0,
         "balance": 50000000000,
-        "timestamp": 1789495788,
+        "timestamp": 1789495785,
         "non_refilling": true,
         "declared_limit": 50000000000,
         "matches_declared": true
@@ -131,7 +131,7 @@
         "maxRefill": 10000000000,
         "period": 0,
         "balance": 10000000000,
-        "timestamp": 1789495788,
+        "timestamp": 1789495785,
         "non_refilling": true,
         "declared_limit": 10000000000,
         "matches_declared": true
@@ -142,8 +142,8 @@
         "refill": 0,
         "maxRefill": 10,
         "period": 0,
-        "balance": 9,
-        "timestamp": 1789495788,
+        "balance": 7,
+        "timestamp": 1789495785,
         "non_refilling": true,
         "declared_limit": 10,
         "matches_declared": true
@@ -155,7 +155,7 @@
         "maxRefill": 5,
         "period": 0,
         "balance": 5,
-        "timestamp": 1789495788,
+        "timestamp": 1789495785,
         "non_refilling": true,
         "declared_limit": 5,
         "matches_declared": true
@@ -220,7 +220,7 @@
     "verdict": "COMPLETE",
     "history_range": {
       "from_block": 51353212,
-      "to_block": 51353232,
+      "to_block": 51353234,
       "readable": true,
       "wellformed": true,
       "base_from_env": null,
@@ -308,15 +308,15 @@
     },
     "key_mismatches": [],
     "consumption": {
-      "usedSupply": 12000000,
+      "usedSupply": 30000000000,
       "usedNormalWithdraw": 0,
       "usedRestoration": 0,
-      "normalCount": 1,
+      "normalCount": 3,
       "restorationCount": 0
     },
     "consumption_all_zero": false,
     "mode": "handover",
-    "note": "HANDOVER MODE: this controller is expected to have run. Its bindings, keys, market and lineage are checked; its epoch and consumption are read, not required to be zero. Initial activation requires a PAUSED, never-active controller at epoch 0 with zero consumption across ALL FIVE dimensions, immutable bindings pointing at this installation, and the market and lineage the installation declared (V4 \u00a76). The controller's seven key immutables are compared with the declared keys: a controller bound to budget keys the Roles side never configured would read zero everywhere and look clean."
+    "note": "HANDOVER MODE: this controller is expected to have run. Its bindings, keys, market and lineage are checked; its epoch and consumption are read, not required to be zero. It must still be PAUSED: an inventory collected while the controller is live describes a state the runner can change underneath it. Initial activation requires a PAUSED, never-active controller at epoch 0 with zero consumption across ALL FIVE dimensions, immutable bindings pointing at this installation, and the market and lineage the installation declared (V4 \u00a76). The controller's seven key immutables are compared with the declared keys: a controller bound to budget keys the Roles side never configured would read zero everywhere and look clean."
   },
   "identities": {
     "read": true,
@@ -349,7 +349,7 @@
       "obligation": "One stated observation block for every state read",
       "section": "observation",
       "satisfied": true,
-      "evidence": "block 51353232 on chain 8453; every call/storage read pinned to it"
+      "evidence": "block 51353234 on chain 8453; every call/storage read pinned to it"
     },
     {
       "obligation": "The intended installation is declared in advance, not inferred",
@@ -406,10 +406,10 @@
       "evidence": "USDC allowances {'morpho': 0, 'roles': 0, 'permit2': 0, 'held_controller': 0}"
     },
     {
-      "obligation": "The controller's epoch and consumption in all five dimensions are readable",
+      "obligation": "The controller is PAUSED, with epoch and all five counters readable",
       "section": "held_controller",
       "satisfied": true,
-      "evidence": "active=False, epoch=1, consumption={'usedSupply': 12000000, 'usedNormalWithdraw': 0, 'usedRestoration': 0, 'normalCount': 1, 'restorationCount': 0} (HANDOVER mode: a controller mid-life has spent budget, and that is the history the handover must carry, not a defect)"
+      "evidence": "active=False, epoch=1, consumption={'usedSupply': 30000000000, 'usedNormalWithdraw': 0, 'usedRestoration': 0, 'normalCount': 3, 'restorationCount': 0} (HANDOVER mode: a controller mid-life has spent budget, and that is the history the handover must carry, not a defect)"
     },
     {
       "obligation": "The controller inspected IS the declared one, owned by this Safe",

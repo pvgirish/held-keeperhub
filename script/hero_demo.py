@@ -115,29 +115,32 @@ def expected_from(reading) -> ExpectedState:
 RUNNER_A_KEY = "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"
 
 
-def native_config_digest() -> str:
-    """The digest of the ACTUAL pinned native configuration runner B must continue under.
+def config_identity():
+    """The ACTUAL native configuration identity runner B must continue under.
 
-    Derived from the real SDK revision and the real intent configuration, not a constant.
-    Runner B compares this before continuing: a replacement operating under a different
-    compiler revision, chain, Safe, market or price mode is not continuing the same work,
-    and the digest is what makes that checkable rather than assumed.
+    Built by held_handover.config_identity, which binds the producer, the chain, the
+    custody addresses, the FULL market tuple, the execution profile and the price mode. An
+    earlier version bound none of the market, so two different Morpho markets on the same
+    Safe produced the same digest.
     """
+    from held_handover import build_config_identity
     from eth_utils import keccak
 
-    sdk_rev = subprocess.run(
-        ["git", "-C", os.path.expanduser("~/src/sdk"), "rev-parse", "HEAD"],
-        capture_output=True, text=True).stdout.strip() or "UNPINNED"
-    parts = [
-        f"sdk={sdk_rev}",
-        f"chain={CHAIN}",
-        f"safe={SAFE.lower()}",
-        f"controller={CONTROLLER.lower()}",
-        "protocol=morpho_blue",
-        "token=USDC",
-        f"priceMode={os.environ.get('HELD_PRICE_MODE', 'production')}",
-    ]
-    return "0x" + keccak("|".join(parts).encode()).hex()
+    usdc = os.environ.get("HELD_USDC", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
+    return build_config_identity(
+        chain_id=CHAIN, safe=SAFE, controller=CONTROLLER, lineage=LINEAGE,
+        morpho="0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+        market=(usdc, "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452",
+                "0xD7A1abA119a236Fea5BBC5cAC6836465cbe9289A",
+                "0x46415998764C29aB2a25CbeA6254146D50D22687", 860000000000000000),
+        execution_profile="supply+withdraw/morpho_blue/single-safe",
+        price_mode=os.environ.get("HELD_PRICE_MODE", "production"),
+        strategy_config_digest="0x" + keccak(
+            b"SupplyIntent|morpho_blue|base|USDC|100").hex())
+
+
+def native_config_digest() -> str:
+    return config_identity().digest()
 SUPPLY_AMOUNT = 12_000_000  # 12 USDC, well inside the approved per-action maximum
 
 
@@ -220,64 +223,144 @@ def decode_revert(blob: str) -> tuple[str, str]:
     return CONTROLLER_ERRORS.get(sel, ""), sel
 
 
+class DroppingServer:
+    """A REAL local HTTP server that accepts the request and then drops the connection.
+
+    This is the difference between "we constructed an ambiguous outcome" and "an ambiguous
+    outcome happened". The request genuinely leaves the client over a socket, the server
+    genuinely receives and records it, and then the connection closes with no response --
+    so the client cannot know whether the work was started.
+
+    EVIDENCE GRADE: REAL OPERATION + DURABLE JOURNAL + REAL LOCAL TRANSPORT AMBIGUITY.
+    The server is local and is not KeeperHub. Nothing here is hosted evidence.
+    """
+
+    def __init__(self) -> None:
+        import socket
+        import threading
+
+        self.received: list[dict] = []
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind(("127.0.0.1", 0))
+        self._sock.listen(4)
+        self.port = self._sock.getsockname()[1]
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self) -> None:
+        import socket as _s
+        while not self._stop.is_set():
+            try:
+                conn, _addr = self._sock.accept()
+            except OSError:
+                return
+            try:
+                conn.settimeout(2.0)
+                blob = b""
+                while b"\r\n\r\n" not in blob and len(blob) < 65536:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        break
+                    blob += chunk
+                head = blob.split(b"\r\n\r\n", 1)[0].decode("latin-1")
+                self.received.append({
+                    "request_line": head.split("\r\n")[0],
+                    "bytes": len(blob),
+                    "has_idempotency_header": "idempotency-key" in head.lower(),
+                })
+                # The point: accept, then vanish. No status line, no body.
+                conn.setsockopt(_s.SOL_SOCKET, _s.SO_LINGER, b"\x01\x00\x00\x00\x00\x00\x00\x00")
+                conn.close()
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    def close(self) -> None:
+        self._stop.set()
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+
+
+class RealLocalTransport:
+    """Performs an ACTUAL socket HTTP request to the dropping server."""
+
+    hosted = False          # local, and not KeeperHub. Never hosted evidence.
+
+    def __init__(self, port: int) -> None:
+        self.port = port
+        self.calls = 0
+
+    def request(self, method, url, *, headers, body, timeout):
+        import http.client
+
+        self.calls += 1
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=timeout or 5)
+        path = "/api/execute/contract-call"
+        conn.request(method, path, body=body, headers=dict(headers))
+        # The server closes without answering. Whatever this raises, the outcome of the
+        # work is genuinely unknown.
+        return conn.getresponse()
+
+
 def interrupt_a_real_submission(live, journal) -> dict:
-    """Dispatch a REAL Held operation whose transport never returns.
+    """Dispatch a REAL Held operation whose request is received and then dropped.
 
     The previous version of this demo assigned `ambiguous = "0x" + "7e"*32` and narrated it
-    as a send that never came back. Nothing was ever built, journaled or submitted, and the
-    later isConsumed() asked the controller about an id that had never existed -- so `false`
-    was guaranteed and proved nothing.
+    as a send that never came back. Nothing was ever built, journaled or submitted.
 
-    This is the real thing: the actual Submitter admits an action, derives the operation id
-    from this deployment's scope, signs the envelope, claims the operation durably BEFORE
-    any I/O, and then the transport raises instead of answering. That is the exact ambiguous
-    boundary the product exists to survive: the request may or may not have reached the
-    executor, and Held must not guess.
+    This is the real thing, twice over: the actual Submitter admits an action, derives the
+    operation id from this deployment's scope, signs the envelope, claims the operation
+    durably BEFORE any I/O -- and the request then travels over a real socket to a real
+    server that receives it and closes without responding.
     """
     from held_adapter.execution.keeperhub import KeeperHubClient
     from held_adapter.execution.submit import Submitter
     from held_adapter.signing.runner_signer import RunnerSigner
-    from held_core.identity import AuthorizationEnvelope
 
     admitted, env, _calldata = _build_supply(
         live, decision_id="hero-demo-interrupted", runner=RUNNER_A, key=RUNNER_A_KEY)
     oid = "0x" + bytes(admitted.operation_id).hex()
 
-    class NeverReturns:
-        """A transport that raises instead of answering. The outcome is unknowable."""
-
-        hosted = False
-
-        def __init__(self):
-            self.calls = 0
-
-        def request(self, method, url, *, headers, body, timeout):
-            self.calls += 1
-            raise TimeoutError("the response never arrived")
-
+    server = DroppingServer()
+    transport = RealLocalTransport(server.port)
     market = (os.environ.get("HELD_USDC", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
               "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452",
               "0xD7A1abA119a236Fea5BBC5cAC6836465cbe9289A",
               "0x46415998764C29aB2a25CbeA6254146D50D22687",
               860000000000000000)
     os.environ["HELD_KEEPERHUB_API_KEY"] = "kh_local_fork_demo_not_a_real_credential"
-    transport = NeverReturns()
     os.environ["HELD_HERO_KEY"] = RUNNER_A_KEY
-    sub = Submitter(journal,
-                    KeeperHubClient(transport=transport, sleep=lambda _: None),
-                    RunnerSigner("env:HELD_HERO_KEY", RUNNER_A),
-                    CONTROLLER, CHAIN, market,
-                    new_attempt_id=lambda: "hero-interrupted-attempt-1")
-    submission = sub.submit(admitted, env)
+    try:
+        sub = Submitter(journal,
+                        KeeperHubClient(transport=transport, sleep=lambda _: None),
+                        RunnerSigner("env:HELD_HERO_KEY", RUNNER_A),
+                        CONTROLLER, CHAIN, market,
+                        new_attempt_id=lambda: "hero-interrupted-attempt-1")
+        submission = sub.submit(admitted, env)
+        outcome = submission.send.outcome.name
+    finally:
+        time.sleep(0.05)
+        server.close()
 
     op = journal.get(oid)
     attempt = journal.unresolved_attempt(oid)
     return {"operation_id": oid,
             "journal_state": op.state.value if op else None,
             "attempt": (attempt or {}).get("attempt_id"),
-            "idempotency_key": (attempt or {}).get("idempotency_key"),
-            "outcome": submission.send.outcome.name,
-            "transport_calls": transport.calls}
+            "outcome": outcome,
+            "transport_calls": transport.calls,
+            "server_received": len(server.received),
+            "server_saw_idempotency_header": bool(
+                server.received and server.received[0]["has_idempotency_header"]),
+            "request_line": server.received[0]["request_line"] if server.received else None,
+            "evidence_grade": "REAL OPERATION + DURABLE JOURNAL + REAL LOCAL TRANSPORT "
+                              "AMBIGUITY (local server, NOT KeeperHub, NOT hosted)"}
 
 
 def attempt_stale_authorization(live) -> dict:
@@ -364,15 +447,18 @@ def main() -> int:
     j = Journal(journal_path)
 
     interrupted = interrupt_a_real_submission(live, j)
-    step(3, "A REAL operation is dispatched and its transport never returns",
+    step(3, "A REAL operation is dispatched; the server receives it and drops the connection",
          operation=interrupted["operation_id"][:18] + "...",
          journal_state=interrupted["journal_state"],
          durable_attempt=interrupted["attempt"],
          send_outcome=interrupted["outcome"],
-         transport_calls=interrupted["transport_calls"],
-         why="the request may or may not have reached the executor. Held claimed the "
-             "operation durably BEFORE any I/O, so the attempt is recoverable — but the "
-             "outcome is genuinely unknown, and an unknown is not a verified negative")
+         server_received_request=interrupted["server_received"],
+         saw_idempotency_header=interrupted["server_saw_idempotency_header"],
+         grade=interrupted["evidence_grade"],
+         why="the request really left over a socket and the server really received it, "
+             "then closed without answering. Held claimed the operation durably BEFORE any "
+             "I/O, so the attempt is recoverable — but whether the work started is "
+             "genuinely unknown, and an unknown is not a verified negative")
 
     m = HandoverMachine.start(j, handover_id="hero", controller=CONTROLLER, chain_id=CHAIN,
                               retiring_runner=live.runner, retiring_epoch=live.epoch,

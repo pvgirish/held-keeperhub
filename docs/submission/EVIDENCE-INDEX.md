@@ -16,16 +16,18 @@ Revision: `git rev-parse HEAD` at the time of reading. Every row below was produ
 | P7 | Durable claim before any I/O, incl. real SIGKILL | SYNTHETIC | `make check-phase-03-local` | `tests/integration/test_p03_submit.py` | 18 pass |
 | P9 | Crash/restart recovery, no duplicate send | SYNTHETIC | `make check-phase-03-local` | `tests/integration/test_p03_recovery.py` | 20 pass |
 | — | Native decision/recovery lifecycle | SYNTHETIC | `make check-phase-03-local` | `tests/integration/test_p03_native_checkpoint.py` | 19 pass |
-| P15 | Bootstrap collector fails closed | SYNTHETIC | `make check-phase-03-local` | `tests/integration/test_p03_bootstrap_collector.py` | 43 pass |
+| P15, P28 | Bootstrap collector fails closed | SYNTHETIC | `make check-phase-03-local` | `tests/integration/test_p03_bootstrap_collector.py` | 45 pass |
 | P2, P3, P9, P17 | Composed local run, real controller on fork | REAL LOCAL FORK | `make check-phase-03-composed` | `evidence/P03/acceptance.json` | 16 checks |
 | P5, P6 | Controller + Roles against real pinned contracts | REAL LOCAL FORK | `make check-phase-02` | `evidence/P02/report.md` | 50 pass, 3 stages |
 | P15 | Live bounded inventory readback | REAL LOCAL FORK | `make check-bootstrap-rehearsal` | `evidence/P03/bootstrap-rehearsal.json` | 9 sections, 14/14 obligations |
-| P11, P13, P14, P16, P21–P26 | Handover machine, owner tx, reconciliation, export | SYNTHETIC | `make check-phase-04` | `tests/handover/test_handover_machine.py` | 33 pass |
+| P11, P13, P14, P16, P21–P27 | Handover machine, owner tx, reconciliation, export, config identity | SYNTHETIC | `make check-phase-04` | `tests/handover/test_handover_machine.py` | 39 pass |
 | P15 | Authority inventory interpretation | SYNTHETIC | `make check-phase-04` | `tests/authority/test_authority_inventory.py` | 7 pass |
 | — | Authority/fencing on the fork | REAL LOCAL FORK | `make check-phase-04` | `test/contracts/HeldAuthority.t.sol` | 10 pass |
 | **P10, P11, P12** | **The hero workflow, end to end** | **REAL LOCAL FORK** | `make hero-demo` | `evidence/P04/hero-demo-trace.json` | **12 steps** |
 | P16 | Replacement export, no key material | REAL LOCAL FORK | `make hero-demo` | `evidence/P04/hero-demo-replacement-export.json` | usable=true |
 | P20 | Operator console + live views | SYNTHETIC | `make check-phase-05` | `tests/integration/test_p05_console.py`, `test_p05_live_views.py` | 30 + 14 pass |
+| **P29** | **The ACTUAL HTTP console in live mode** | **REAL LOCAL FORK** | `make console-live` | `script/console_live_check.py` | auth, CSRF, 4 views, live policy, dead RPC, stale scope, redaction |
+| **C1–C5** | **Measured native-vs-Held comparison** | **REAL LOCAL FORK** | `make p06-comparison` | `evidence/P06/comparison.json` | parity asserted, both branches, real MultiSend |
 | **M1, M2, P18, P19** | **KeeperHub public execution** | — | — | — | **NOT YET ESTABLISHED** |
 
 ## The hero demo trace
@@ -36,7 +38,7 @@ numbers a judge would check:
 | Fact | Value | Where |
 |---|---|---|
 | Budget actually spent by runner A | `12000000` (12 USDC) | step 2 |
-| The interrupted operation | a REAL dispatched operation, journal `UNKNOWN`, durable attempt `hero-interrupted-attempt-1`, send outcome `UNKNOWN` | step 3 |
+| The interrupted operation | a REAL dispatched operation over a real socket; the server received it (idempotency header observed) and dropped the connection. Journal `UNKNOWN`, durable attempt `hero-interrupted-attempt-1` | step 3 |
 | Handover blocker while unresolved | `UNRESOLVED:<real operation id>`, derived from the journal | step 5 |
 | Reconciliation source | `consumed[operationId]` on chain | step 6 |
 | Consumption carried across the handover | `[12000000, 0, 0, 1, 0]` | step 8 |

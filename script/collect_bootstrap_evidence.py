@@ -842,7 +842,13 @@ if CONTROLLER:
             # Freshness is an INITIAL-activation question only. A controller mid-life has
             # an epoch and has spent budget, and requiring otherwise would make every real
             # handover permanently INCOMPLETE.
-            and (active is False and epoch == 0 and zeroed if INITIAL
+            #
+            # PAUSED IS NOT A FRESHNESS QUESTION. Handover mode relaxes epoch-0 and
+            # zero-consumption; it must NOT relax this. Cleanup and inventory happen while
+            # the controller is fenced, and an inventory collected against a LIVE controller
+            # describes a state the runner can still change underneath it.
+            and active is False
+            and (epoch == 0 and zeroed if INITIAL
                  else epoch is not None and consumption_readable)
         ),
         address=CONTROLLER,
@@ -861,7 +867,9 @@ if CONTROLLER:
         mode=MODE,
         note=("HANDOVER MODE: this controller is expected to have run. Its bindings, keys, "
               "market and lineage are checked; its epoch and consumption are read, not "
-              "required to be zero. " if not INITIAL else "")
+              "required to be zero. It must still be PAUSED: an inventory collected while "
+              "the controller is live describes a state the runner can change underneath "
+              "it. " if not INITIAL else "")
              + "Initial activation requires a PAUSED, never-active controller at epoch 0 with "
              "zero consumption across ALL FIVE dimensions, immutable bindings pointing at "
              "this installation, and the market and lineage the installation declared "
@@ -875,9 +883,9 @@ if CONTROLLER:
                satisfied=active is False and epoch == 0 and zeroed,
                evidence=f"active={active}, epoch={epoch}, consumption={consumption}")
     else:
-        clause("The controller's epoch and consumption in all five dimensions are readable",
+        clause("The controller is PAUSED, with epoch and all five counters readable",
                section_name="held_controller",
-               satisfied=epoch is not None and consumption_readable,
+               satisfied=active is False and epoch is not None and consumption_readable,
                evidence=f"active={active}, epoch={epoch}, consumption={consumption} "
                         "(HANDOVER mode: a controller mid-life has spent budget, and that "
                         "is the history the handover must carry, not a defect)")

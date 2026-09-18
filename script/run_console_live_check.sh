@@ -14,5 +14,5 @@ PY="${PY:-$HOME/venv312/bin/python}"
   # NOTE: no apostrophes in this block -- single-quoted bash -c string.
   export HELD_SAFE="$SAFE" HELD_ROLES="$ROLES" HELD_CONTROLLER="$HELD_CONTROLLER"
   export HELD_ROLE_KEY="$ROLE_KEY" HELD_ALLOW_KEY="$ALLOW_KEY"
-  export HELD_CONSOLE_SECRET=local-check
+  export HELD_CONSOLE_SECRET=local-check-secret-not-a-real-one
   exec '"$PY"' script/console_live_check.py'

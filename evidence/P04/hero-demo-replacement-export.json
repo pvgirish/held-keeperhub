@@ -38,7 +38,7 @@
     "normalCount": 9,
     "restorationCount": 5
   },
-  "nativeConfigDigest": "0xc6ba8bc22fa1ca8fbd1e216f71c0c6c6aa8b26bb8da60304ffd5e335f01f33f6",
+  "nativeConfigDigest": "0x6146a423ce4805349339c9dc7e29a5d4f14e4ee52974d8dc9aec7d53960f7d6c",
   "nativeCheckpoints": [
     {
       "intentId": "hero-demo-decision",
@@ -74,7 +74,7 @@
   "blockedOn": [],
   "usable": true,
   "evidenceGrade": "REAL LOCAL FORK",
-  "exportedAt": 1789678073,
+  "exportedAt": 1789700286,
   "_credentials": "REFERENCED, NOT CARRIED. No private key, API key or secret appears in this file. B resolves the reference in its own environment.",
   "_consumption": "CARRIED FORWARD. B inherits the budget the retiring runner spent from; it does not get a fresh one. That is the point of a handover as opposed to a redeployment.",
   "_usable": "usable=true means the replacement has everything this supported continuation requires AND the controller was observed active at the replacement epoch with the replacement runner. An export that is missing checkpoints, settled history or a real configuration digest is NOT usable, however complete it looks."

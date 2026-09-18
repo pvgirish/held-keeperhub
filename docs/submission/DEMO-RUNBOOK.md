@@ -81,8 +81,9 @@ evidence-grade labels.
 
 ## 2:20–2:35 — Native vs Held, honestly
 
-> "We measured this against competent native tooling. Native is cheaper: one ceremony for
-> the clean change against our two. On the interrupted change it ties. What Held adds is
+> "We measured this against competent native tooling, from the same starting state: 30,000
+> already spent against a 50,000 ceiling. Native is cheaper on the clean change — one owner
+> ceremony against our two. On the interrupted change it ties exactly. What Held adds is
 > that one place answers whether a specific operation executed, the system refuses to
 > proceed while that is unknown, and it refuses to install a policy the Roles layer would
 > not honour."

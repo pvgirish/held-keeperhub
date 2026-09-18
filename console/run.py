@@ -68,14 +68,37 @@ class LiveSources:
     """Real state, assembled per request. A dead source blanks its view and nothing else."""
 
     def __init__(self, *, controller: str, safe: str, rpc: str, chain_id: int,
-                 journal, handover_id: str | None, policy) -> None:
+                 journal, handover_id: str | None) -> None:
         self.controller = controller
         self.safe = safe
         self.rpc = rpc
         self.chain_id = chain_id
         self.journal = journal
         self.handover_id = handover_id
-        self.policy = policy
+
+    @staticmethod
+    def policy_from(reading):
+        """The ACTIVE policy, read off the controller. Never a constant.
+
+        The console used to carry a hard-coded 50,000 ceiling, so Terms showed a remaining
+        figure derived from a number nobody had read. If the policy cannot be decoded the
+        answer is None, and Terms renders UNAVAILABLE rather than substituting one.
+        """
+        from held_handover import Policy
+
+        raw = getattr(reading, "policy_raw", None)
+        if not raw:
+            return None
+        parts = [p.strip().split()[0] for p in str(raw).strip().split("\n") if p.strip()]
+        if len(parts) < 12:
+            return None
+        try:
+            v = [int(x) for x in parts[:14]]
+        except ValueError:
+            return None
+        while len(v) < 14:
+            v.append(0)
+        return Policy(*v)
 
     def reading(self):
         from held_handover.readback import read_controller_state
@@ -97,6 +120,13 @@ class LiveSources:
                  "epoch": r["epoch"]} for r in rows]
 
     def inventory(self):
+        """The bounded inventory, WITH its observation boundary checked.
+
+        A stored report is not current evidence. It used to be loaded and presented as the
+        authority view without its block or scope ever being compared to this installation,
+        so a report collected against something else, or long before, would have rendered
+        as though it described the live Safe.
+        """
         path = os.path.join(ROOT, "evidence", "P03", "bootstrap-rehearsal.json")
         if not os.path.exists(path):
             return None
@@ -105,9 +135,18 @@ class LiveSources:
 
             from held_authority import from_report
             with open(path) as fh:
-                return from_report(json.load(fh))
+                inv = from_report(json.load(fh))
         except Exception:  # noqa: BLE001
             return None
+
+        problems = inv.scope_problems(chain_id=self.chain_id, controller=self.controller,
+                                      safe=self.safe)
+        if problems:
+            # Out of scope for this installation. Surfaced as incomplete rather than shown.
+            inv.incomplete_sections = list(inv.incomplete_sections) + [
+                f"stored report out of scope: {p}" for p in problems]
+            inv.complete = False
+        return inv
 
     def handover(self):
         if not self.handover_id:
@@ -120,10 +159,15 @@ class LiveSources:
             return None
 
     def state(self) -> LiveState | None:
-        return live_state_from(self.reading(), self.policy, safe=self.safe)
+        r = self.reading()
+        p = self.policy_from(r)
+        if p is None:
+            return None
+        return live_state_from(r, p, safe=self.safe)
 
     def views(self):
-        return build_views(reading=self.reading(), policy=self.policy,
+        r = self.reading()
+        return build_views(reading=r, policy=self.policy_from(r),
                            operations=self.operations(), inventory=self.inventory(),
                            handover_status=self.handover())
 
@@ -152,22 +196,17 @@ def main() -> int:
                   "that silently fell back to demonstration numbers would be worse than "
                   "one that did not start.", file=sys.stderr)
             return 2
-        from held_handover import Policy
         sources = LiveSources(
             controller=args.controller, safe=args.safe, rpc=args.rpc,
-            chain_id=args.chain_id, journal=journal, handover_id=args.handover_id,
-            # Ceilings the owner approved. Read from the controller in a later pass; stated
-            # here so Terms can compute remaining rather than assert it.
-            policy=Policy(Ls=50_000_000_000, Ln=50_000_000_000, Lr=10_000_000_000,
-                          Ms=40_000_000_000, Mn=40_000_000_000, Mr=10_000_000_000,
-                          ms=1_000_000, mn=1_000_000, F=0, H=0, Nn=10, Nr=5))
+            chain_id=args.chain_id, journal=journal, handover_id=args.handover_id)
 
         def state_fn():
             s = sources.state()
             if s is None:
                 raise RuntimeError(
-                    "the controller could not be read. This console does NOT substitute "
-                    "demonstration data; fix the source or use --state-source demo.")
+                    "the controller or its policy could not be read. This console does NOT "
+                    "substitute demonstration data; fix the source or use "
+                    "--state-source demo.")
             return s
 
         console = Console(state_fn, journal)

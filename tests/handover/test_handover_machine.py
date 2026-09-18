@@ -859,6 +859,75 @@ def _():
     j.close()
 
 
+# --------------------------------------------------- R2-6: config identity binding --
+
+@test("R2-6: two materially different markets produce DIFFERENT config digests")
+def _():
+    # The finding: the old digest bound the SDK, chain, Safe and price mode, and NOTHING of
+    # the market -- so a replacement could have continued under a different Morpho market
+    # and the digest would have agreed.
+    from held_handover import build_config_identity
+
+    base = dict(chain_id=CHAIN, safe=SAFE, controller=CONTROLLER, lineage=LINEAGE,
+                morpho="0x" + "bb" * 20,
+                market=("0x" + "11" * 20, "0x" + "22" * 20, "0x" + "33" * 20,
+                        "0x" + "44" * 20, 860000000000000000),
+                execution_profile="supply+withdraw/morpho_blue/single-safe",
+                price_mode="production", strategy_config_digest="0x" + "5d" * 32,
+                sdk_rev="6e83e00e")
+    ref = build_config_identity(**base).digest()
+
+    mutations = {
+        "loan token": {**base, "market": ("0x" + "99" * 20,) + base["market"][1:]},
+        "collateral": {**base, "market": base["market"][:1] + ("0x" + "99" * 20,) + base["market"][2:]},
+        "oracle": {**base, "market": base["market"][:2] + ("0x" + "99" * 20,) + base["market"][3:]},
+        "irm": {**base, "market": base["market"][:3] + ("0x" + "99" * 20, base["market"][4])},
+        "lltv": {**base, "market": base["market"][:4] + (770000000000000000,)},
+        "morpho": {**base, "morpho": "0x" + "cc" * 20},
+        "lineage": {**base, "lineage": "0x" + "cd" * 32},
+        "controller": {**base, "controller": "0x" + "de" * 20},
+        "safe": {**base, "safe": "0x" + "ef" * 20},
+        "chain": {**base, "chain_id": 1},
+        "sdk revision": {**base, "sdk_rev": "deadbeef"},
+        "price mode": {**base, "price_mode": "testing-only"},
+        "execution profile": {**base, "execution_profile": "supply-only/morpho_blue"},
+        "strategy config": {**base, "strategy_config_digest": "0x" + "6e" * 32},
+    }
+    for name, kw in mutations.items():
+        assert build_config_identity(**kw).digest() != ref, (
+            f"changing the {name} did not change the configuration digest")
+
+    # ...and it is stable: the same inputs give the same digest, whatever the field order.
+    assert build_config_identity(**base).digest() == ref
+
+
+@test("R2-6: an incomplete identity refuses rather than digesting a partial record")
+def _():
+    from held_handover import ConfigIdentityError, NativeConfigIdentity
+    partial = NativeConfigIdentity(fields={"chainId": 8453, "safe": SAFE})
+    try:
+        partial.digest()
+        raise AssertionError("a partial identity produced a digest")
+    except ConfigIdentityError as exc:
+        assert "missing" in str(exc)
+
+
+@test("R2-6: the identity carries its fields so a reviewer can recompute it")
+def _():
+    from held_handover import build_config_identity
+    ident = build_config_identity(
+        chain_id=CHAIN, safe=SAFE, controller=CONTROLLER, lineage=LINEAGE,
+        morpho="0x" + "bb" * 20,
+        market=("0x" + "11" * 20, "0x" + "22" * 20, "0x" + "33" * 20, "0x" + "44" * 20,
+                860000000000000000),
+        execution_profile="supply+withdraw/morpho_blue/single-safe",
+        price_mode="production", strategy_config_digest="0x" + "5d" * 32, sdk_rev="6e83e00e")
+    d = ident.to_dict()
+    assert set(d["fields"]) >= {"loanToken", "lltv", "oracle", "irm", "executionProfile"}
+    assert d["canonical"].startswith("chainId=")      # sorted, so chainId is first
+    assert "keccak256" in d["_reproduce"]
+
+
 def main() -> int:
     print("---")
     if FAILED:

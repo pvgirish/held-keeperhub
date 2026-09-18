@@ -55,7 +55,7 @@ This is what `make hero-demo` runs, end to end, against real contracts on a fork
 |---|---|
 | 1 | Runner A is **active** under the customer's approved limits |
 | 2 | Runner A executes a **real supply** — 12 USDC actually leaves the Safe into Morpho |
-| 3 | A **real** operation is dispatched and its transport never returns — durable attempt, `UNKNOWN` |
+| 3 | A **real** operation is dispatched over a socket to a server that receives it and drops the connection — durable attempt, `UNKNOWN` |
 | 4 | The owner **fences** the controller on chain |
 | 5 | The handover is **REFUSED** — on a set the machine derives from the journal, not from a list it was handed |
 | 6 | Reconciliation asks the controller's own `consumed[]` record, not the transport |
@@ -135,16 +135,28 @@ Two defects found by adversarial review, and what they cost:
 [frozen native baseline](docs/baseline/native-measurements.json), same operation, same
 counters. The result does not favour Held on operator work:
 
-| | ceremonies | signatures | transactions |
-|---|---|---|---|
-| Native, clean change | **1** | **2** | **1** |
-| Held, clean change | 2 | 4 | 3 |
-| Native, interrupted (competent) | 2 | 4 | **2** |
-| Held, interrupted | 2 | 4 | 3 |
+Both sides start from the **same** economic state — 30,000 USDC already consumed against a
+50,000 ceiling — and every ceremony below is a real Safe `execTransaction` signed by two of
+three owners. The change is a real MultiSendCallOnly delegatecall on both sides.
+
+| | ceremonies | signatures | transactions | final remaining |
+|---|---|---|---|---|
+| Native, clean | **1** | **2** | **1** | 50,000 |
+| Held, clean | 2 | 4 | 2 | 50,000 |
+| Native, interrupted (competent) | 2 | 4 | 2 | 45,000 |
+| Held, interrupted | 2 | 4 | 2 | 50,000 |
+
+> The two interrupted rows did **not** suffer the same interruption — native's in-flight
+> supply landed (5,000 more consumed), Held's never reached the chain. Both reach the
+> correct remaining capacity for the event they actually faced; neither preserved more than
+> the other.
 
 A competent native operator — fence first, let it settle, read the consumed allowance,
 derive the new remaining, then activate — **reaches the correct remaining capacity on the
-first attempt.** Held does not make that cheaper, and the claim that it did is
+first attempt.** Held ties on the interrupted change and costs an extra ceremony on the
+clean one, because it cannot batch the fence with the activation: the controller refuses to
+activate while active, and Held requires the fence confirmed and the epoch reconciled first.
+That is a product constraint, and the claim that Held reduces coordination work is
 [withdrawn](docs/submission/CLAIM-LEDGER.md).
 
 What the measurements *do* support:
@@ -157,7 +169,8 @@ What the measurements *do* support:
   `AllowanceDesynchronised(rolesRemaining, expected)` refused an activation whose raised
   ceiling the Zodiac allowance would not have honoured.
 - **Against Held: it costs more.** A controller, two role memberships, five budgets and a
-  durable journal, before any of the above is available.
+  durable journal, before any of the above is available — plus one more owner ceremony on a
+  clean change.
 
 Held buys enforcement and per-operation evidence at the price of setup and one extra
 transaction. That is the honest trade.

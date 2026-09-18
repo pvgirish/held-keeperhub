@@ -86,10 +86,12 @@ read the consumed allowance, derive the new remaining, activate. It reaches the 
 result on the first attempt.
 
 **18. What did your measured comparison actually show?**
-That native is cheaper. Clean change: native 1 ceremony / 2 signatures / 1 transaction
-against Held's 2 / 4 / 3. Interrupted change: a tie on ceremonies and signatures, with Held
-submitting one more transaction. **We withdrew the claim that Held reduces coordination
-work** — it does not.
+That native is cheaper. From the same 30,000-consumed starting state: clean change native
+1 ceremony / 2 signatures / 1 transaction against Held's 2 / 4 / 2. Interrupted change: an
+exact tie at 2 / 4 / 2. **We withdrew the claim that Held reduces coordination work** — it
+does not. Held cannot batch the fence with the activation, because the controller refuses
+to activate while active and Held requires the fence confirmed and the epoch reconciled
+first.
 
 What survived measurement: one store answers whether a *specific* operation executed; the
 system refuses while that is unknown; and an activation-time consistency guard fired for

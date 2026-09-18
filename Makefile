@@ -5,7 +5,7 @@ export PY
 export SDK
 
 .PHONY: check-plan-digests check-phase-00 check-phase-01 check-phase-02 check-phase-03-local check-phase-03 check-phase-03-composed check-bootstrap-rehearsal check-phase-04 check-phase-05 check-manifests check-probe \
-        check-baseline check-native-workflow gate-tests hero-demo clean-install submission-gate p06-comparison console-live
+        check-baseline check-native-workflow gate-tests hero-demo clean-install submission-gate p06-comparison console-live freeze-candidate
 
 check-phase-00:
 	@rc=0; \
@@ -81,6 +81,10 @@ p06-comparison:
 ## documented, not verified here.
 clean-install:
 	@$(PY) script/clean_install_check.py
+
+## Freeze a pre-release candidate with explicit revision semantics.
+freeze-candidate:
+	@$(PY) script/freeze_candidate.py
 
 ## P08: the deterministic submission gate. Mandatory items are not waived by strong
 ## engineering, and readiness is not authorization.

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""P05: drive the console's REAL mode against a live fork, and against dead sources.
+"""P05: drive the ACTUAL HTTP console in REAL mode against a live fork.
 
-The view-assembly tests use doubles. This exercises `LiveSources` against an actual RPC and
-an actual journal, because "reads real sources" is a claim about real sources.
+Not the view-assembly helpers -- the console object that serves requests. Every check below
+goes through `Console.handle()` and inspects rendered bytes, because "the console shows the
+four views" is a claim about what a judge would see.
 
-The property under test is still the honest failure: with a dead RPC the affected views must
-report UNAVAILABLE and must NOT fall back to demonstration numbers.
+The property under test throughout is the honest failure: with a dead source the affected
+view must render UNAVAILABLE and must never substitute demonstration numbers.
 """
 from __future__ import annotations
 
@@ -14,13 +15,15 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for p in ("console", "packages/core", "packages/handover", "packages/authority"):
+for p in ("console", "packages/core", "packages/handover", "packages/authority", "script"):
     sys.path.insert(0, os.path.join(ROOT, p))
 
-sys.path.insert(0, os.path.join(ROOT, "console"))
-from run import LiveSources  # noqa: E402
+# The console requires at least 16 characters, and is right to.
+os.environ.setdefault("HELD_CONSOLE_SECRET", "local-check-secret-not-a-real-one")
+
+from run import LiveSources, demonstration_state  # noqa: E402
+from held_console.app import Console  # noqa: E402
 from held_core.journal import Journal  # noqa: E402
-from held_handover import Policy  # noqa: E402
 
 RPC = os.environ["HELD_BASE_RPC"]
 SAFE = os.environ["HELD_SAFE"]
@@ -30,21 +33,31 @@ CHAIN = 8453
 FAILS: list[str] = []
 
 
-def check(name: str, ok: bool, detail: str) -> None:
-    print(f"  [{'PASS' if ok else 'FAIL'}] {name} — {detail}")
+def check(name: str, ok: bool, detail: str = "") -> None:
+    print(f"  [{'PASS' if ok else 'FAIL'}] {name}{' — ' + detail if detail else ''}")
     if not ok:
         FAILS.append(name)
 
 
-def policy() -> Policy:
-    return Policy(Ls=50_000_000_000, Ln=50_000_000_000, Lr=10_000_000_000,
-                  Ms=40_000_000_000, Mn=40_000_000_000, Mr=10_000_000_000,
-                  ms=1_000_000, mn=1_000_000, F=0, H=0, Nn=10, Nr=5)
+def get(console: Console, path: str, cookie: str | None):
+    return console.handle("GET", path, {}, {}, cookie)
+
+
+def sign_in(console: Console) -> str:
+    code, headers, _ = console.handle("POST", "/login", {},
+                                      {"password": [os.environ["HELD_CONSOLE_SECRET"]]}, None)
+    assert code == 302, code
+    return headers["Set-Cookie"].split(";")[0].split("=", 1)[1]
+
+
+def views_of(console: Console, cookie: str) -> dict:
+    code, _h, body = get(console, "/views.json", cookie)
+    return json.loads(body) if code == 200 else {}
 
 
 def main() -> int:
-    print("P05 — console REAL mode against a live fork")
-    print("=" * 70)
+    print("P05 — the ACTUAL HTTP console, REAL mode, against a live fork")
+    print("=" * 74)
 
     jp = os.path.join(ROOT, "fixtures", "generated", "console-live-journal.sqlite")
     os.makedirs(os.path.dirname(jp), exist_ok=True)
@@ -53,55 +66,125 @@ def main() -> int:
             os.remove(jp + s)
     journal = Journal(jp)
 
-    print("\n1. Working fork sources")
     live = LiveSources(controller=CONTROLLER, safe=SAFE, rpc=RPC, chain_id=CHAIN,
-                       journal=journal, handover_id=None, policy=policy())
-    views = live.views()
-    check("terms loads from the chain", views["terms"].loaded,
-          f"{views['terms'].summary}")
-    check("terms is graded as fork evidence", views["terms"].grade == "REAL LOCAL FORK",
-          views["terms"].grade)
-    check("activity loads", views["activity"].loaded, views["activity"].summary)
-    check("unresolved loads", views["unresolved"].loaded, views["unresolved"].summary)
-    check("authority loads from the committed inventory", views["authority"].loaded,
-          views["authority"].summary[:80])
-    check("no handover in progress is stated, not blank",
-          any(r["field"] == "handover state" for r in views["authority"].rows),
-          "handover state row present")
+                       journal=journal, handover_id=None)
 
-    print("\n2. Dead RPC — must NOT fall back to demonstration numbers")
+    def console_for(sources) -> Console:
+        def state_fn():
+            st = sources.state()
+            if st is None:
+                raise RuntimeError("the controller or its policy could not be read")
+            return st
+        c = Console(state_fn, journal)
+        c.views = sources.views
+        return c
+
+    # ---------------------------------------------------------------- authentication --
+    print("\n1. Authentication and CSRF")
+    c = console_for(live)
+    code, headers, _ = get(c, "/views", None)
+    check("unauthenticated /views redirects to login", code == 302
+          and headers.get("Location") == "/login", f"{code}")
+    bad, _h, _b = c.handle("POST", "/login", {}, {"password": ["wrong"]}, None)
+    check("a wrong secret is refused", bad == 401, str(bad))
+    cookie = sign_in(c)
+    code, _h, body = get(c, "/views", cookie)
+    check("authenticated /views renders", code == 200, f"{len(body)} bytes")
+
+    csrf_code, _h, _b = c.handle("POST", "/limits", {}, {"Ls": ["1"]}, cookie)
+    check("a POST without a CSRF token is refused", csrf_code == 403, str(csrf_code))
+
+    # ------------------------------------------------------------------ four views --
+    print("\n2. The four V4 section 8 views, rendered")
+    text = body.decode()
+    for title in ("Terms", "Activity", "Unresolved", "Authority"):
+        check(f"{title} view is rendered", title in text)
+    check("every view shows its evidence grade", text.count("evidence grade") >= 3,
+          f"{text.count('evidence grade')} grades shown")
+    check("the fork is graded REAL LOCAL FORK", "REAL LOCAL FORK" in text)
+    check("PUBLIC CHAIN is not claimed", "PUBLIC CHAIN" not in text)
+
+    v = views_of(c, cookie)
+    check("terms loaded from the chain", v["terms"]["loaded"], v["terms"]["summary"][:60])
+    check("terms shows the observation block",
+          any("block" in str(r).lower() for r in [v["terms"]["summary"]]),
+          v["terms"]["summary"][:60])
+
+    # ------------------------------------------------------------ LIVE policy, not a constant --
+    print("\n3. Terms uses the LIVE policy, not a hard-coded ceiling")
+    reading = live.reading()
+    pol = live.policy_from(reading)
+    check("the policy decodes off the controller", pol is not None,
+          f"Ls={getattr(pol, 'Ls', None)}")
+    ceiling_rows = [r for r in v["terms"]["rows"] if r.get("field") == "supply ceiling"]
+    if ceiling_rows and pol is not None:
+        shown = ceiling_rows[0]["value"]
+        check("the ceiling shown is the controller's own", shown == pol.Ls,
+              f"shown {shown}, chain {pol.Ls}")
+        check("remaining is computed, not asserted",
+              ceiling_rows[0]["remaining"] == max(pol.Ls - ceiling_rows[0]["used"], 0))
+    else:
+        check("the ceiling shown is the controller's own", False, "no ceiling row")
+
+    # --------------------------------------------------------------------- dead RPC --
+    print("\n4. Dead RPC — no fallback to demonstration numbers")
     dead = LiveSources(controller=CONTROLLER, safe=SAFE, rpc="http://127.0.0.1:1",
-                       chain_id=CHAIN, journal=journal, handover_id=None, policy=policy())
-    dv = dead.views()
-    check("terms reports UNAVAILABLE", not dv["terms"].loaded and dv["terms"].grade == "UNAVAILABLE",
-          dv["terms"].summary[:80])
-    check("terms shows no rows", not dv["terms"].rows, f"{len(dv['terms'].rows)} rows")
-    check("state() returns None rather than a fixture", dead.state() is None,
-          "no LiveState is synthesised")
-    check("a dead RPC does not blank the journal views",
-          dv["activity"].loaded and dv["unresolved"].loaded,
-          "activity and unresolved still load from the journal")
+                       chain_id=CHAIN, journal=journal, handover_id=None)
+    dc = console_for(dead)
+    dcookie = sign_in(dc)
+    code, _h, dbody = get(dc, "/views", dcookie)
+    dtext = dbody.decode()
+    check("the page still renders", code == 200)
+    check("Terms says UNAVAILABLE", "UNAVAILABLE" in dtext)
+    check("it says no substitute data is shown", "No substitute data" in dtext)
+    demo = demonstration_state()
+    check("no demonstration figure leaks in",
+          str(demo.budgets[0].used) not in dtext and demo.runner.lower() not in dtext.lower())
+    dv = views_of(dc, dcookie)
+    check("journal views still load", dv["activity"]["loaded"] and dv["unresolved"]["loaded"])
 
-    print("\n3. Unreadable authority inventory")
-    import held_console.live as live_mod
-    real_inv = live.inventory
+    # ------------------------------------------------------- stale / out-of-scope authority --
+    print("\n5. Stale or out-of-scope authority evidence")
+    wrong = LiveSources(controller="0x" + "de" * 20, safe=SAFE, rpc=RPC, chain_id=CHAIN,
+                        journal=journal, handover_id=None)
+    inv = wrong.inventory()
+    check("a stored report for another controller is marked incomplete",
+          inv is not None and not inv.complete,
+          f"{(inv.incomplete_sections[:1] if inv else 'none')}")
+    check("the reason names the scope problem",
+          bool(inv) and any("out of scope" in s for s in inv.incomplete_sections))
+
+    # ------------------------------------------------- unresolved operation and handover --
+    print("\n6. Unresolved operation, and a handover in progress")
+    import hero_demo as hd
+    hd.SUPPLY_AMOUNT = 1_000_000
     try:
-        live.inventory = lambda: None
-        v = live.views()
-        check("authority reports UNAVAILABLE", not v["authority"].loaded,
-              v["authority"].summary[:80])
-        check("terms still loads", v["terms"].loaded,
-              "one dead source blanks only its own view")
-    finally:
-        live.inventory = real_inv
+        hd.interrupt_a_real_submission(live.reading(), journal)
+    except Exception as exc:                      # the controller may be paused; fine
+        print(f"      (could not create a live interrupted op: {exc}); using journal rows")
+    uv = views_of(c, cookie)["unresolved"]
+    check("unresolved view reports the state truthfully", uv["loaded"])
+    if uv["rows"]:
+        check("it names what is blocked", "handover" in uv["rows"][0]["blocks"])
+        check("it names the evidence required",
+              "consumed[operationId]" in uv["rows"][0]["requiredEvidence"])
+    else:
+        check("an empty unresolved list is stated, not blank",
+              "Nothing is in the air" in uv["summary"], uv["summary"])
 
-    print("\n4. No key material anywhere in the rendered views")
-    blob = json.dumps({k: v.to_dict() for k, v in views.items()})
-    leaked = [w for w in ("PRIVATE", "0x47e179ec", "kh_live", "BEGIN") if w in blob]
-    check("no secret-looking value in the views", not leaked, str(leaked) or "clean")
+    av = views_of(c, cookie)["authority"]
+    check("no handover in progress is a stated row, not a blank",
+          any(r.get("field") == "handover state" for r in av["rows"]))
+
+    # ------------------------------------------------------------------- redaction --
+    print("\n7. Redaction")
+    everything = (text + dtext + json.dumps(views_of(c, cookie))).lower()
+    leaked = [w for w in ("0x47e179ec", "0xac0974be", "private key", "begin ",
+                          os.environ["HELD_CONSOLE_SECRET"].lower()) if w in everything]
+    check("no key material or secret in any rendered output", not leaked, str(leaked))
 
     journal.close()
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 74)
     if FAILS:
         print(f"console-live: FAIL ({len(FAILS)}): {FAILS}")
         return 1

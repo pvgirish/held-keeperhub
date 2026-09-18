@@ -122,7 +122,12 @@ class CastControllerSource:
                           ("restorationCount", "uint64")):
             out[name] = self._uint(self._cast("call", controller, f"{name}()({typ})", at=block))
 
-        policy_raw = self._cast("call", controller, "policy()", at=block)
+        # A public struct getter returns its members individually, so the full return
+        # signature is required -- without it cast hands back an undecoded blob and the
+        # console silently had no policy to show.
+        policy_sig = ("policy()(uint128,uint128,uint128,uint128,uint128,uint128,uint128,"
+                      "uint128,uint128,uint128,uint64,uint64,uint64,uint64)")
+        policy_raw = self._cast("call", controller, policy_sig, at=block)
         if policy_raw:
             out["policyRaw"] = policy_raw
         return out

@@ -70,9 +70,10 @@ Stated candidly, because a submission that hides these is worse than one that la
 - **Not production ready.** One Safe, one Morpho market, supply and withdraw, fork only.
 - **Authority discovery is bounded**, not universal: a declared profile over a declared
   block range. Anything outside is out of scope, which is not the same as absent.
-- **Native tooling beat us on operator work.** We measured it. A competent native operator
-  does the clean change in one ceremony against our two. We withdrew the claim that Held
-  reduces coordination work.
+- **Native tooling beat us on operator work.** We measured it from the same starting state.
+  A competent native operator does the clean change in one owner ceremony against our two,
+  and ties us exactly on the interrupted one. We withdrew the claim that Held reduces
+  coordination work.
 - **One adversarial case is unestablished for an external reason**: a broadcast whose
   transaction hash is known but whose receipt never arrives on a public chain.
 - **A genuine chain reorganisation is not simulated.** A fork has no finality.
